@@ -9,3 +9,7 @@
 *.pdf
 # Claude Code local settings
 .claude/settings.local.json
+# visualization outputs are heavy and reproducible from viz/*.jl
+viz/output/
+*.mp4
+*.gif
