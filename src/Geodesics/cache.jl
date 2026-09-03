@@ -24,8 +24,9 @@ end
 
 Marcher choice for [`regenerate!`](@ref). `Direct` evaluates Krang's closed forms at every
 sample (the reference; slow). `Recurrence{M}` advances r and θ by the Jacobi addition theorems
-and re-anchors to the closed form every `M` samples (plan §4); it does not yet produce t̃ and
-φ (NaN), pending step 4 of the plan.
+and t̃, φ by quadrature of the Mino-time rates, re-anchoring everything to the closed forms
+every `M` samples (plan §4; fewer near the critical curve). The largest anchor residual of
+each ray is available in `cache.residual_t`, `cache.residual_ϕ` (sorted order).
 """
 struct Direct end
 struct Recurrence{M} end
@@ -44,6 +45,8 @@ Device-resident geodesic data for one camera and `N` samples per ray. Owns:
   `ranges` gives the slot ranges of the three root cases (see [`case_permutation`](@ref));
 - `consts::PixelConstants`: K1 output, sorted order;
 - `samples::GeodesicSamples`: K2 output, `(npix, N)`, sorted order;
+- `residual_t`, `residual_ϕ`: per ray (sorted order), the largest |quadrature − Krang| at the
+  re-anchoring samples of the last `Recurrence` run (zero after a `Direct` run);
 - `spin`, `θo`: the spacetime the cache currently holds (`NaN` until the first `regenerate!`);
 - `generation`: number of `regenerate!` calls so far.
 
@@ -62,6 +65,8 @@ mutable struct GeodesicCache{T,N,B<:KA.Backend,VT<:AbstractVector{T},VI<:Abstrac
     ranges::NamedTuple{(:case2, :case3, :case4),NTuple{3,UnitRange{Int}}}
     const consts::PC
     const samples::S
+    const residual_t::VT
+    const residual_ϕ::VT
     spin::T
     θo::T
     generation::Int
@@ -79,9 +84,13 @@ function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) whe
     perm = KA.allocate(backend, Int, npix)
     consts = PixelConstants{T}(backend, npix)
     samples = GeodesicSamples{T}(backend, npix, N)
+    residual_t = KA.allocate(backend, T, npix)
+    residual_ϕ = KA.allocate(backend, T, npix)
+    fill!(residual_t, zero(T))
+    fill!(residual_ϕ, zero(T))
     empty = (case2 = 1:0, case3 = 1:0, case4 = 1:0)
     return GeodesicCache(backend, nval, αs, βs, size(camera), numreals_screen, perm,
-                         collect(1:npix), empty, consts, samples, T(NaN), T(NaN), 0, Direct())
+                         collect(1:npix), empty, consts, samples, residual_t, residual_ϕ, T(NaN), T(NaN), 0, Direct())
 end
 GeodesicCache(backend::KA.Backend, camera::Camera, N::Integer) = GeodesicCache(backend, camera, Val(Int(N)))
 
@@ -125,7 +134,7 @@ function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::
     cache.ranges = ranges
 
     pixel_constants_kernel!(backend, workgroup)(cache.consts, met, θ, cache.αs, cache.βs, cache.perm; ndrange = npix)
-    march!(marcher, cache.samples, cache.consts, ranges, met, θ, cache.nval)
+    march!(marcher, cache, ranges, met, θ)
     KA.synchronize(backend)
 
     cache.spin = a
@@ -135,9 +144,14 @@ function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::
     return cache
 end
 
-march!(::Direct, S, pc, ranges, met, θo, nval::Val) = direct_march!(S, pc, met, θo, nval)
-march!(m::Recurrence, S, pc, ranges, met, θo, nval::Val) =
-    recurrence_march!(S, pc, ranges, met, θo, nval, Val(anchor_interval(m)))
+function march!(::Direct, cache::GeodesicCache, ranges, met, θo)
+    fill!(cache.residual_t, zero(eltype(cache)))
+    fill!(cache.residual_ϕ, zero(eltype(cache)))
+    return direct_march!(cache.samples, cache.consts, met, θo, cache.nval)
+end
+march!(m::Recurrence, cache::GeodesicCache, ranges, met, θo) =
+    quadrature_march!(cache.samples, cache.consts, cache.residual_t, cache.residual_ϕ, ranges, met, θo,
+                      cache.nval, Val(anchor_interval(m)))
 
 function regenerate!(cache::GeodesicCache, spin::Real, θo::Real, camera::Camera; kwargs...)
     npixels(camera) == npixels(cache) ||

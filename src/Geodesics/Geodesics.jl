@@ -15,7 +15,11 @@ camera change.
   every sample.
 * `jacobi.jl`, `recurrence.jl` — K2 in recurrence mode (plan §4): r(τ) and θ(τ) advanced by
   the Jacobi addition theorems with periodic re-anchoring, validated against the direct
-  marcher at every sample.
+  marcher and a BigFloat reference at every sample.
+* `quadrature.jl` — t̃(τ) and φ(τ) by Simpson quadrature of the Mino-time rates between
+  Krang anchors, with the large-r, horizon and polar-axis singular parts integrated in closed
+  form. This is what `Recurrence(M)` runs; each ray's largest anchor residual is kept as an
+  error estimate.
 * `cache.jl` — [`GeodesicCache`](@ref) owning the device buffers, and
   [`regenerate!`](@ref)`(cache, a, θo[, camera])`.
 
@@ -41,12 +45,14 @@ export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
 export Direct, Recurrence, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
 export Case2, Case3, Case4, radial_marcher, PolarMarcher, radius, polar_angle
 export radial_parameter, near_critical, NEAR_CRITICAL_ONE_MINUS_K
+export QuadratureConstants, quadrature_march!, recurrence_march!
 
 include("camera.jl")
 include("pixel_constants.jl")
 include("direct_march.jl")
 include("jacobi.jl")
 include("recurrence.jl")
+include("quadrature.jl")
 include("cache.jl")
 
 # Krang's `_θs` evaluates `unsafe_trunc(Int, τ / τ̂)`. ForwardDiff provides no such method, so
