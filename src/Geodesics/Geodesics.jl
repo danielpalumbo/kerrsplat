@@ -1,0 +1,58 @@
+"""
+    KerrSplat.Geodesics
+
+The geodesic layer of the GPU plan (`docs/plans/kerrsplat_gpu_geodesics_plan.md`, §4 and §9):
+everything that has to be regenerated when the spin `a`, the observer inclination `θo` or the
+camera change.
+
+* `camera.jl` — [`Camera`](@ref): the Bardeen screen coordinates of every pixel.
+* `pixel_constants.jl` — kernels K0/K1: Krang's per-pixel constants (conserved quantities,
+  radial roots, elliptic antiderivatives at infinity, total Mino time) computed on the device
+  and stored as a structure of arrays ([`PixelConstants`](@ref)) in root-case-sorted order.
+* `direct_march.jl` — kernel K2 in stored mode: one thread per ray marches `N` uniform
+  Mino-time samples and writes (t̃, r, θ, φ, ν_r, ν_θ, ok) into [`GeodesicSamples`](@ref).
+  This is the *reference* marcher: it calls Krang's closed-form `emission_coordinates` at
+  every sample. The addition-theorem recurrence of plan §4 will be added next to it and
+  validated against it at every sample.
+* `cache.jl` — [`GeodesicCache`](@ref) owning the device buffers, and
+  [`regenerate!`](@ref)`(cache, a, θo[, camera])`.
+
+All kernels are KernelAbstractions kernels, so they run on the CPU backend for testing and on
+CUDA for production. Float64 throughout (plan §5).
+"""
+module Geodesics
+
+using Adapt
+using CUDA
+using ForwardDiff
+using KernelAbstractions
+using Krang
+using StaticArrays
+
+const KA = KernelAbstractions
+
+export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache
+export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mino_times
+export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel
+export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
+
+include("camera.jl")
+include("pixel_constants.jl")
+include("direct_march.jl")
+include("cache.jl")
+
+# Krang's `_θs` evaluates `unsafe_trunc(Int, τ / τ̂)`. ForwardDiff provides no such method, so
+# with dual numbers (spacetime derivatives, plan §6) this becomes a dynamic dispatch, which is
+# fatal inside a GPU kernel (plan §2, item 5). To be upstreamed; delete this once it lands.
+Base.unsafe_trunc(::Type{I}, d::ForwardDiff.Dual) where {I<:Integer} =
+    unsafe_trunc(I, ForwardDiff.value(d))
+
+"""
+    host(x)
+
+Copy a device-resident structure (a `PixelConstants`, `GeodesicSamples`, or any array) to host
+`Array`s, field by field. Identity for host arrays.
+"""
+host(x) = Adapt.adapt(Array, x)
+
+end
