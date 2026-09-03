@@ -137,6 +137,21 @@ const NEAR_CRITICAL_ONE_MINUS_K = 1e-7
 "Whether sorted slot `j` is a near-critical pixel (see [`NEAR_CRITICAL_ONE_MINUS_K`](@ref))."
 @inline near_critical(pc::PixelConstants, j::Integer) = @inbounds (1 - pc.k_r[j]) < NEAR_CRITICAL_ONE_MINUS_K
 
+"""
+    anchor_interval(M, one_minus_k)
+
+Re-anchoring interval for a ray with radial parameter k: `M` for 1 − k ≥ 2e-5, shrinking like
+√(1 − k) toward the critical curve (down to 4). The recurrence's per-step rounding error grows
+like (1 − k)^(−1/2) (2e-15 at 1 − k = 0.1, 3e-12 at 1e-7, gate-2 measurements), and near the
+critical curve the plunging samples close to the horizon amplify it; the shorter interval keeps
+the accumulated error below 1e-11 at negligible cost (near-critical rays are a small fraction
+of any screen).
+"""
+@inline function anchor_interval(M::Integer, one_minus_k::T) where {T}
+    scaled = M * sqrt(max(one_minus_k, zero(T)) / T(2e-5))
+    return max(4, min(M, unsafe_trunc(Int, min(scaled, T(M)))))
+end
+
 "Argument of the radial Jacobi function at Mino time τ."
 @inline radial_argument(rm::RadialMarcher, τ) = rm.c * (rm.fo - τ)
 
@@ -264,9 +279,9 @@ end
 # ---- the kernel ---------------------------------------------------------------------------
 
 # One thread per ray of one root case (pixels are case-sorted, so `offset` is the first slot of
-# the case minus one). N samples, re-anchored every M samples. Only r, θ and the momentum
-# signs are produced here; t̃ and φ are written as NaN until the quadrature of plan §4 step 4
-# lands.
+# the case minus one). N samples, re-anchored every M samples (fewer near the critical curve,
+# see `anchor_interval`). Only r, θ and the momentum signs are produced here; t̃ and φ are
+# written as NaN until the quadrature of plan §4 step 4 lands.
 @kernel function recurrence_march_kernel!(S, pc, met::Krang.Kerr, θo, case, ::Val{N}, ::Val{M}, offset) where {N,M}
     j0 = @index(Global, Linear)
     j = j0 + offset
@@ -276,6 +291,7 @@ end
     pm = PolarMarcher(pix)
     Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
     τ_valid = radial_valid_until(rm)
+    Manchor = anchor_interval(M, one(T) - rm.k)
     Δr = jacobi_step_constants(-rm.c * Δτ, rm.k)
     Δθ = jacobi_step_constants(pm.scale * Δτ / pm.tempfac, pm.μ)
     xr = jacobi_state(radial_argument(rm, Δτ), rm.k)
@@ -283,7 +299,7 @@ end
     for k in 1:N
         τ = k * Δτ
         if k > 1
-            if (k - 1) % M == 0
+            if (k - 1) % Manchor == 0
                 xr = jacobi_state(radial_argument(rm, τ), rm.k)
                 xθ = jacobi_state(polar_argument(pm, τ), pm.μ)
             else
