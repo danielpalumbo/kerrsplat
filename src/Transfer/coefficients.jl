@@ -63,15 +63,16 @@ end
 @inline dexter_IV(x) = (1.81384 / x + 3.42319 * x^(-2 / 3) + 0.0292545 * x^(-1 / 2) + 2.03773 * x^(-1 / 3)) * exp(-1.8899 * x^(1 / 3))
 
 """
-    thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV = false) -> StokesCoefficients
+    thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV = false, pandya = false) -> StokesCoefficients
 
 Thermal (Maxwell–Jüttner) synchrotron coefficients as in ipole's default prescription:
-emissivities from Dexter (2016), absorptivities by Kirchhoff's law α_S = j_S/B_ν, Faraday
-conversion ρ_Q from Dexter (2016, eqs. B4–B13) and Faraday rotation ρ_V from Shcherbakov (2008)
-(or Dexter's fit with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
-vanish and only ρ_V survives, as in ipole.
+emissivities from Dexter (2016) (or the Pandya et al. 2016 fits with `pandya = true`, ipole's
+`emission_type 1`), absorptivities by Kirchhoff's law α_S = j_S/B_ν, Faraday conversion ρ_Q from
+Dexter (2016, eqs. B4–B13) and Faraday rotation ρ_V from Shcherbakov (2008) (or Dexter's fit
+with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption vanish and only
+ρ_V survives, as in ipole.
 """
-@inline function thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV::Bool = false)
+@inline function thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV::Bool = false, pandya::Bool = false)
     T = typeof(float(ne * Θe * B * ν * θ))
     sinθ, cosθ = sincos(θ)
     # rotativities (Dexter 2016 appendix B; ipole maxwell_juettner_rho_Q / rho_V)
@@ -94,13 +95,17 @@ vanish and only ρ_V survives, as in ipole.
     if !(sinθ > 0)
         return StokesCoefficients(zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), ρV)
     end
-    # emissivities (Dexter 2016; ipole maxwell_juettner_dexter_*), ipole's sign for Q
-    νs = 3 * EE * B * sinθ / (4 * T(π) * ME * CL) * Θe^2 + 1
-    xs = ν / νs
-    pref = ne * EE^2 * ν / (2 * sqrt(T(3)) * CL * Θe^2)
-    jI = pref * dexter_II(xs)
-    jQ = pref * dexter_IQ(xs)
-    jV = 2 * ne * EE^2 * ν * cosθ / sinθ / (3 * sqrt(T(3)) * CL * Θe^3) * dexter_IV(xs)
+    if pandya
+        jI, jQ, jV = thermal_synchrotron_pandya(ne, Θe, B, ν, θ)
+    else
+        # emissivities (Dexter 2016; ipole maxwell_juettner_dexter_*), ipole's sign for Q
+        νs = 3 * EE * B * sinθ / (4 * T(π) * ME * CL) * Θe^2 + 1
+        xs = ν / νs
+        pref = ne * EE^2 * ν / (2 * sqrt(T(3)) * CL * Θe^2)
+        jI = pref * dexter_II(xs)
+        jQ = pref * dexter_IQ(xs)
+        jV = 2 * ne * EE^2 * ν * cosθ / sinθ / (3 * sqrt(T(3)) * CL * Θe^3) * dexter_IV(xs)
+    end
     # absorptivities by Kirchhoff's law
     Bν = planck(ν, Θe)
     inv_B = Bν > 0 ? inv(Bν) : zero(T)

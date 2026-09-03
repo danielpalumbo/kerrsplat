@@ -30,8 +30,8 @@ the step is `O * S + E`.
     α2 = αQ * αQ + αU * αU + αV * αV
     ρ2 = ρQ * ρQ + ρU * ρU + ρV * ρV
     a = αI * Δ
-    if α2 + ρ2 == 0                        # unpolarized transfer
-        e = exp(-a)
+    if (α2 + ρ2) * Δ^2 < T(1e-200)         # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
+        e = exp(-a)                        # density tails): the unpolarized operator with the full emission vector
         return SMatrix{4,4,T}(e * I4), (Δ * phi(a)) * j
     end
     K1 = @SMatrix [zero(T) αQ αU αV; αQ zero(T) ρV -ρU; αU -ρV zero(T) ρQ; αV ρU -ρQ zero(T)]
@@ -52,7 +52,9 @@ the step is `O * S + E`.
     b1 = Λ1 * Δ
     b2 = Λ2 * Δ
     Θ = Λ1sq + Λ2sq
-    if Θ == 0                              # K' nilpotent (α⃗² = ρ⃗², α⃗ ⟂ ρ⃗): the cubic is exact with the b → 0 limits
+    # K' nilpotent (α⃗² = ρ⃗², α⃗ ⟂ ρ⃗, Θ = 0): the cubic with the b → 0 limits is exact; it stays accurate to
+    # ΘΔ²(1 + |K'Δ|²) when Θ is merely tiny, which also covers Θ underflowing while K' does not.
+    if Θ * Δ^2 * (1 + (α2 + ρ2) * Δ^2) < T(1e-17)
         e = exp(-a)
         O = e * (SMatrix{4,4,T}(I4) - Δ * K1 + (Δ^2 / 2) * K2 - (Δ^3 / 6) * K3)
         M = moments(a)
@@ -78,7 +80,7 @@ the step is `O * S + E`.
     Ish = Δ^2 * (moment1(a) + int_sinhc_excess(a, b1))
     Is = Δ^2 * int_sinc(a, b2)
     C0 = (Λ2sq * Ich + Λ1sq * Ic) / Θ
-    C2 = Δ^3 * (int_coshm1(a, b1) + int_versin(a, b2)) / (b1 * b1 + b2 * b2)
+    C2 = Δ * (int_coshm1(a, b1) + int_versin(a, b2)) / Θ
     E = C0 * j + C2 * (K2 * j) - Ish * (M3 * j) - Is * (M2 * j)
     return O, E
 end

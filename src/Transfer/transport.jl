@@ -78,3 +78,52 @@ Solid angle [sr] of a square pixel of side `Δα` (in M) for the length unit `L`
 `D` [cm].
 """
 pixel_solid_angle(Δα, L, D) = (Δα * L / D)^2
+
+# ---- polarized transport ----------------------------------------------------------------------
+"""
+    RadiativeTransport(model, ν_obs, L)
+
+Fused-march consumer integrating the full Stokes vector along each ray. The plasma `model` is a
+collection of fluid elements that may overlap (the one-zone splats of the plan's addendum): it
+provides `nelements(model)` and `element(model, i, pix, sample, ν_obs) -> (c, frame)`, the
+fluid-frame coefficients `c::StokesCoefficients` of element `i` at its own frequency ν_obs/g
+together with its `frame::LocalFrame` (redshift, pitch angle, screen angle χ). The consumer caps
+the polarization fractions as ipole does, forms the invariants, rotates every element's
+coefficients into the screen basis by 2χ, sums them (the coefficients of superposed populations
+add), and takes one exact constant-coefficient step per sample interval, composed front to back
+in a `RadiativeState`. Samples inside the horizon or flagged invalid are skipped.
+"""
+struct RadiativeTransport{M,T}
+    model::M
+    ν_obs::T
+    L::T
+end
+Adapt.@adapt_structure RadiativeTransport
+
+"Number of fluid elements of a model; see `RadiativeTransport`."
+function nelements end
+"Coefficients and frame of one fluid element at a sample; see `RadiativeTransport`."
+function element end
+
+@inline function (c::RadiativeTransport)(acc::RadiativeState{T}, j, k, s::GeodesicSample, Δτ, pix) where {T}
+    met = Krang.metric(pix)
+    (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
+    j4 = zero(SVector{4,T}); α4 = zero(SVector{4,T}); ρ3 = zero(SVector{3,T})
+    active = false
+    for i in 1:nelements(c.model)
+        cf, fr = element(c.model, i, pix, s, c.ν_obs)
+        (cf.jI > 0 || cf.αI > 0 || cf.ρQ != 0 || cf.ρV != 0) || continue
+        cinv = invariants(cap_polarization(cf), c.ν_obs / fr.g)
+        jj, aa, rr = rotate_to_screen(cinv, fr.χ)
+        j4 += jj; α4 += aa; ρ3 += rr
+        active = true
+    end
+    active || return acc
+    Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
+    Δ = c.L / c.ν_obs * Σ * Δτ
+    O, E = transfer_step(j4, α4, ρ3, Δ)
+    return advance(acc, O, E)
+end
+
+"Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
+observed_stokes(st::RadiativeState, ν_obs) = st.S * ν_obs^3

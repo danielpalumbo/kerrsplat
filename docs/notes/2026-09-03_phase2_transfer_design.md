@@ -75,6 +75,17 @@ each PR can be validated on its own.
    (0.4484), so the residual is ipole's discretization. ipole's own test accepts 2%, which is
    the gate here. Model 2 (Schwarzschild) runs at a = 1e-3 because
    Krang's analytic solution returns NaN at a = 0 (upstream_issues.md item 11).
-5. **Polarized splats and images**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity),
-   per-splat Mueller assembly M = Σ R(χ_k) M_k R(χ_k)ᵀ, the two-splat overlap and Faraday-screen
-   tests of the addendum, polarized images against ipole (HDF5 or Jipole) and Enzyme gradients.
+5. **Polarized transport** (`transfer-polarized`): `RadiativeTransport(model, ν_obs, L)` sums
+   the screen-basis invariants of overlapping fluid elements (the addendum's additivity) and
+   takes one exact step per sample. Gates: the Gold model through the polarized path equals the
+   unpolarized path; a cold Faraday screen rotates the EVPA of an emitter behind it by ½∫ρ_V ds
+   and two co-located screens add; superposed emitters add and their order is irrelevant; and
+   ipole's RIAF model (`test/riaf_model.jl`, `validation/ipole_riaf/`) at 230 GHz (τ_F up to
+   9 rad, τ up to 15) and 2 THz: pixel-norm residuals of I, Q, U, V ≤ 0.6% and 2%, totals to
+   0.1%, EVPA to 0.0005 rad. The comparison fixed the screen handedness: north = +β, east = −α
+   (Krang's `evpa` convention); with east = +α, U flips at every frequency and the Faraday-thick
+   230 GHz images disagree at the 60% level, because the rotation sense is then reversed relative
+   to the geometry. Also found and guarded: rotativities of 1e-170 from density tails underflowed
+   the squared angles of the emission integral.
+6. **Polarized splats**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity) as elements of
+   `RadiativeTransport`, Enzyme gradients, a polarized fit test.
