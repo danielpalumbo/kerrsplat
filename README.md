@@ -6,11 +6,12 @@ Julia, built on [Krang.jl](https://github.com/dchang10/Krang.jl) analytic geodes
 hot path on NVIDIA GPUs via CUDA.jl + KernelAbstractions and gradients from Enzyme (reverse mode,
 splat parameters) and ForwardDiff duals (forward mode, spacetime parameters).
 
-Status (2026-09-03): geodesic module through plan §9 step 3. The package builds Krang's
+Status (2026-09-03): geodesic module through plan §9 step 4. The package builds Krang's
 per-pixel constants on the GPU (or the CPU backend of KernelAbstractions), marches the rays
-either with Krang's closed forms at every sample (the reference) or with the addition-theorem
-recurrence for r(τ), θ(τ) (a few nanoseconds per sample), and validates both against Krang on
-the CPU and against a BigFloat evaluation of the same closed forms.
+either with Krang's closed forms at every sample (the reference, 128 ns per sample on the
+RTX 2080 SUPER) or with the addition-theorem recurrence for r(τ), θ(τ) plus anchored quadrature
+of the Mino-time rates for t̃(τ), φ(τ) (11 ns per sample), and validates both against Krang on
+the CPU and against BigFloat references.
 
 ## Package layout
 
@@ -20,11 +21,13 @@ the CPU and against a BigFloat evaluation of the same closed forms.
   case), `GeodesicSamples` (stored per-ray samples t̃, r, θ, φ, ν_r, ν_θ), `GeodesicCache` and
   `regenerate!(cache, a, θo[, camera]; marcher = Direct() | Recurrence(64))`. `Direct` is
   Krang's closed-form evaluation at every sample; `Recurrence` advances r and θ by the Jacobi
-  addition theorems and re-anchors every 64 samples (t̃ and φ by anchored quadrature are the
-  next step and are NaN in this mode).
-- `test/` — gates 1 and 2 of the GPU plan: every stored quantity against Krang on the CPU,
-  and the recurrence against a BigFloat evaluation of the closed forms
-  (`test/highprec_reference.jl`), on both the CPU and the CUDA backend.
+  addition theorems, integrates the Mino-time rates for t̃ and φ with the singular parts
+  removed in closed form, and re-anchors everything to Krang every 64 samples, keeping each
+  ray's largest anchor residual as an error estimate.
+- `test/` — gates 1–3 of the GPU plan: every stored quantity against Krang on the CPU, the
+  recurrence against a BigFloat evaluation of the closed forms and the quadrature against a
+  BigFloat integration of the rates (`test/highprec_reference.jl`), on both the CPU and the
+  CUDA backend.
 - `docs/notes/` — findings that matter for later gates (conditioning of Krang's closed forms
   near the polar axis and the critical curve) and candidate upstream issues.
 - `bench/geodesics_bench.jl` — timings of the stages (compare plan §3).

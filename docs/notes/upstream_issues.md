@@ -25,7 +25,15 @@ this repository's tests or session diagnostics; none has been filed upstream yet
    θo = 60°, α = ±0.2128, β = −0.2128 (β < 0 side), the last dozen of 200 uniform Mino-time
    samples; the β > 0 mirror pixels are fine. The
    sign feeds `p_bl_d`, so p_θ has the wrong sign on those samples. The cause is the
-   `isindir` reconstruction in `_θs` (`τ1 ≈ τ` test) for the vortical branch.
+   `isindir` reconstruction in `_θs` (`τ1 ≈ τ` test) for the vortical branch. The same
+   bookkeeping makes `emission_coordinates`' t̃ and φ wrong on those samples (by 1e-2 at
+   the end of the ray): finite differences of its φ(τ) disagree with the Mino-time rate by
+   1.5 %, while a quadrature of the rate agrees with a BigFloat reference to 4e-10
+   (docs/notes/2026-09-03_quadrature_findings.md).
+9. **Isolated ~1e-7 glitches in t̃.** `emission_coordinates` at a = 0.7, θo = 120°,
+   α = 1.064, β = −4.468, τ = 0.20976 returns t̃ off the smooth curve through its neighbours
+   by 6.7e-8 (neighbours ≤ 3.5e-9). Probably the `arg == k → arg += eps` guards around
+   `Pi` or a Carlson iteration hitting its cap.
 6. **Constants formed in Float64.** `T(√3/2)`, `T(1/3)`, `T(π/2)`, `T(2π)` in
    `get_radial_roots`, `_θs`, `Gθ`, … are exact only for T = Float64, so evaluating Krang in
    `BigFloat`/`Double64` does not gain precision (and `_isreal2`'s `eps(T)` tolerance then
