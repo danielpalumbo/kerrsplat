@@ -171,3 +171,83 @@ function test_splat_fit(; res::Int, N::Int, iterations::Int)
         @test maximum(abs.(p[13, :] .- p_true[13, :])) < 0.1
     end
 end
+
+# ---- gradients inside a KernelAbstractions kernel -------------------------------------------
+
+"One ray's image value into `out[j]` (no active return: the seed comes through the shadow of `out`)."
+@inline function ray_value!(out, params, tvec, pc, j, met, θo, case, ::Val{N}, ::Val{M}) where {N,M}
+    acc, _, _ = march_ray(ThinRenderer(params, tvec), zero(eltype(out)), pc, j, met, θo, case, Val(N), Val(M))
+    @inbounds out[j] = acc
+    return nothing
+end
+
+# one thread per ray; every array the consumer captures is Duplicated (a constant pointer stored
+# into the active consumer would need runtime activity, whose error paths do not compile on GPUs)
+@kernel function ray_adjoint_kernel!(out, dout, dparams, params, tvec, dtvec, pc, met::Krang.Kerr, θo, case, ::Val{N}, ::Val{M}, offset) where {N,M}
+    j0 = @index(Global, Linear)
+    j = j0 + offset
+    Enzyme.autodiff_deferred(Enzyme.Reverse, Enzyme.Const(ray_value!), Enzyme.Const,
+                             Enzyme.Duplicated(out, dout), Enzyme.Duplicated(params, dparams), Enzyme.Duplicated(tvec, dtvec),
+                             Enzyme.Const(pc), Enzyme.Const(j), Enzyme.Const(met), Enzyme.Const(θo), Enzyme.Const(case),
+                             Enzyme.Const(Val(N)), Enzyme.Const(Val(M)))
+end
+
+"""
+    kernel_gradient!(dparams, dout, cache, params, t_obs)
+
+∂(dout · image)/∂params accumulated into `dparams` by Enzyme reverse mode inside the fused
+kernel, one ray per thread (the adjoint seed `dout` is consumed). Validated on the CPU backend;
+on CUDA the differentiated kernel compiles but throws a device-side exception with Enzyme
+0.13.199 (also for a consumer over stored samples), see docs/notes/2026-09-04_phase1_thin_splats.md.
+"""
+function kernel_gradient!(dparams, dout, cache::GeodesicCache{T,N}, params, t_obs) where {T,N}
+    backend = cache.backend
+    tvec = KernelAbstractions.allocate(backend, T, 1)
+    fill!(tvec, T(t_obs))
+    dtvec = KernelAbstractions.allocate(backend, T, 1)
+    fill!(dtvec, zero(T))
+    out = KernelAbstractions.allocate(backend, T, npixels(cache))
+    met = Krang.Kerr(cache.spin)
+    M = Geodesics.anchor_interval(cache.marcher)
+    for (case, rng) in ((Case2(), cache.ranges.case2), (Case3(), cache.ranges.case3), (Case4(), cache.ranges.case4))
+        isempty(rng) && continue
+        ray_adjoint_kernel!(backend, 64)(out, dout, dparams, params, tvec, dtvec, cache.consts, met, cache.θo, case, Val(N), Val(M), first(rng) - 1;
+                                         ndrange = length(rng))
+    end
+    KernelAbstractions.synchronize(backend)
+    return dparams
+end
+
+function test_kernel_gradient(backend; res::Int, N::Int, tol::Float64, label::String)
+    a, θo = 0.94, deg2rad(60.0)
+    t_obs = 20.0
+    camera = Camera((-10.0, 10.0), (-10.0, 10.0), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    p = test_splat_params()
+    target = thin_image_march(p, cpu, t_obs)
+    p1 = p .+ 0.05 .* randn(MersenneTwister(1), size(p))
+    loss(q) = sum(abs2, thin_image_march(q, cpu, t_obs) .- target)
+    g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p1)[1]
+    @testset "$label Enzyme inside the fused kernel, $(res)² × $N" begin
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = false)
+        regenerate!(cache, a, θo; marcher = Fused(64))
+        params = KernelAbstractions.allocate(backend, Float64, size(p1)...)
+        copyto!(params, p1)
+        dparams = KernelAbstractions.allocate(backend, Float64, size(p1)...)
+        fill!(dparams, 0.0)
+        out = KernelAbstractions.allocate(backend, Float64, npixels(cache))
+        thin_image!(out, cache, params, t_obs)
+        tgt = KernelAbstractions.allocate(backend, Float64, npixels(cache))
+        copyto!(tgt, target)
+        dout = 2 .* (out .- tgt)
+        t0 = time()
+        kernel_gradient!(dparams, dout, cache, params, t_obs)
+        t1 = time() - t0
+        g = Array(dparams)
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @info "$label in-kernel Enzyme gradient vs host gradient: max |Δ|/max = $e ($(round(t1, digits = 1)) s including compilation)"
+        @test all(isfinite, g)
+        @test e <= tol
+    end
+end

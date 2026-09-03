@@ -33,6 +33,7 @@ gate2_refs = gate2_references()
         test_splats(CPU(); res = 32, N = 300, label = "CPU")
         test_splat_gradients(; res = 12, N = 120, tol = 1e-6)
         test_splat_fit(; res = 12, N = 120, iterations = 300)
+        test_kernel_gradient(CPU(); res = 12, N = 120, tol = 1e-12, label = "CPU backend")
     end
     if CUDA.functional()
         @testset "Geodesics on CUDA" begin

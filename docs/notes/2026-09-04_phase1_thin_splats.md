@@ -38,3 +38,30 @@ dependence, absorption. Units: geometric (GM/c², GM/c³), addendum §4.2.
 * The parameter matrix is the differentiated object: `ThinRenderer` closes over it, and a
   host renderer built on `march_ray` (a plain Julia loop) is what Enzyme reverse-mode
   differentiates in the tests (gate 6 of §7.5); the GPU path is the same consumer in a kernel.
+
+## Gradients on the GPU: status
+
+* Host path (`thin_image_march`, a plain loop over `march_ray`): Enzyme reverse mode works and
+  matches central finite differences to 1.9e-7 (the FD floor) at 3.6× the forward cost. Two
+  idioms are needed and are recorded in the tests: the loss is passed as `Const` with
+  `set_runtime_activity` (JacobiElliptic's amplitude routine and a captured constant target
+  array trip Enzyme's static analysis), and loops over root cases must be type-stable (a loop
+  over a heterogeneous tuple dispatches dynamically, which Enzyme rejects).
+* KernelAbstractions CPU backend: both routes work and agree with the host gradient to 3e-15:
+  (a) Enzyme through the kernel launch via KernelAbstractions' Enzyme rules (`autodiff` of a
+  wrapper that calls `kernel(args...; ndrange)`), 160 s of compilation; (b) `autodiff_deferred`
+  inside the kernel, one ray per thread, the ray writing its value into a `Duplicated` output
+  whose shadow carries the seed and all consumer arrays `Duplicated`, 16 s of compilation.
+  Route (b) is what `test_kernel_gradient` keeps.
+* CUDA (Enzyme 0.13.199): route (a) is refused by the extension ("Active kernel arguments not
+  supported on GPU"; it classifies a scalar kernel argument as active — removing the scalar
+  accumulator argument from the fused kernel was not enough). Route (b) compiles once no value
+  is actively returned and no constant pointer is stored into the active consumer (otherwise
+  Enzyme's runtime-activity error paths pull string formatting into the kernel), but the
+  kernel then throws a device-side exception whose type cannot be printed, also for a consumer
+  over *stored* samples (so the marcher's tape is not the cause; the consumer's momentum
+  Jacobians and exponential are enough to trigger it), with a 64 KB stack and a 1 GB malloc
+  heap. To be revisited with a newer Enzyme (the one that the environment could not download
+  today) and, if it persists, with Enzyme's own CUDA.jl examples as a bisection baseline.
+  Until then, gradients at scale run through the KernelAbstractions CPU backend (threaded) or
+  the host loop.
