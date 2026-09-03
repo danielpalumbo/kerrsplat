@@ -56,6 +56,7 @@ gate2_refs = gate2_references()
         test_slowlight(CPU(); res = 48, N = 300, label = "CPU")
         test_motion(CPU(); res = 24, N = 200, label = "CPU")
         test_motion_gradient(; res = 12, N = 120)
+        test_pattern_vs_fluid(; res = 8, N = 80, iterations = 120)
     end
     if CUDA.functional()
         @info "CPU tests done; starting the CUDA tests"

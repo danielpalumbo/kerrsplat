@@ -6,13 +6,21 @@ Julia, built on [Krang.jl](https://github.com/dchang10/Krang.jl) analytic geodes
 hot path on NVIDIA GPUs via CUDA.jl + KernelAbstractions and gradients from Enzyme (reverse mode,
 splat parameters) and ForwardDiff duals (forward mode, spacetime parameters).
 
-Status (2026-09-03): geodesic module through plan §9 step 4. The package builds Krang's
+Status (2026-09-03): the GPU geodesic plan through step 6, Phase 1 (optically-thin splats),
+Phase 2 (polarized radiative transfer) and the first Phase 3 items. The package builds Krang's
 per-pixel constants on the GPU (or the CPU backend of KernelAbstractions), marches the rays
 either with Krang's closed forms at every sample (the reference, 128 ns per sample on the
 RTX 2080 SUPER) or with the addition-theorem recurrence for r(τ), θ(τ) plus anchored quadrature
 of the Mino-time rates for t̃(τ), φ(τ) (10 ns per sample, with ForwardDiff duals for the
-spacetime parameters), and validates both against Krang on
-the CPU and against BigFloat references.
+spacetime parameters), validates both against Krang on the CPU and against BigFloat references,
+and integrates the full Stokes transfer equation along the rays with synchrotron coefficients
+validated against ipole's symphony fits, an exact constant-coefficient step validated against
+BigFloat, Walker–Penrose frame angles validated against Krang, Stokes I fluxes validated on the
+Gold et al. (2020) test problems and full Stokes images validated against ipole's RIAF model
+(0.2–2% pixel norms). Gaussian splats carry either a thin emissivity or a thermal plasma
+(density, temperature, field, velocity) and render, with slow light and a pattern rotation, as
+Stokes movie cubes differentiable with Enzyme (fits of positions, plasma, field, velocity and
+pattern rate from synthetic movies are part of the tests).
 
 ## Package layout
 
@@ -27,14 +35,27 @@ the CPU and against BigFloat references.
   ray's largest anchor residual as an error estimate. `Fused(64)` with `fused_march!(f, out,
   cache)` runs the same marcher inside a consumer `f(acc, j, k, sample, Δτ, pix)` without
   storing samples; `tiles(camera, n)` splits large screens.
-- `src/Splats/` — `KerrSplat.Splats`: Gaussian plasma splats (position, shape, temporal
-  envelope, amplitude as 13 unconstrained parameters per splat) and `thin_image`, their
-  optically-thin image through the fused marcher (Phase 1 of the roadmap: unpolarized,
-  frequency-independent, ZAMO-frame emitters, slow light), differentiable with Enzyme.
-- `test/` — gates 1–5 of the GPU plan: every stored quantity against Krang on the CPU, the
-  recurrence against a BigFloat evaluation of the closed forms and the quadrature against a
-  BigFloat integration of the rates (`test/highprec_reference.jl`), on both the CPU and the
-  CUDA backend.
+- `src/Transfer/` — `KerrSplat.Transfer`: synchrotron coefficients (thermal Dexter/Pandya
+  fits, Kirchhoff absorptivities, Dexter and Shcherbakov rotativities, Pandya power law;
+  `coefficients.jl`), the exact constant-coefficient 4×4 transfer step (`step.jl`), the
+  per-sample frames (redshift, pitch angle, Walker–Penrose screen angle; `frames.jl`) and the
+  fused-march consumers `UnpolarizedTransport` and `RadiativeTransport` that compose the steps
+  front to back for any model of overlapping fluid elements (`transport.jl`). Conventions: cgs,
+  ipole's field-aligned Stokes basis, screen basis north = +β, east = −α.
+- `src/Splats/` — `KerrSplat.Splats`: Gaussian plasma splats with a temporal envelope and a
+  pattern rotation, either with a thin emissivity (14 parameters, `thin_image`) or as one-zone
+  thermal plasma parcels (21 parameters: density, temperature, field strength and direction,
+  ZAMO velocity; `polarized_image`, `polarized_cube`), rendered through the fused marcher with
+  slow light and differentiable with Enzyme.
+- `test/` — gates 1–5 of the GPU plan (every stored quantity against Krang on the CPU, the
+  recurrence against a BigFloat evaluation of the closed forms, the quadrature against a
+  BigFloat integration of the rates), the Phase 2 gates (symphony tables, BigFloat transfer
+  steps, Krang's polarization transport, Gold et al. 2020 fluxes, ipole's RIAF images in
+  `validation/`), the slow-light flare echo, the motion gates and the Enzyme gradient and fit
+  tests, on both the CPU and the CUDA backend. The suite writes its progress to stderr; run it
+  through a pipe (`… 2>&1 | tee log`) to see it, since output to a file is buffered until exit.
+- `validation/` — the symphony table generator (built against a local ipole checkout) and the
+  ipole RIAF reference images with the recipe that produced them.
 - `docs/notes/` — findings that matter for later gates (conditioning of Krang's closed forms
   near the polar axis and the critical curve) and candidate upstream issues.
 - `bench/geodesics_bench.jl` — timings of the stages (compare plan §3).

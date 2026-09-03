@@ -77,3 +77,49 @@ function test_motion_gradient(; res = 12, N = 120)
         @info "pattern-rate gradient: Enzyme $(g[14]) vs stencil $fd"
     end
 end
+
+"""
+Pattern-versus-fluid separation (addendum §6.2): from a short Stokes movie of one orbiting splat,
+fit the pattern rate ω together with the fluid velocity components and the field angle, starting
+from perturbed values. The pattern rate is constrained by the motion of the image between frames,
+the fluid velocity by beaming, redshift and the polarization frame within each frame.
+"""
+function test_pattern_vs_fluid(; res = 8, N = 80, iterations = 120)
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6); ν = 230e9
+    times = (0.0, 25.0, 50.0)
+    p_true = zeros(NPOLARIZEDPARAMS, 1)
+    p_true[:, 1] = [6.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(20.0), log(30.0), 1.0, 0.5, 0.0, 0.35, 0.0, 6.0^(-1.5)]
+    function movie(q)
+        out = Vector{RadiativeState{Float64}}(undef, npixels(cache))
+        frames = map(times) do t
+            fill!(out, zero(RadiativeState{Float64}))
+            polarized_image!(out, cache, q, t, ν, L)
+            map(st -> observed_stokes(st, ν), out)
+        end
+        return reduce(vcat, frames)
+    end
+    target = movie(p_true)
+    scale = maximum(norm.(target))
+    loss(q) = sum(abs2, reinterpret(Float64, movie(q) .- target)) / scale^2
+    p = copy(p_true); p[21] *= 1.25; p[18] += 0.15; p[19] -= 0.15; p[16] += 0.25; p[13] -= 0.2
+    free = [13, 16, 18, 19, 21]
+    @testset "pattern-versus-fluid separation: joint fit of ω, ũ, field angle and density from a 3-frame movie" begin
+        L0 = loss(p)
+        opt = Optimisers.setup(Optimisers.Adam(0.02), p)
+        mask = zeros(size(p)); mask[free, :] .= 1
+        Lmin = L0
+        for it in 1:iterations
+            g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p)[1] .* mask
+            opt, p = Optimisers.update(opt, p, g)
+            Lmin = min(Lmin, loss(p))
+        end
+        @test Lmin < 0.02 * L0
+        @test abs(p[21] / p_true[21] - 1) < 0.05
+        @test abs(p[18] - p_true[18]) < 0.05 && abs(p[19] - p_true[19]) < 0.05
+        @info "pattern vs fluid: loss $L0 → $Lmin; ω $(p[21]) (true $(p_true[21])), ũ ($(round(p[18], digits = 3)), $(round(p[19], digits = 3))) (true (0, 0.35)), field angle $(round(p[16], digits = 3)) (true 1.0), log density error $(abs(p[13] - p_true[13]))"
+    end
+end
