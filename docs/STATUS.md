@@ -28,7 +28,12 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
-per sample-splat. Polarized transport: see `bench/polarized_bench.jl` (to be run).
+per sample-splat. Polarized transport (`bench/polarized_bench.jl`, 128² × 1000 samples, one
+frequency): 97 ns per sample with one splat, 170 ns with four, 366 ns with sixteen (about 18 ns
+per additional splat: the Gaussian weight decides whether the frames, coefficients and exact step
+run), i.e. 6 s for a 128² Stokes image of sixteen splats and about a quarter of an hour for a
+cube of twenty frames and eight frequencies. Interval culling would remove most of the
+per-splat cost for many splats.
 
 ## Conventions that were settled by validation
 
