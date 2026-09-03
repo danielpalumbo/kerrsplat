@@ -15,6 +15,7 @@ include("test_duals.jl")
 include("test_image.jl")
 include("test_fused.jl")
 include("test_splats.jl")
+include("test_coefficients.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
 gate2_refs = gate2_references()
@@ -34,6 +35,7 @@ gate2_refs = gate2_references()
         test_splat_gradients(; res = 12, N = 120, tol = 1e-6)
         test_splat_fit(; res = 12, N = 120, iterations = 300)
         test_kernel_gradient(CPU(); res = 12, N = 120, tol = 1e-12, label = "CPU backend")
+        test_coefficients(CPU(); label = "CPU")
     end
     if CUDA.functional()
         @testset "Geodesics on CUDA" begin
@@ -49,6 +51,7 @@ gate2_refs = gate2_references()
             test_image(CUDABackend(); res = 128, N = 1000, tol = 1e-9, label = "CUDA")
             test_fused(CUDABackend(); res = 128, N = 1000, label = "CUDA")
             test_splats(CUDABackend(); res = 64, N = 1000, label = "CUDA")
+            test_coefficients(CUDABackend(); label = "CUDA")
             @test CUDA.limit(CUDA.LIMIT_STACK_SIZE) >= Geodesics.cuda_stack_bytes(Float64)
         end
     else

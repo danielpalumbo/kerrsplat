@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Bessels = "0e736298-9ec6-45e8-9647-e4fc86a2fe38"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"
 CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
@@ -20,8 +21,9 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 julia = "1.10"
 
 [extras]
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "FiniteDifferences"]
+test = ["Test", "FiniteDifferences", "DelimitedFiles"]
