@@ -42,7 +42,8 @@ export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache
 export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mino_times
 export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel
 export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
-export Direct, Recurrence, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
+export Direct, Recurrence, Fused, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
+export march_ray, fused_march!, has_samples, tiles
 export Case2, Case3, Case4, radial_marcher, PolarMarcher, radius, polar_angle, polar_angle_cos
 export radial_parameter, near_critical, NEAR_CRITICAL_ONE_MINUS_K
 export QuadratureConstants, quadrature_march!, recurrence_march!, quasi_cartesian_kerr_schild

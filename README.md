@@ -24,7 +24,9 @@ the CPU and against BigFloat references.
   Krang's closed-form evaluation at every sample; `Recurrence` advances r and θ by the Jacobi
   addition theorems, integrates the Mino-time rates for t̃ and φ with the singular parts
   removed in closed form, and re-anchors everything to Krang every 64 samples, keeping each
-  ray's largest anchor residual as an error estimate.
+  ray's largest anchor residual as an error estimate. `Fused(64)` with `fused_march!(f, out,
+  cache)` runs the same marcher inside a consumer `f(acc, j, k, sample, Δτ, pix)` without
+  storing samples; `tiles(camera, n)` splits large screens.
 - `test/` — gates 1–3 of the GPU plan: every stored quantity against Krang on the CPU, the
   recurrence against a BigFloat evaluation of the closed forms and the quadrature against a
   BigFloat integration of the rates (`test/highprec_reference.jl`), on both the CPU and the

@@ -30,24 +30,31 @@ end
 """
     Direct()
     Recurrence(M = 64)   (a `Recurrence{M}`)
+    Fused(M = 64)        (a `Fused{M}`)
 
 Marcher choice for [`regenerate!`](@ref). `Direct` evaluates Krang's closed forms at every
 sample (the reference; slow). `Recurrence{M}` advances r and θ by the Jacobi addition theorems
 and t̃, φ by quadrature of the Mino-time rates, re-anchoring everything to the closed forms
 every `M` samples (plan §4; fewer near the critical curve). The largest anchor residual of
-each ray is available in `cache.residual_t`, `cache.residual_ϕ` (sorted order).
+each ray is available in `cache.residual_t`, `cache.residual_ϕ` (sorted order). `Fused{M}` is
+the same marcher run later, inside the consumer, by [`fused_march!`](@ref): `regenerate!`
+then only rebuilds the per-pixel constants and stores no samples (plan §4 "fused mode", §7).
 """
 struct Direct end
 struct Recurrence{M} end
+struct Fused{M} end
 Recurrence(M::Integer = 64) = Recurrence{Int(M)}()
+Fused(M::Integer = 64) = Fused{Int(M)}()
 
 anchor_interval(::Recurrence{M}) where {M} = M
+anchor_interval(::Fused{M}) where {M} = M
 
 """
-    GeodesicCache(backend, camera, Val(N))
-    GeodesicCache(backend, camera, N)
+    GeodesicCache(backend, camera, Val(N); store_samples = true)
+    GeodesicCache(backend, camera, N; store_samples = true)
 
-Device-resident geodesic data for one camera and `N` samples per ray. Owns:
+Device-resident geodesic data for one camera and `N` samples per ray. With
+`store_samples = false` no sample storage is allocated (fused mode only). Owns:
 
 - `αs, βs`: the camera's pixel coordinates in screen order;
 - `perm` (device) / `perm_host`: `perm[j]` is the screen index of the pixel in sorted slot `j`;
@@ -79,10 +86,10 @@ mutable struct GeodesicCache{T,N,B<:KA.Backend,VT<:AbstractVector{T},VI<:Abstrac
     spin::T
     θo::T
     generation::Int
-    marcher::Union{Direct,Recurrence}
+    marcher::Union{Direct,Recurrence,Fused}
 end
 
-function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) where {T,N}
+function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}; store_samples::Bool = true) where {T,N}
     N >= 1 || throw(ArgumentError("need at least one sample per ray"))
     npix = npixels(camera)
     αs = KA.allocate(backend, T, npix)
@@ -92,7 +99,7 @@ function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) whe
     numreals_screen = KA.allocate(backend, Int8, npix)
     perm = KA.allocate(backend, Int, npix)
     consts = PixelConstants{T}(backend, npix)
-    samples = GeodesicSamples{T}(backend, npix, N)
+    samples = GeodesicSamples{T}(backend, store_samples ? npix : 0, N)
     residual_t = KA.allocate(backend, T, npix)
     residual_ϕ = KA.allocate(backend, T, npix)
     fill!(residual_t, zero(T))
@@ -101,7 +108,10 @@ function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) whe
     return GeodesicCache(backend, nval, αs, βs, size(camera), numreals_screen, perm,
                          collect(1:npix), empty, consts, samples, residual_t, residual_ϕ, T(NaN), T(NaN), 0, Direct())
 end
-GeodesicCache(backend::KA.Backend, camera::Camera, N::Integer) = GeodesicCache(backend, camera, Val(Int(N)))
+GeodesicCache(backend::KA.Backend, camera::Camera, N::Integer; kwargs...) = GeodesicCache(backend, camera, Val(Int(N)); kwargs...)
+
+"Whether the cache holds per-sample storage (false for fused-only caches)."
+has_samples(c::GeodesicCache) = npixels(c.samples) == npixels(c)
 
 npixels(c::GeodesicCache) = length(c.αs)
 nsamples(::GeodesicCache{T,N}) where {T,N} = N
@@ -111,7 +121,7 @@ KA.get_backend(c::GeodesicCache) = c.backend
 
 function Base.show(io::IO, c::GeodesicCache{T,N}) where {T,N}
     print(io, "GeodesicCache{$T}: ", npixels(c), " pixels ", c.screen_size, " × ", N,
-          " samples on ", nameof(typeof(c.backend)), " (", c.marcher, "); a = ", c.spin, ", θo = ", c.θo,
+          has_samples(c) ? " samples on " : " samples (not stored) on ", nameof(typeof(c.backend)), " (", c.marcher, "); a = ", c.spin, ", θo = ", c.θo,
           "; cases (4,2,0 real roots): ", length(c.ranges.case2), "/", length(c.ranges.case3),
           "/", length(c.ranges.case4))
 end
@@ -126,8 +136,10 @@ with a new camera of the same pixel count: K0 (root cases, screen order) → cas
 [`Direct`](@ref) and [`Recurrence`](@ref)). Synchronizes the backend before returning.
 Returns `cache`.
 """
-function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::Union{Direct,Recurrence} = Direct(),
+function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::Union{Direct,Recurrence,Fused} = Direct(),
                      workgroup::Integer = 256) where {T,N}
+    marcher isa Fused || has_samples(cache) ||
+        throw(ArgumentError("this cache was built without sample storage; use marcher = Fused(M) and fused_march!"))
     a = T(spin)
     θ = T(θo)
     backend = cache.backend
@@ -161,6 +173,39 @@ end
 march!(m::Recurrence, cache::GeodesicCache, ranges, met, θo) =
     quadrature_march!(cache.samples, cache.consts, cache.residual_t, cache.residual_ϕ, ranges, met, θo,
                       cache.nval, Val(anchor_interval(m)))
+march!(::Fused, cache::GeodesicCache, ranges, met, θo) = nothing
+
+"""
+    fused_march!(f, out, cache; acc0 = zero(eltype(out)), workgroup = 128)
+
+Run the marcher of `cache` (a `Fused(M)` cache after `regenerate!`, or any regenerated cache
+with `M` taken from its marcher) with the consumer `f` folded over each ray's samples,
+`acc = f(acc, j, k, sample, Δτ, pix)` starting from `acc0`, and write each ray's final
+accumulator to `out` (sorted order; `unsort`/`to_screen` map it to the screen). The anchor
+residuals of this run replace `cache.residual_t`, `cache.residual_ϕ`. Synchronizes the backend.
+"""
+function fused_march!(f, out, cache::GeodesicCache{T,N}; acc0 = zero(eltype(out)), workgroup::Integer = 128) where {T,N}
+    cache.generation >= 1 || throw(ArgumentError("regenerate! the cache first"))
+    M = cache.marcher isa Direct ? 64 : anchor_interval(cache.marcher)
+    fused_march!(f, out, acc0, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, Krang.Kerr(cache.spin), cache.θo,
+                 cache.nval, Val(M); workgroup = workgroup)
+    KA.synchronize(cache.backend)
+    return out
+end
+
+"""
+    tiles(camera, ntiles) -> Vector{Tuple{Camera, UnitRange{Int}}}
+
+Split a camera into `ntiles` cameras of consecutive pixels (screen order) with the index range
+each covers, so that a screen too large for stored samples can be regenerated tile by tile
+with a smaller cache and the per-tile results written back into the full screen (plan §7).
+"""
+function tiles(camera::Camera, ntiles::Integer)
+    npix = npixels(camera)
+    bounds = round.(Int, range(0, npix, length = ntiles + 1))
+    return [(Camera(camera.αs[bounds[i]+1:bounds[i+1]], camera.βs[bounds[i]+1:bounds[i+1]]), bounds[i]+1:bounds[i+1])
+            for i in 1:ntiles if bounds[i+1] > bounds[i]]
+end
 
 function regenerate!(cache::GeodesicCache, spin::Real, θo::Real, camera::Camera; kwargs...)
     npixels(camera) == npixels(cache) ||

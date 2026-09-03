@@ -195,11 +195,21 @@ Simpson panel of the smooth integrands plus the closed-form pieces.
     return It, Iϕ
 end
 
-# The kernel: like recurrence_march_kernel! but marching at half the sample spacing and
-# accumulating t̃, φ. `resid_t`, `resid_ϕ`: per-pixel largest anchor residuals (error estimates).
-@kernel function quadrature_march_kernel!(S, pc, resid_t, resid_ϕ, met::Krang.Kerr, θo, case, ::Val{N}, ::Val{M}, offset) where {N,M}
-    j0 = @index(Global, Linear)
-    j = j0 + offset
+"""
+    march_ray(f, acc, pc, j, met, θo, case, Val(N), Val(M)) -> (acc, resid_t, resid_ϕ)
+
+March the ray in sorted slot `j` with the recurrence plus anchored quadrature and fold the
+consumer `f` over its samples:
+
+    acc = f(acc, j, k, sample::GeodesicSample, Δτ, pix)      for k = 1 … N
+
+where `pix` is Krang's pixel (η, λ, metric, screen coordinate, …) and `Δτ` the sample
+spacing. `f` must be a bits type (a closure over device arrays or an isbits functor) because
+this runs inside kernels. Returns the final accumulator and the ray's largest anchor residuals
+in t̃ and φ. Both K2 front-ends use it: `quadrature_march!` folds a sample store, `fused_march!`
+folds the caller's consumer without storing anything (plan §4 "fused mode", §7).
+"""
+@inline function march_ray(f::F, acc, pc, j, met::Krang.Kerr, θo, case, ::Val{N}, ::Val{M}) where {F,N,M}
     pix = build_pixel(pc, j, met, θo)
     T = typeof(Krang.total_mino_time(pix))
     rm = radial_marcher(case, pix)
@@ -211,6 +221,7 @@ end
     Manchor = anchor_interval(M, one(T) - rm.k)
     Δr = jacobi_step_constants(-rm.c * h, rm.k)
     Δθ = jacobi_step_constants(pm.scale * h / pm.tempfac, pm.μ)
+    vis = VisibilityConstants(pix)
     # first sample: states and Krang's t̃, φ (the first anchor)
     xr = jacobi_state(radial_argument(rm, Δτ), rm.k)
     xθ = jacobi_state(polar_argument(pm, Δτ), pm.μ)
@@ -220,8 +231,7 @@ end
     ϕ = d1.ϕ
     rt = zero(T)
     rϕ = zero(T)
-    vis = VisibilityConstants(pix)
-    store_sample!(S, j, 1, GeodesicSample(t, pa.r, pa.θ, ϕ, pa.νr, pa.νθ, (Δτ <= τ_valid) & krang_visible(vis, pa.cosθ)))
+    acc = f(acc, j, 1, GeodesicSample(t, pa.r, pa.θ, ϕ, pa.νr, pa.νθ, (Δτ <= τ_valid) & krang_visible(vis, pa.cosθ)), Δτ, pix)
     for k in 2:N
         τa = (k - 1) * Δτ
         τb = k * Δτ
@@ -260,9 +270,36 @@ end
                 ϕ = d.ϕ
             end
         end
-        store_sample!(S, j, k, GeodesicSample(t, pb.r, pb.θ, ϕ, pb.νr, pb.νθ, (τb <= τ_valid) & krang_visible(vis, pb.cosθ)))
+        acc = f(acc, j, k, GeodesicSample(t, pb.r, pb.θ, ϕ, pb.νr, pb.νθ, (τb <= τ_valid) & krang_visible(vis, pb.cosθ)), Δτ, pix)
         pa = pb
     end
+    return acc, rt, rϕ
+end
+
+# consumer that stores every sample (K2 stored mode)
+struct StoreSamples{S}
+    S::S
+end
+@inline function (c::StoreSamples)(acc, j, k, s::GeodesicSample, Δτ, pix)
+    store_sample!(c.S, j, k, s)
+    return acc
+end
+
+# K2 stored mode: one thread per ray of one root case (`offset` = first slot of the case − 1)
+@kernel function quadrature_march_kernel!(S, pc, resid_t, resid_ϕ, met::Krang.Kerr, θo, case, ::Val{N}, ::Val{M}, offset) where {N,M}
+    j0 = @index(Global, Linear)
+    j = j0 + offset
+    _, rt, rϕ = march_ray(StoreSamples(S), nothing, pc, j, met, θo, case, Val(N), Val(M))
+    @inbounds resid_t[j] = rt
+    @inbounds resid_ϕ[j] = rϕ
+end
+
+# K2 fused mode: the consumer's accumulator per ray goes to `out[j]`
+@kernel function fused_march_kernel!(out, pc, resid_t, resid_ϕ, met::Krang.Kerr, θo, case, f, acc0, ::Val{N}, ::Val{M}, offset) where {N,M}
+    j0 = @index(Global, Linear)
+    j = j0 + offset
+    acc, rt, rϕ = march_ray(f, acc0, pc, j, met, θo, case, Val(N), Val(M))
+    @inbounds out[j] = acc
     @inbounds resid_t[j] = rt
     @inbounds resid_ϕ[j] = rϕ
 end
@@ -286,4 +323,22 @@ function quadrature_march!(S::GeodesicSamples, pc::PixelConstants, resid_t, resi
                                                      ndrange = length(rng))
     end
     return S
+end
+
+"""
+    fused_march!(f, out, acc0, pc, resid_t, resid_ϕ, ranges, met, θo, Val(N), Val(M); workgroup = 128)
+
+Run the marcher with the consumer `f` folded over every ray's samples (see [`march_ray`](@ref))
+and write each ray's final accumulator to `out` (sorted order); nothing is stored per sample.
+"""
+function fused_march!(f, out, acc0, pc::PixelConstants, resid_t, resid_ϕ, ranges, met::Krang.Kerr, θo,
+                      ::Val{N}, ::Val{M}; workgroup::Integer = 128) where {N,M}
+    length(out) == npixels(pc) || throw(DimensionMismatch("output and pixel counts differ"))
+    backend = KA.get_backend(out)
+    for (case, rng) in ((Case2(), ranges.case2), (Case3(), ranges.case3), (Case4(), ranges.case4))
+        isempty(rng) && continue
+        fused_march_kernel!(backend, workgroup)(out, pc, resid_t, resid_ϕ, met, θo, case, f, acc0, Val(N), Val(M), first(rng) - 1;
+                                                ndrange = length(rng))
+    end
+    return out
 end

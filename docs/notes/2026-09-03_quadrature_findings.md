@@ -81,6 +81,18 @@ against a median of 1e-10), which is what the test uses. Krang's
 `boyer_lindquist_to_quasi_cartesian_kerr_schild*` cannot compile in CUDA kernels (a `@warn`),
 so `Geodesics.quasi_cartesian_kerr_schild` provides the same map (upstream issue 10).
 
+## Fused mode (plan step 6)
+
+`march_ray(f, acc, …)` folds a consumer over a ray's samples inside the kernel; the stored
+mode is the consumer that writes `GeodesicSamples`, and `fused_march!(f, out, cache)` runs any
+isbits consumer `f(acc, j, k, sample, Δτ, pix)` with no per-sample storage (a `Fused(M)` cache
+allocates none: 256² × 1000 samples need 2.2 GB stored, nothing fused). The fused splat image
+equals the stored-sample one bitwise on the CPU and to 2e-13 on CUDA (the two kernels are
+compiled separately and contract floating-point operations differently). With the test splat
+as consumer the fused kernel costs 14.9 ns per sample (8.5 for the march, ~6 for the
+consumer's momentum Jacobians and exponential), 256² × 1000 in 0.97 s. `tiles(camera, n)`
+splits a screen into consecutive pixel blocks for stored-mode runs that do not fit.
+
 ## Duals (plan step 5, gate 4)
 
 ForwardDiff `Dual{2}` for (a, θo) propagate through K1, the direct marcher and the
