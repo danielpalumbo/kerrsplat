@@ -157,6 +157,7 @@ function test_splat_fit(; res::Int, N::Int, iterations::Int)
     Lmin = L0
     for it in 1:iterations
         g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p)[1]
+        g[14, :] .= 0                                  # the pattern rate stays frozen in this static-splat fit
         opt, p = Optimisers.update(opt, p, g)
         Lmin = min(Lmin, loss(p))
     end
