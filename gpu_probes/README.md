@@ -4,20 +4,16 @@ Scripts behind the measurements in `../docs/plans/kerrsplat_gpu_geodesics_plan.m
 
 ## Setup (once)
 
-1. Krang.jl must be a git checkout of `main`, not the registered v0.4.1 (which lacks the GPU
-   extensions, three geodesic root fixes and a Walker–Penrose polarization fix). The project
-   Manifest expects it at `/home/daniel/local_scripts/Krang.jl`:
+The Manifests in this directory and in `../smoketests` pin Krang.jl to the git commit
+`f36f43a` of `main` (the registered v0.4.1 lacks the GPU extensions, three geodesic root fixes
+and a Walker–Penrose polarization fix). Instantiate and pin the CUDA runtime to the driver's
+CUDA version (12.8 for driver 570); without the pin, CUDA.jl 6.3 selects a CUDA 13.3 toolchain
+through its forward-compatibility shim and the kernels fail to load on GeForce cards:
 
-       git clone https://github.com/dchang10/Krang.jl /home/daniel/local_scripts/Krang.jl
-       git -C /home/daniel/local_scripts/Krang.jl checkout f36f43a
+    julia --project=. -e 'import Pkg; Pkg.instantiate(); using CUDA; CUDA.set_runtime_version!(v"12.8")'
 
-2. Instantiate this environment and pin the CUDA runtime to the driver's CUDA version
-   (12.8 for driver 570). Without the pin, CUDA.jl 6.3 selects a CUDA 13.3 toolchain through its
-   forward-compatibility shim and the kernels fail to load on GeForce cards.
-
-       julia --project=. -e 'import Pkg; Pkg.develop(path="/home/daniel/local_scripts/Krang.jl"); Pkg.instantiate(); using CUDA; CUDA.set_runtime_version!(v"12.8")'
-
-   `LocalPreferences.toml` in this directory already carries that pin.
+`LocalPreferences.toml` in this directory already carries that pin. If Pkg hangs while cloning
+Krang, set `JULIA_PKG_USE_CLI_GIT=true` so it uses the system git (and gh's credential helper).
 
 ## Running
 
