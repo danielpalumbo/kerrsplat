@@ -43,3 +43,12 @@ CUDA's default; `regenerate!` raises it through `Geodesics.prepare_backend!`.
   needed to run Krang inside CUDA kernels (see its README).
 
 See `CLAUDE.md` for the conventions that apply to all work in this repository.
+
+## License
+
+KerrSplat is released under the Apache License, Version 2.0 (see `LICENSE`; attribution
+notices in `NOTICE`). Dependencies are installed by the package manager under their own
+licenses. The reference tables and images under `validation/` were produced with the
+GPL-licensed codes ipole and symphony, which are not included: the small driver programs
+there are built against local checkouts of those codes, and the committed files are their
+numerical output.
