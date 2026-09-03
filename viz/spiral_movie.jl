@@ -1,6 +1,6 @@
 # Splats spiraling into a Kerr black hole, side by side with the ray-traced movie.
 #
-#     julia -t 8 --project=viz viz/spiral_movie.jl [--frames 240] [--res 160] [--samples 400] [--cpu]
+#     julia -t 8 --project=viz viz/spiral_movie.jl [--frames 240] [--res 320] [--samples 400] [--cpu]
 #
 # Left panel: the equatorial plane seen from the observer's side (a top view mirrored so that left
 # and right agree with the image; the observer is toward the bottom), with the horizon, the splats
@@ -31,7 +31,7 @@ const KA = KernelAbstractions
 # ---- options ---------------------------------------------------------------------------------
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
 const NFRAMES = getopt("--frames", 240)
-const RES = getopt("--res", 160)
+const RES = getopt("--res", 320)
 const NSAMPLES = getopt("--samples", 400)
 const USE_CPU = "--cpu" in ARGS
 const SPIN = 0.94
