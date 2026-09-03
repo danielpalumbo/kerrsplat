@@ -27,7 +27,7 @@ include("step.jl")
 include("frames.jl")
 include("transport.jl")
 
-export StokesCoefficients, thermal_synchrotron, powerlaw_synchrotron, thermal_emissivity_leung,
+export StokesCoefficients, thermal_synchrotron, powerlaw_synchrotron, powerlaw_rotativities, powerlaw_rotativities_valid, thermal_emissivity_leung,
        thermal_synchrotron_pandya, planck, planck_invariant, invariants, cap_polarization
 export transfer_step, RadiativeState, advance, rotate_to_screen
 export LocalFrame, local_frame, boost_zamo_to_fluid, walker_penrose, screen_direction

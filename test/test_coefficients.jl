@@ -113,3 +113,35 @@ function test_coefficients(backend; tol = 1e-12, label = "")
 end
 
 adapt_to(backend, x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)); copyto!(y, x); y)
+
+"""
+Power-law rotativities (Jones & O'Dell 1977 via Dexter 2016) against symphony's numerical
+susceptibility-tensor integration (validation/symphony/powerlaw_rho_table.csv, produced by the
+driver in validation/symphony/rho_pl.c built against the full symphony code). The closed forms
+are approximate (valid for ν ≫ ν_min): the gate checks the sign of both coefficients and the
+magnitude within the accuracy Dexter (2016) reports for them.
+"""
+function test_powerlaw_rotativities(; tol_V = 0.05, tol_Q = 0.35)
+    path = joinpath(SYMPHONY_DIR, "powerlaw_rho_table.csv")
+    if !isfile(path)
+        @warn "symphony power-law rotativity table not found; skipping"
+        return
+    end
+    tb, n = read_table("powerlaw_rho_table.csv")
+    @testset "power-law rotativities vs symphony ($n rows)" begin
+        worstV = 0.0; worstQ = 0.0; nsignV = 0; nsignQ = 0; used = 0
+        for i in 1:n
+            ν, B, θ, p, γmin, γmax, ne = tb["nu"][i], tb["B"][i], tb["theta"][i], tb["p"][i], tb["gamma_min"][i], tb["gamma_max"][i], tb["ne"][i]
+            (isfinite(tb["rhoQ"][i]) && isfinite(tb["rhoV"][i])) || continue
+            powerlaw_rotativities_valid(γmin, B, ν, θ) || continue    # outside the validity window of the closed forms
+            used += 1
+            ρQ, ρV = powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ)
+            nsignV += sign(ρV) == sign(tb["rhoV"][i]); nsignQ += sign(ρQ) == sign(tb["rhoQ"][i])
+            worstV = max(worstV, abs(ρV / tb["rhoV"][i] - 1)); worstQ = max(worstQ, abs(ρQ / tb["rhoQ"][i] - 1))
+        end
+        @test nsignV == used && nsignQ == used
+        @test worstV < tol_V
+        @test worstQ < tol_Q
+        @info "power-law rotativities vs symphony on $used rows with ν > 3 ν_min: worst relative differences ρV $worstV, ρQ $worstQ; signs agree on $nsignV / $nsignQ"
+    end
+end
