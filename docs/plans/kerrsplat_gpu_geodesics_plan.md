@@ -2,6 +2,19 @@
 
 **Date:** 2026-09-02. Companion to `kerrsplat_evaluation_and_plan.md` (2026-07-09) and `kerrsplat_maximal_generality_addendum.md` (2026-07-10). Scope: the geodesic layer only, i.e. everything that changes when spin `a`, inclination `θo`, or the camera changes. Inference is out of scope here.
 
+> **Status 2026-09-03** (`KerrSplat.Geodesics`, PRs #2–#4): steps 2–6 of §9 are implemented and
+> gates 1–5 of §8 pass on the CPU backend and on CUDA. Measured on the RTX 2080 SUPER for
+> 256² × 1000 samples in Float64: K1 18 ms; K2 with Krang's direct evaluation 8.2 s (125 ns/sample);
+> the recurrence for r, θ alone 0.14 s (2 ns/sample); the full recurrence + anchored quadrature for
+> (t̃, r, θ, φ) 0.55 s (8.5 ns/sample); duals for (a, θo) flow through everything. Against a
+> BigFloat evaluation of the closed forms the recurrence reaches 1e-11 in r and θ where Krang's
+> inputs allow it, and the quadrature 1e-9 in t̃ and φ inside 50 M; where it differs from Krang's
+> closed forms by more, Krang is the one off (`docs/notes/`). The design change relative to §4:
+> t̃ and φ are integrated after three singular pieces are removed in closed form (large r, both
+> horizon poles, the polar-axis part of the third-kind integral), which is what makes one Simpson
+> panel per sample enough; no pixel needs the §5 direct fallback (the near-critical flag exists for
+> 1 − k < 1e-7, where JacobiElliptic's amplitude breaks and Krang's direct evaluation is unusable too).
+
 **Requirement.** After changing `(a, θo)` the full set of per-pixel, per-sample geodesic data (t̃, r, θ, φ, momentum signs, and hence p_μ) must be regenerated quickly, on the GPU, using only the CUDA stack (CUDA.jl + KernelAbstractions kernels, no XLA/Reactant), with derivatives with respect to `(a, θo)` available at small extra cost.
 
 **Verdict.** Krang's analytic (Gralla–Lupsasca) formulation is the right GPU formulation: no ODE, every sample is an O(1) closed-form evaluation, perfectly data-parallel. All of it already runs on this machine's GPU in Float64 after four small fixes (§2). But a *direct* port is not fast on a consumer card: the per-sample evaluation calls six to eight incomplete elliptic integrals, and at 1/32-rate FP64 that is only 2× faster than the 16-thread CPU (§3). The plan therefore changes the per-sample algorithm: the Jacobi functions that give r(τ) and θ(τ) are advanced by their **addition theorems** (a rational recurrence, no transcendental calls), and t(τ), φ(τ) come from **cumulative quadrature of the Mino-time rates** anchored to Krang's exact values every few dozen samples (§4). Expected cost is a few nanoseconds per sample in Float64, i.e. a 256²×1000-sample recompute in ~0.1–0.3 s on this RTX 2080 SUPER, versus 14 s on the CPU today. Spacetime derivatives come from ForwardDiff dual numbers propagated through the same kernels, verified today against finite differences to 1e-8 (§6).

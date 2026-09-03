@@ -15,20 +15,27 @@ elementary antiderivative:
    monotone leg; the interval containing the radial turning point is split there (dr/dτ = 0,
    r = r₄ known), with three direct Jacobi evaluations for that one interval.
 2. **Horizon** (plunging rays): both poles of 1/Δ = 1/((r − r₊)(r − r₋)) by partial fractions,
-   (dr/dτ)/s₊ · Σ± Q± r±/(r(r − r±)) with Q± the residues and s₊ = dr/dτ at r₊; integral
-   (1/s₊) Σ± Q± Δ ln((r − r±)/r). The inner pole is never reached, but for near-extremal spin
-   it sits only 2√(1 − a²) inside the horizon (0.09 M at a = 0.999) and its tail is not
-   smooth on the sample spacing of the final plunge: subtracting only r₊ left 5e-6 in t̃ at
-   the last sample of an a = 0.999 ray; with both, 2e-7 at r − r₊ = 0.01 M, 1e-8 at r = 1.1 r₊
-   and 4e-11 outside r₊(1 + 0.15) (Krang: 2e-8, 1e-9, 1e-12). The residual of the r₋ term
-   still varies on the scale r − r₋ ≈ 2√(1 − a²) through the factor dr/dτ ÷ s₊; a rational
-   model of dr/dτ near r₊ would remove that too, but those last samples carry no emission
-   (g → 0) and every consumer discards them (plan §10).
-3. **Polar axis**: with φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), the elementary part
-   λ C f g_c A(φ_am), A(φ) = arctan(√(1−n) tan φ)/√(1−n) unfolded by the winding number of
-   X, g_c = 1/√(1 − μ); the remainder λ C (1 − g_c dn X)/(1 − n sn²X) is bounded and O(μ).
-   Without this, rays passing within a few degrees of the axis needed 30–1000 substeps; with
-   it, one panel reaches 1e-11 at 1000 samples on a ray grazing the axis at 14 mrad.
+   Σ± Q± (dr/dτ)/s± · r±/(r(r − r±)) with Q± the residues and s± = dr/dτ continued to r±
+   (√R(r±) = |r±² + a² − aλ| because Δ(r±) = 0), so that each subtracted term carries exactly
+   the pole it removes; integral Σ± (Q±/s±) Δ ln((r − r±)/r). The inner pole is never reached,
+   but for near-extremal spin it sits only 2√(1 − a²) inside the horizon (0.09 M at a = 0.999)
+   and its tail is not smooth on the sample spacing of the final plunge: subtracting only r₊
+   left 5e-6 in t̃ at the last sample of an a = 0.999 ray; both poles normalized with s₊ gave
+   2e-7 there; with s₋ for the r₋ term the quadrature matches Krang's own error to two digits
+   all the way in (2.2e-8 at r − r₊ = 0.01 M, 1e-8 at 0.02, 3e-9 at 0.05, where the
+   BigFloat reference itself is limited by the pole a sample away). The gate-3 comparison with
+   the BigFloat reference still stops at r₊(1 + 0.15), where every consumer has long discarded
+   the samples (plan §10).
+3. **Polar axis**: with φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), the integral
+   ∫ dX/(1 − n sn²X) = ∫ g(φ) dφ/(1 − n sin²φ) with g = 1/dn = g_c (1 + m' cos²φ)^(−1/2),
+   g_c = 1/√(1 − μ), m' = μ/(1 − μ) ∈ (−1, 0). The first two terms of g in cos²φ integrate
+   elementarily, A(φ) = arctan(√(1−n) tan φ)/√(1−n) and φ/n − (1−n)/n A(φ) (both unfolded by
+   the winding number of X), leaving a remainder λ C [1 − g_c dn (1 − ½ m' cn²)]/(1 − n sn²)
+   that is bounded and vanishes at the spike like cn⁴. Without any of this, rays passing within
+   a few degrees of the axis needed 30–1000 substeps; with the first term alone, one panel
+   reached 1e-11 at 1000 samples on a ray grazing the axis at 14 mrad but still left 6e-8 per
+   polar crossing at 7 mrad (a = 0.999, τ_total = 2.2); with both terms that ray is at 6e-11,
+   Krang's own level there.
 
 Convergence (CPU prototype, N samples, one panel each, errors against Krang, absolute):
 

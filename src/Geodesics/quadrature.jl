@@ -12,16 +12,23 @@
 #    whose integral is |Δ(r + 2 ln r)| on each monotone leg (the interval containing the
 #    radial turning point of a scattering ray is split there);
 #  * the horizon (plunging rays, 1/Δ = 1/((r − r₊)(r − r₋))): both poles by partial fractions,
-#    subtracting (dr/dτ)/s₊ · Σ± Q± r±/(r(r − r±)) with Q± the residues at r± and s₊ = dr/dτ at
-#    r₊; the integral is (1/s₊) Σ± Q± Δ ln((r − r±)/r). The r₋ pole is never reached but for
-#    near-extremal spin it sits only r₊ − r₋ ≈ 2√(1−a²) inside the horizon and its tail is not
-#    smooth on the sample spacing of the final plunge (a = 0.999: 5e-6 in t̃ without it);
+#    subtracting Σ± Q± (dr/dτ)/s± · r±/(r(r − r±)) with Q± the residues at r± and s± = dr/dτ
+#    continued to r± (√R(r±) = |r±² + a² − aλ| since Δ(r±) = 0), so that each subtracted term
+#    has exactly the pole it removes; the integral is Σ± (Q±/s±) Δ ln((r − r±)/r). The r₋ pole
+#    is never reached but for near-extremal spin it sits only r₊ − r₋ ≈ 2√(1−a²) inside the
+#    horizon and its tail is not smooth on the sample spacing of the final plunge (a = 0.999:
+#    5e-6 in t̃ with only the r₊ pole removed);
 #  * the polar axis (λ/sin²θ, a spike of width ~θ_min at every polar turning point): with
-#    φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), ∫ λ dτ/sin²θ = λ C f [ g_c A(φ_am) +
-#    (1/f)∫(1 − g_c dn X)/(1 − n sn²X) dτ ], where A(φ) = ∫ dφ/(1 − n sin²φ) =
-#    arctan(√(1−n) tan φ)/√(1−n) (unfolded by the winding number of X), g_c = 1/√(1 − μ),
-#    and the remaining integrand is bounded and O(μ) (μ is the polar parameter, small for
-#    axis-grazing rays).
+#    φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), ∫ dX/(1 − n sn²X) = ∫ g(φ) dφ/(1 − n sin²φ)
+#    with g = 1/dn = (1 − μ sin²φ)^(−1/2) = g_c (1 + m' cos²φ)^(−1/2), g_c = 1/√(1 − μ),
+#    m' = μ/(1 − μ) ∈ (−1, 0). The first two terms of g in cos²φ integrate elementarily:
+#    ∫ dφ/(1 − n sin²φ) = A(φ) = arctan(√(1−n) tan φ)/√(1−n) and ∫ cos²φ dφ/(1 − n sin²φ) =
+#    φ/n − (1−n)/n A(φ) (both unfolded by the winding number of X), so
+#    ∫ λ dτ/sin²θ = λ C f g_c [(1 + ½ m' (1−n)/n) A − ½ (m'/n) φ] + (1/f)∫ R dτ with
+#    R = λ C [1 − g_c dn X (1 + ½ m' cn²X)]/(1 − n sn²X), which is O(m'² cn⁴/(1 − n sn²)):
+#    bounded, and vanishing at the spike like cn⁴, so one Simpson panel resolves it even on
+#    rays grazing the axis at a few milliradians (first-order split: 6e-8 per crossing at
+#    θ_min = 7 mrad; second-order: below 1e-10).
 #
 # Every M samples (fewer near the critical curve) the Jacobi states and (t̃, φ) are reset to
 # Krang's direct evaluation; the largest |quadrature − direct| over a ray's anchors is stored
@@ -38,7 +45,8 @@ struct QuadratureConstants{T}
     η::T
     rp::T          # outer horizon r₊
     rmn::T         # inner horizon r₋
-    sp::T          # dr/dτ at the horizon on the inbound leg
+    sp::T          # dr/dτ at r₊ on the inbound leg
+    sm::T          # dr/dτ continued to r₋
     Qt::T          # residue of dt/dτ at r₊ (partial fractions of 1/Δ)
     Qtm::T         # residue at r₋
     Qϕ::T          # same for dφ/dτ
@@ -51,6 +59,7 @@ struct QuadratureConstants{T}
     n::T
     sqrt_eps::T    # √(1 − n)
     gc::T          # 1/√(1 − μ)
+    mp::T          # m' = μ/(1 − μ)
     f::T
     offset::T
     K2::T          # 2K(μ): am(X + 2K) = am(X) + π
@@ -64,9 +73,11 @@ end
     rp = one(T) + sqrt(one(T) - a^2)
     rmn = one(T) - sqrt(one(T) - a^2)
     E = rp^2 + a^2 - a * λ
+    Em = rmn^2 + a^2 - a * λ
     sp = -abs(E)
+    sm = -abs(Em)
     Qt = (rp^2 + a^2) * E / (rp - rmn)
-    Qtm = -(rmn^2 + a^2) * (rmn^2 + a^2 - a * λ) / (rp - rmn)
+    Qtm = -(rmn^2 + a^2) * Em / (rp - rmn)
     Qϕ = a * (2 * rp - a * λ) / (rp - rmn)
     Qϕm = -a * (2 * rmn - a * λ) / (rp - rmn)
     scattering = case isa Case2 && !isfinite(radial_valid_until(rm))   # turning point outside the horizon
@@ -81,8 +92,8 @@ end
         n = up
     end
     K2 = 2 * JacobiElliptic.K(pm.μ) / pm.scale
-    return QuadratureConstants(a, λ, η, rp, rmn, sp, Qt, Qtm, Qϕ, Qϕm, rm.fo, r4, scattering, C, n,
-                               sqrt(max(one(T) - n, zero(T))), inv(sqrt(one(T) - μ)), pm.tempfac, pm.offset, K2)
+    return QuadratureConstants(a, λ, η, rp, rmn, sp, sm, Qt, Qtm, Qϕ, Qϕm, rm.fo, r4, scattering, C, n,
+                               sqrt(max(one(T) - n, zero(T))), inv(sqrt(one(T) - μ)), μ / (one(T) - μ), pm.tempfac, pm.offset, K2)
 end
 
 "Antiderivative of the large-r subtraction |dr/dτ|(1 + 2/r) along a monotone leg."
@@ -90,15 +101,23 @@ end
 
 
 """
-    polar_A(qc, τ, sn, cn)
+    polar_A(qc, τ, sn, cn) -> (A, φ)
 
-The elementary polar antiderivative A(am X) = ∫ dφ/(1 − n sin²φ), unfolded by the winding
-number of X = (τ + offset)/f (am(X + 2K) = am(X) + π; tan(am X) = sn X / cn X).
+The elementary polar antiderivative A(φ) = ∫ dφ/(1 − n sin²φ) at φ = am X, and φ itself,
+both unfolded by the winding number of X = (τ + offset)/f (am(X + 2K) = am(X) + π;
+tan(am X) = sn X / cn X).
 """
 @inline function polar_A(qc::QuadratureConstants{T}, τ, sn, cn) where {T}
     X = (τ + qc.offset) / qc.f
     nw = floor((X + qc.K2 / 2) / qc.K2)
-    return (atan(qc.sqrt_eps * sn / cn) + nw * T(π)) / qc.sqrt_eps
+    return (atan(qc.sqrt_eps * sn / cn) + nw * T(π)) / qc.sqrt_eps, atan(sn / cn) + nw * T(π)
+end
+
+"The closed-form polar piece λ C f g_c [(1 + ½ m' (1−n)/n) A − ½ (m'/n) φ] at one point."
+@inline function polar_closed_form(qc::QuadratureConstants{T}, τ, sn, cn) where {T}
+    A, φ = polar_A(qc, τ, sn, cn)
+    ε = qc.sqrt_eps * qc.sqrt_eps
+    return qc.λ * qc.C * qc.f * qc.gc * ((1 + qc.mp * ε / (2 * qc.n)) * A - qc.mp / (2 * qc.n) * φ)
 end
 
 """
@@ -115,9 +134,9 @@ The Simpson integrands: the Mino-time rates minus the three singular pieces. `s 
     ft = (r^2 + a^2) * (r^2 + a^2 - a * λ) / Δ + a * (λ - a * s2)
     fϕ = a * (2 * r - a * λ) / Δ
     wp = s * qc.rp / (r * (r - qc.rp)) / qc.sp
-    wm = s * qc.rmn / (r * (r - qc.rmn)) / qc.sp
+    wm = s * qc.rmn / (r * (r - qc.rmn)) / qc.sm
     gt = ft - abs(s) * (1 + 2 / r) - qc.Qt * wp - qc.Qtm * wm
-    gpol = λ * qc.C * (1 - qc.gc * dn) / (1 - qc.n * sn * sn)
+    gpol = λ * qc.C * (1 - qc.gc * dn * (1 - qc.mp * cn * cn / 2)) / (1 - qc.n * sn * sn)
     gϕ = fϕ - qc.Qϕ * wp - qc.Qϕm * wm + gpol
     return gt, gϕ
 end
@@ -188,10 +207,10 @@ Simpson panel of the smooth integrands plus the closed-form pieces.
     ra, rb = pa.r, pb.r
     ΔFr = (rb - ra) + 2 * log(rb / ra)                                   # Δ(r + 2 ln r)
     ΔFp = log((rb - qc.rp) * ra / ((ra - qc.rp) * rb)) / qc.sp            # Δ ln((r − r₊)/r) / s₊
-    ΔFm = log((rb - qc.rmn) * ra / ((ra - qc.rmn) * rb)) / qc.sp          # Δ ln((r − r₋)/r) / s₊
+    ΔFm = log((rb - qc.rmn) * ra / ((ra - qc.rmn) * rb)) / qc.sm          # Δ ln((r − r₋)/r) / s₋
     It = simpson3(pa.gt, pm_.gt, pb.gt, h) + abs(ΔFr) + qc.Qt * ΔFp + qc.Qtm * ΔFm
     Iϕ = simpson3(pa.gϕ, pm_.gϕ, pb.gϕ, h) + qc.Qϕ * ΔFp + qc.Qϕm * ΔFm +
-         qc.λ * qc.C * qc.f * qc.gc * (polar_A(qc, τb, pb.sn, pb.cn) - polar_A(qc, τa, pa.sn, pa.cn))
+         polar_closed_form(qc, τb, pb.sn, pb.cn) - polar_closed_form(qc, τa, pa.sn, pa.cn)
     return It, Iϕ
 end
 
