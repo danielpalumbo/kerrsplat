@@ -123,3 +123,60 @@ function test_pattern_vs_fluid(; res = 8, N = 80, iterations = 120)
         @info "pattern vs fluid: loss $L0 → $Lmin; ω $(p[21]) (true $(p_true[21])), ũ ($(round(p[18], digits = 3)), $(round(p[19], digits = 3))) (true (0, 0.35)), field angle $(round(p[16], digits = 3)) (true 1.0), log density error $(abs(p[13] - p_true[13]))"
     end
 end
+
+"""
+Motion mode C: a splat advected by its own ZAMO velocity. With the Keplerian ZAMO velocity at
+r = 6 the integrated trajectory is the circular orbit, so the knot model reproduces the pattern
+rotation (mode B) at the Keplerian rate; the BL inverse transform round-trips; and the movie
+frames of the two modes agree.
+"""
+function test_advection(backend; res = 24, N = 200, label = "")
+    Geodesics.prepare_backend!(backend)
+    @testset "advected splats vs pattern rotation ($label)" begin
+        a = 0.9; θo = deg2rad(60.0); met = Krang.Kerr(a)
+        # inverse transform round-trip
+        for (r, θ, ϕ) in ((6.0, 1.2, 0.4), (2.5, 0.3, 3.0), (15.0, 2.9, -1.0))
+            x, y, z = quasi_cartesian_kerr_schild(met, r, θ, ϕ)
+            rb, θb, ϕb = boyer_lindquist(met, x, y, z)
+            @test isapprox(rb, r; atol = 1e-12) && isapprox(θb, θ; atol = 1e-12) && abs(rem2pi(ϕb - ϕ, RoundNearest)) < 1e-12
+        end
+        # Keplerian ZAMO velocity at (r = 6, equator): u^ϕ/u^t = Ω_K; ZAMO φ̂ component ũ_φ = γ β_φ with β from Ω
+        r0 = 6.0
+        Ω = 1 / (r0^1.5 + a)
+        gdd = Krang.metric_dd(met, r0, π / 2)
+        ut = 1 / sqrt(-(gdd[1, 1] + 2Ω * gdd[1, 4] + Ω^2 * gdd[4, 4]))
+        uz = Krang.jac_zamo_u_bl_d(met, r0, π / 2) * SVector(ut, 0.0, 0.0, Ω * ut)
+        ũ = SVector(uz[2], uz[3], uz[4])
+        @test abs(uz[2]) < 1e-12 && abs(uz[4]) < 1e-12
+        x0, y0, z0 = quasi_cartesian_kerr_schild(met, r0, π / 2, 0.0)
+        pB = zeros(NPOLARIZEDPARAMS, 1)
+        pB[:, 1] = [x0, y0, z0, log(1.0), log(1.0), log(0.7), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(20.0), log(30.0), 1.0, 0.5, ũ..., Ω]
+        pC = copy(pB); pC[21] = 0.0
+        # the knots must cover every emission time of the movie: t_obs minus the lookback of any sample that
+        # can see the splat (lensed paths reach the splat tens of M before the direct one); outside the
+        # knots the centre is clamped
+        times = collect(-40.0:1.0:120.0)
+        knots = trajectory_knots(pC, met, times; substeps = 8)
+        # the knots lie on the circular orbit at the Keplerian phase (in KS coordinates the BL azimuth shift is constant at fixed r)
+        worst = 0.0
+        for (k, t) in enumerate(times)
+            φ = Ω * t
+            expected = SVector(x0 * cos(φ) - y0 * sin(φ), x0 * sin(φ) + y0 * cos(φ), z0)
+            worst = max(worst, norm(SVector(knots[1, k, 1], knots[2, k, 1], knots[3, k, 1]) - expected))
+        end
+        @test worst < 1e-8
+        L = gravitational_radius(4e6); ν = 230e9
+        camera = Geodesics.Camera((-10.0, 10.0), (-10.0, 10.0), res)
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = false)
+        regenerate!(cache, a, θo; marcher = Fused(64))
+        t_obs = 33.0
+        outB = KernelAbstractions.allocate(backend, RadiativeState{Float64}, npixels(cache))
+        fused_march!(RadiativeTransport(PolarizedSplats(adapt_to(backend, pB), t_obs), ν, L), outB, cache)
+        outC = KernelAbstractions.allocate(backend, RadiativeState{Float64}, npixels(cache))
+        fused_march!(RadiativeTransport(KnotSplats(adapt_to(backend, pC), t_obs, adapt_to(backend, knots), adapt_to(backend, times)), ν, L), outC, cache)
+        SB = map(st -> observed_stokes(st, ν), Array(outB)); SC = map(st -> observed_stokes(st, ν), Array(outC))
+        err = sqrt(sum(norm.(SB .- SC) .^ 2) / sum(norm.(SB) .^ 2))
+        @test err < 5e-3                                  # linear interpolation between knots 1 M apart on an orbit of period 100 M
+        @info "advection: knots on the Keplerian orbit to $worst M; movie frame of the knot model vs the pattern rotation: relative L2 difference $err ($label)"
+    end
+end
