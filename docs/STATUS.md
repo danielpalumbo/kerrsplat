@@ -24,6 +24,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | χ², staged minibatched Adam, hygiene | `Fit` | noisy movie reaches the noise floor; merge exact | χ²/N = 1.0; 1e-12 |
 | Spacetime derivatives of polarized images | `Transfer`/`Splats` | finite differences | 3e-6 |
 | Fisher audit | `Fit` | (finding) nₑ–B–Θe degeneracy at one frequency | σ 0.58 → 0.45 with a second frequency |
+| Power-law rotativities (Jones & O'Dell) | `Transfer` | symphony's numerical susceptibility integration | signs everywhere, ρ_V 3%, ρ_Q 30% in the validity window |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
@@ -44,7 +45,8 @@ per sample-splat. Polarized transport: see `bench/polarized_bench.jl` (to be run
 
 - GPU-side reverse-mode gradients: Enzyme 0.13.199 (the newest release) fails device-side inside
   kernels; the host path on the CPU backend is what the fits use. Forward-mode duals work on both.
-- Power-law and κ rotativities (Marszewski+ 2021), κ distributions.
+- κ distributions (Marszewski+ 2021 have the κ rotativity fits; symphony's κ emissivities need
+  the hypergeometric function on the GPU).
 - Interval culling of splats along rays (performance; accuracy first).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii) and the visibility-domain likelihood.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
@@ -54,5 +56,5 @@ per sample-splat. Polarized transport: see `bench/polarized_bench.jl` (to be run
 
 #7 integrates the earlier stack into `main`; #8–#12 are Phase 2 (coefficients, step, frames,
 Gold fluxes, polarized transport); #13 polarized splats; #14 slow light; #15 pattern rotation
-and cubes; #16 Fit; #17 spacetime duals and Fisher; #18 advection. Each is stacked on the
-previous one.
+and cubes; #16 Fit; #17 spacetime duals and Fisher; #18 advection; #19 this page; #20
+power-law rotativities. Each is stacked on the previous one.
