@@ -1,0 +1,11 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/docs/build/
+# logs and scratch output from probes/tests
+*.log
+# third-party papers stay in Dropbox, not in git
+*.pdf
+# Claude Code local settings
+.claude/settings.local.json

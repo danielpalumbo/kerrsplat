@@ -1,0 +1,37 @@
+# KerrSplat: working conventions
+
+## What this is
+Gaussian splatting of plasma into Kerr spacetime, fitted to Stokes IQUV movies. Plans live in
+`docs/plans/`; the newest (`kerrsplat_gpu_geodesics_plan.md`) supersedes earlier text where
+they disagree. Accuracy and correctness matter far more than speed: every physics or numerics
+change is validated (usually against Krang's direct evaluation, finite differences, or ipole)
+before any performance work.
+
+## Environment facts (this workstation)
+- Julia 1.10 (juliaup `lts`). GPU: RTX 2080 SUPER (sm_75, 8 GB, FP64 at 1/32 rate),
+  driver 570 (CUDA 12.8), 16 CPU threads, 31 GB RAM.
+- Krang.jl must be the git `main` branch pinned to commit `f36f43a` (2026-08-15), never the
+  registered v0.4.1 (stale: no GPU extensions, missing root fixes and a 2026-07-06
+  Walker–Penrose polarization fix; numerically different). Environments here add it with
+  `Pkg.add(url="https://github.com/dchang10/Krang.jl", rev="f36f43a")`.
+- CUDA.jl needs `CUDA.set_runtime_version!(v"12.8")` in every environment on this machine
+  (its compat shim otherwise selects a CUDA 13 toolchain that GeForce cards cannot load).
+- Krang code inside CUDA kernels needs `CUDA.limit!(CUDA.LIMIT_STACK_SIZE, 4096)` and fully
+  concrete pixel types; never build kernels with `julia -g2` (Unicode identifiers break ptxas).
+- Enzyme reverse mode inside KernelAbstractions kernels requires compile-time trip counts
+  (`Val(N)`); runtime loop bounds crash with an illegal memory access.
+- Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
+- Enzyme with non-`const` globals captured in closures hits an internal error; make them
+  `const` or pass them as arguments.
+
+## Git workflow
+- `main` is merged only through pull requests. Work on a branch named `<topic>` (e.g.
+  `geodesics-skeleton`), commit in small steps with descriptive messages, push the branch and
+  open a PR with `gh pr create`; Daniel reviews and merges on GitHub.
+- Never force-push `main`. Never commit papers (`*.pdf`), logs, or credentials.
+- Run the relevant tests/smoke tests before opening a PR and state in the PR what was run.
+
+## Code conventions
+- Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).
+- Kernels via KernelAbstractions so they run on the CPU backend for testing and on CUDA for real.
+- Every new numerical routine ships with a test comparing against an independent reference.
