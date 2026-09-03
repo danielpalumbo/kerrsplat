@@ -10,18 +10,17 @@ Row layout of a polarized splat parameter column: the geometry and temporal enve
 [`SPLAT_PARAMS`](@ref) (`:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw`) followed by
 `:logne` (ln of the peak electron density [cm⁻³]), `:logTe` (ln Θe), `:logB` (ln |B| [G]),
 `:thB, :phB` (direction of B in the fluid frame, polar and azimuthal angles about the ZAMO axes
-r̂, φ̂, −θ̂) and `:u1, :u2, :u3` (the spatial ZAMO components γβ⃗ of the fluid 4-velocity).
+r̂, φ̂, −θ̂), `:u1, :u2, :u3` (the spatial ZAMO components γβ⃗ of the fluid 4-velocity) and
+`:omega` (pattern angular velocity of the centre about the spin axis, as for [`SPLAT_PARAMS`](@ref)).
 """
 const POLARIZED_SPLAT_PARAMS = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw,
-                                :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3)
+                                :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega)
 const NPOLARIZEDPARAMS = length(POLARIZED_SPLAT_PARAMS)
 
 "Gaussian × temporal-envelope weight (unit peak) of splat `i` at time `t` and position `(x, y, z)`."
 @inline function splat_weight(p, i, t, x, y, z)
     @inbounds begin
-        d = SVector(x - p[1, i], y - p[2, i], z - p[3, i])
-        R = quaternion_rotation(p[7, i], p[8, i], p[9, i], p[10, i])
-        u = R' * d
+        u = pattern_offset(p, i, t, x, y, z, 21)
         q2 = (u[1] * exp(-p[4, i]))^2 + (u[2] * exp(-p[5, i]))^2 + (u[3] * exp(-p[6, i]))^2
         τ2 = ((t - p[11, i]) * exp(-p[12, i]))^2
         return exp(-(q2 + τ2) / 2)
@@ -90,3 +89,25 @@ function polarized_image(cache::GeodesicCache{T}, params, t_obs, ν_obs, L) wher
     polarized_image!(out, cache, params, t_obs, ν_obs, L)
     return map(st -> observed_stokes(st, ν_obs), to_screen(cache, out))
 end
+
+"""
+    polarized_cube(cache, params, times, νs, L)
+
+Stokes movie cube over observation times and frequencies sharing one geodesic cache: an array of
+Stokes 4-vectors of size (nα, nβ, length(times), length(νs)) on the host.
+"""
+function polarized_cube(cache::GeodesicCache{T}, params, times, νs, L) where {T}
+    out = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache))
+    frame(t, ν) = (polarized_image!(out, cache, params, t, ν, L); Array(map(st -> observed_stokes(st, ν), to_screen(cache, out))))
+    first = frame(times[1], νs[1])
+    cube = Array{SVector{4,T}}(undef, size(first)..., length(times), length(νs))
+    cube[:, :, 1, 1] = first
+    for (l, ν) in enumerate(νs), (k, t) in enumerate(times)
+        (k == 1 && l == 1) && continue
+        cube[:, :, k, l] = frame(t, ν)
+    end
+    return cube
+end
+
+"Flux density per pixel [Jy] from an intensity or Stokes image for a pixel side `Δα` (M), length unit `L` and distance `D` (cm)."
+flux_density(img, Δα, L, D) = img .* (Transfer.pixel_solid_angle(Δα, L, D) / Transfer.JY)

@@ -21,7 +21,7 @@ function test_slowlight(backend; res = 96, N = 600, label = "")
         regenerate!(cache, a, θo; marcher = Fused(64))
         r0 = 6.0; t_flare = 0.0; w = 1.5
         p = zeros(NSPLATPARAMS, 1)
-        p[:, 1] = [r0, 0.0, 0.0, log(0.6), log(0.6), log(0.6), 1.0, 0.0, 0.0, 0.0, t_flare, log(w), 0.0]
+        p[:, 1] = [r0, 0.0, 0.0, log(0.6), log(0.6), log(0.6), 1.0, 0.0, 0.0, 0.0, t_flare, log(w), 0.0, 0.0]
         pb = adapt_to(backend, p)
         times = -30.0:0.5:70.0
         movie = [Array(thin_image(cache, pb, T)) for T in times]

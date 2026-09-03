@@ -19,8 +19,8 @@ const POL_L = gravitational_radius(4.0e6)
 "Two overlapping splats with different fields and velocities (columns of the parameter matrix)."
 function polarized_test_params()
     p = zeros(NPOLARIZEDPARAMS, 2)
-    p[:, 1] = [4.0, 1.0, 0.0, 0.2, -0.1, -0.3, 1.0, 0.1, 0.0, 0.0, 0.0, log(1e6), log(2e6), log(20.0), log(30.0), 1.2, 0.7, 0.1, 0.45, 0.0]
-    p[:, 2] = [3.5, 1.6, 0.2, 0.0, 0.1, -0.2, 0.9, 0.0, 0.2, 0.1, 0.0, log(1e6), log(1e6), log(35.0), log(15.0), 0.6, -1.0, -0.2, 0.3, 0.1]
+    p[:, 1] = [4.0, 1.0, 0.0, 0.2, -0.1, -0.3, 1.0, 0.1, 0.0, 0.0, 0.0, log(1e6), log(2e6), log(20.0), log(30.0), 1.2, 0.7, 0.1, 0.45, 0.0, 0.04]
+    p[:, 2] = [3.5, 1.6, 0.2, 0.0, 0.1, -0.2, 0.9, 0.0, 0.2, 0.1, 0.0, log(1e6), log(1e6), log(35.0), log(15.0), 0.6, -1.0, -0.2, 0.3, 0.1, -0.02]
     return p
 end
 

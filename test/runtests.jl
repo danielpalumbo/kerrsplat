@@ -23,6 +23,7 @@ include("test_gold2020.jl")
 include("test_polarized.jl")
 include("test_polarized_splats.jl")
 include("test_slowlight.jl")
+include("test_motion.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
 @info "computing the BigFloat gate-2 references"
@@ -53,6 +54,8 @@ gate2_refs = gate2_references()
         test_polarized_splat_gradients(; res = 10, N = 100, tol = 1e-5)
         test_polarized_splat_fit(; res = 10, N = 100, iterations = 150)
         test_slowlight(CPU(); res = 48, N = 300, label = "CPU")
+        test_motion(CPU(); res = 24, N = 200, label = "CPU")
+        test_motion_gradient(; res = 12, N = 120)
     end
     if CUDA.functional()
         @info "CPU tests done; starting the CUDA tests"
@@ -77,6 +80,7 @@ gate2_refs = gate2_references()
             test_riaf_vs_ipole(CUDABackend(); N = 2000, label = "CUDA")
             test_polarized_splats(CUDABackend(); res = 48, N = 600, label = "CUDA")
             test_slowlight(CUDABackend(); res = 96, N = 600, label = "CUDA")
+            test_motion(CUDABackend(); res = 48, N = 400, label = "CUDA")
             @test CUDA.limit(CUDA.LIMIT_STACK_SIZE) >= Geodesics.cuda_stack_bytes(Float64)
         end
     else
