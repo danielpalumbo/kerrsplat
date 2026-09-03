@@ -140,3 +140,82 @@ function highprec_coordinates(ray::HighPrecisionRay, τ64::Float64)
     θ = acos(clamp(cosθ, -1, 1))
     return r, θ
 end
+
+# ---- t̃ and φ increments by high-precision quadrature of the Mino-time rates ---------------
+
+"r and θ at a BigFloat Mino time."
+function highprec_coordinates(ray::HighPrecisionRay, τ::BigFloat)
+    X = ray.c * (ray.fo - τ)
+    sn = JacobiElliptic.sn(X, ray.k)
+    cn = JacobiElliptic.cn(X, ray.k)
+    r = ray.rfun(sn, cn)
+    Xθ = (τ + ray.offset) / ray.tempfac
+    snθ = JacobiElliptic.sn(Xθ, ray.kθ)
+    cosθ = ray.vortical ? ray.signθ * sqrt(ray.um + (ray.up - ray.um) * snθ^2) : ray.signθ * sqrt(ray.up) * snθ
+    return r, acos(clamp(cosθ, -1, 1))
+end
+
+"Gauss–Legendre nodes and weights on [−1, 1] in BigFloat (Newton on the Legendre polynomial)."
+function gauss_legendre_big(n::Int)
+    x = zeros(BigFloat, n)
+    w = zeros(BigFloat, n)
+    for i in 1:n
+        z = BigFloat(cos(π * (i - 0.25) / (n + 0.5)))
+        dp = zero(BigFloat)
+        for _ in 1:100
+            p1, p2 = one(BigFloat), zero(BigFloat)
+            for j in 1:n
+                p1, p2 = ((2j - 1) * z * p1 - (j - 1) * p2) / j, p1
+            end
+            dp = n * (z * p1 - p2) / (z^2 - 1)
+            δ = p1 / dp
+            z -= δ
+            abs(δ) < eps(BigFloat) * 10 && break
+        end
+        x[i] = z
+        w[i] = 2 / ((1 - z^2) * dp^2)
+    end
+    return x, w
+end
+
+const GL16 = gauss_legendre_big(16)
+
+"Mino-time rates dt/dτ, dφ/dτ at τ, in BigFloat, from the closed-form r, θ."
+function highprec_rates(ray::HighPrecisionRay, λ::BigFloat, τ::BigFloat)
+    r, θ = highprec_coordinates(ray, τ)
+    a = ray.a
+    Δ = r^2 - 2r + a^2
+    s2 = sin(θ)^2
+    dt = (r^2 + a^2) * (r^2 + a^2 - a * λ) / Δ + a * (λ - a * s2)
+    dϕ = a * (2r - a * λ) / Δ + λ / s2
+    return dt, dϕ
+end
+
+"""
+    highprec_increments(ray, λ, τs) -> (Δt̃, Δφ)
+
+t̃(τ_k) − t̃(τ_1) and φ(τ_k) − φ(τ_1) for the Mino times `τs` (Float64, as the kernel used them)
+by 16-point Gauss–Legendre quadrature of the rates on every interval, in BigFloat. No singular
+part is subtracted: the integrands are rational in r, θ with poles no closer than about one
+interval for the rays and samples this is used on (inside 50 M, θ_min > 0.02), where the rule
+converges geometrically to far below 1e-15.
+"""
+function highprec_increments(ray::HighPrecisionRay, λ::BigFloat, τs::AbstractVector{Float64})
+    x, w = GL16
+    Δt = zeros(Float64, length(τs))
+    Δϕ = zeros(Float64, length(τs))
+    st = zero(BigFloat)
+    sϕ = zero(BigFloat)
+    for k in 2:length(τs)
+        a, b = big(τs[k - 1]), big(τs[k])
+        mid, half = (a + b) / 2, (b - a) / 2
+        for i in eachindex(x)
+            dt, dϕ = highprec_rates(ray, λ, mid + half * x[i])
+            st += half * w[i] * dt
+            sϕ += half * w[i] * dϕ
+        end
+        Δt[k] = Float64(st)
+        Δϕ[k] = Float64(sϕ)
+    end
+    return Δt, Δϕ
+end
