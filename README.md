@@ -10,7 +10,7 @@ Status (2026-09-03): geodesic module through plan §9 step 4. The package builds
 per-pixel constants on the GPU (or the CPU backend of KernelAbstractions), marches the rays
 either with Krang's closed forms at every sample (the reference, 128 ns per sample on the
 RTX 2080 SUPER) or with the addition-theorem recurrence for r(τ), θ(τ) plus anchored quadrature
-of the Mino-time rates for t̃(τ), φ(τ) (8.5 ns per sample, with ForwardDiff duals for the
+of the Mino-time rates for t̃(τ), φ(τ) (10 ns per sample, with ForwardDiff duals for the
 spacetime parameters), and validates both against Krang on
 the CPU and against BigFloat references.
 

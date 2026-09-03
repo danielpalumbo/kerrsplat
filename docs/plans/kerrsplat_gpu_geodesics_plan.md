@@ -6,7 +6,7 @@
 > gates 1–5 of §8 pass on the CPU backend and on CUDA. Measured on the RTX 2080 SUPER for
 > 256² × 1000 samples in Float64: K1 18 ms; K2 with Krang's direct evaluation 8.2 s (125 ns/sample);
 > the recurrence for r, θ alone 0.14 s (2 ns/sample); the full recurrence + anchored quadrature for
-> (t̃, r, θ, φ) 0.55 s (8.5 ns/sample); duals for (a, θo) flow through everything. Against a
+> (t̃, r, θ, φ) 0.67 s (10 ns/sample); duals for (a, θo) flow through everything. Against a
 > BigFloat evaluation of the closed forms the recurrence reaches 1e-11 in r and θ where Krang's
 > inputs allow it, and the quadrature 1e-9 in t̃ and φ inside 50 M; where it differs from Krang's
 > closed forms by more, Krang is the one off (`docs/notes/`). The design change relative to §4:
