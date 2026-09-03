@@ -49,6 +49,11 @@ this repository's tests or session diagnostics; none has been filed upstream yet
    same note's addendum. Solving the quartic in extended precision would remove the dominant
    error for a negligible cost.
 
+10. **`ϕ_kerr_schild` / `ϕ_BL` cannot compile in CUDA kernels** because of the `@warn` on
+    the horizon (`has_metal()` only gates Metal): `boyer_lindquist_to_quasi_cartesian_kerr_schild*`
+    fail with `InvalidIRError` on the GPU. `KerrSplat.Geodesics.quasi_cartesian_kerr_schild`
+    is the same map without the warning.
+
 ## JacobiElliptic.jl (0.3.10)
 
 1. **`_am` asymptotic branch for 1 − m < √eps.** A&S 16.15.4 is used for m₁ < √eps ≈ 1.5e-8,

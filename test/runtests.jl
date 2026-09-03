@@ -10,6 +10,7 @@ include("test_geodesics.jl")
 include("test_recurrence.jl")
 include("test_quadrature.jl")
 include("test_duals.jl")
+include("test_image.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
 gate2_refs = gate2_references()
@@ -19,8 +20,11 @@ gate2_refs = gate2_references()
     @testset "Geodesics on the CPU backend" begin
         test_geodesics(CPU(); res = 40, N = 24, tol = 1e-12, label = "CPU")
         test_recurrence(CPU(), gate2_refs; N = GATE2_N, M = 64, label = "CPU")
-        test_quadrature(CPU(); N = 1000, M = 64, tol_ϕ = 2e-8, tol_t = 3e-7, tol_hp_ϕ = 2e-9, tol_hp_t = 2e-8, label = "CPU")
+        # vs Krang: Krang's closed forms are noisy at ~1e-7 (isolated glitches, near-polar observers);
+        # the sharp check is the BigFloat rate reference (tol_hp_*), see test_quadrature.jl.
+        test_quadrature(CPU(); N = 1000, M = 64, tol_ϕ = 1e-7, tol_t = 5e-7, tol_hp_ϕ = 2e-9, tol_hp_t = 2e-8, label = "CPU")
         test_duals(CPU(); N = 400, tol_rec = 1e-8, tol_fd = 1e-5, label = "CPU")
+        test_image(CPU(); res = 48, N = 400, tol = 1e-9, label = "CPU")
     end
     if CUDA.functional()
         @testset "Geodesics on CUDA" begin
@@ -31,8 +35,9 @@ gate2_refs = gate2_references()
             # header of test/reference.jl and docs/notes/2026-09-03_direct_azimuth_conditioning.md.
             test_geodesics(CUDABackend(); res = 64, N = 32, tol = 2e-9, tol_pos = 1e-8, label = "CUDA")
             test_recurrence(CUDABackend(), gate2_refs; N = GATE2_N, M = 64, label = "CUDA")
-            test_quadrature(CUDABackend(); N = 1000, M = 64, tol_ϕ = 2e-8, tol_t = 3e-7, tol_hp_ϕ = 2e-9, tol_hp_t = 2e-8, label = "CUDA")
+            test_quadrature(CUDABackend(); N = 1000, M = 64, tol_ϕ = 1e-7, tol_t = 5e-7, tol_hp_ϕ = 2e-9, tol_hp_t = 2e-8, label = "CUDA")
             test_duals(CUDABackend(); N = 400, tol_rec = 1e-8, tol_fd = 1e-5, label = "CUDA")
+            test_image(CUDABackend(); res = 128, N = 1000, tol = 1e-9, label = "CUDA")
             @test CUDA.limit(CUDA.LIMIT_STACK_SIZE) >= Geodesics.cuda_stack_bytes(Float64)
         end
     else

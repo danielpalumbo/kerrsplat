@@ -14,8 +14,16 @@ elementary antiderivative:
 1. **Large r** (both ends of a scattering ray): |dr/dτ|(1 + 2/r), integral |Δ(r + 2 ln r)| per
    monotone leg; the interval containing the radial turning point is split there (dr/dτ = 0,
    r = r₄ known), with three direct Jacobi evaluations for that one interval.
-2. **Horizon** (plunging rays): Q (dr/dτ)(r₊/(r(r − r₊)))/s₊ with Q the coefficient of
-   1/(r − r₊) at r₊ and s₊ = dr/dτ there; integral (Q/s₊) Δ ln((r − r₊)/r).
+2. **Horizon** (plunging rays): both poles of 1/Δ = 1/((r − r₊)(r − r₋)) by partial fractions,
+   (dr/dτ)/s₊ · Σ± Q± r±/(r(r − r±)) with Q± the residues and s₊ = dr/dτ at r₊; integral
+   (1/s₊) Σ± Q± Δ ln((r − r±)/r). The inner pole is never reached, but for near-extremal spin
+   it sits only 2√(1 − a²) inside the horizon (0.09 M at a = 0.999) and its tail is not
+   smooth on the sample spacing of the final plunge: subtracting only r₊ left 5e-6 in t̃ at
+   the last sample of an a = 0.999 ray; with both, 2e-7 at r − r₊ = 0.01 M, 1e-8 at r = 1.1 r₊
+   and 4e-11 outside r₊(1 + 0.15) (Krang: 2e-8, 1e-9, 1e-12). The residual of the r₋ term
+   still varies on the scale r − r₋ ≈ 2√(1 − a²) through the factor dr/dτ ÷ s₊; a rational
+   model of dr/dτ near r₊ would remove that too, but those last samples carry no emission
+   (g → 0) and every consumer discards them (plan §10).
 3. **Polar axis**: with φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), the elementary part
    λ C f g_c A(φ_am), A(φ) = arctan(√(1−n) tan φ)/√(1−n) unfolded by the winding number of
    X, g_c = 1/√(1 − μ); the remainder λ C (1 − g_c dn X)/(1 − n sn²X) is bounded and O(μ).
@@ -60,3 +68,32 @@ sample can be reduced).
 5. **A BigFloat rate reference is cheap enough for tests**: 16-point Gauss–Legendre per sample
    interval on the BigFloat closed-form coordinates (Newton-polished roots) converges
    geometrically for samples inside 50 M on rays with θ_min > 0.02; ~4 s per 1000-sample ray.
+
+## End-to-end image (gate 5)
+
+The feasibility probes' test splat (Gaussian emissivity × g³ from the analytic momentum),
+integrated along the stored samples of each marcher on the GPU and compared with a host loop
+over Krang's direct evaluation (128² × 1000 samples): the direct marcher agrees to 5e-11 of the
+peak, the recurrence marcher to 1e-10 except on the central vortical pixels, where it differs
+by 7e-6 — and there it is the *host* that is wrong (finding 2 above; Krang's φ, t̃ and ν_θ
+after the polar turning point). The cache's anchor residuals flag exactly those rays (0.1–0.2
+against a median of 1e-10), which is what the test uses. Krang's
+`boyer_lindquist_to_quasi_cartesian_kerr_schild*` cannot compile in CUDA kernels (a `@warn`),
+so `Geodesics.quasi_cartesian_kerr_schild` provides the same map (upstream issue 10).
+
+## Duals (plan step 5, gate 4)
+
+ForwardDiff `Dual{2}` for (a, θo) propagate through K1, the direct marcher and the
+recurrence + quadrature marcher without changes to the kernels, on the CPU backend and on
+CUDA. The one trap was the radial turning point of scattering rays, where the split evaluates
+dr/dτ = ±√R at R = 0: the value is fine (0) but ∂√R/∂a is infinite there, and the partials of
+t̃ and φ became NaN on every scattering ray. dr/dτ is identically zero at the turning point
+for every spin, so the kernel uses an exact zero (`ray_point_turning`).
+
+Agreement of the recurrence duals with the direct path's duals on well-conditioned rays:
+r 1e-12, θ 1e-14, t̃ 3e-10, φ 1.4e-9 (scaled by max(|∂/∂a|, |∂/∂θo|, 1)); against central finite
+differences of the direct path (h = 1e-5) the direct duals agree to 1e-8 … 1e-7, the FD noise
+floor (plan §3). On axis-grazing and near-critical rays the comparisons degrade as the values do.
+
+On CUDA the dual kernels need a 16 KB per-thread stack (12 KB fails with an illegal memory
+access; Float64 needs 4 KB); `regenerate!` sets it from the element type.
