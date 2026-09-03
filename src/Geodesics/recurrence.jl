@@ -241,10 +241,11 @@ end
 
 """
     polar_angle(pm, x) -> (θ, νθ)
+    polar_angle_cos(pm, x) -> (θ, νθ, cos θ)
 
 Polar angle and polar momentum sign (photon direction) from the polar Jacobi state.
 """
-@inline function polar_angle(pm::PolarMarcher{T}, x::JacobiState) where {T}
+@inline function polar_angle_cos(pm::PolarMarcher{T}, x::JacobiState) where {T}
     snX = x.sn / (pm.scale * x.dn)                 # sn of the original (negative) parameter
     if pm.vortical
         cosθ = pm.sign * sqrt(max(pm.um + pm.up_m_um * snX * snX, zero(T)))
@@ -253,16 +254,21 @@ Polar angle and polar momentum sign (photon direction) from the polar Jacobi sta
         cosθ = pm.sign * pm.sqrt_up * snX
         νθ = pm.sign * x.cn > zero(T)
     end
-    return acos(clamp(cosθ, -one(T), one(T))), νθ
+    cosθ = clamp(cosθ, -one(T), one(T))
+    return acos(cosθ), νθ, cosθ
 end
+@inline polar_angle(pm::PolarMarcher, x::JacobiState) = polar_angle_cos(pm, x)[1:2]
 
 # ---- validity ----------------------------------------------------------------------------
 
 """
     krang_visible(pix, θs) -> Bool
+    krang_visible(vis::VisibilityConstants, cos θs) -> Bool
 
 Krang's screen-boundary consistency check in `emission_coordinates(pix, τ)`: reproduced so
-that the recurrence marcher flags exactly the samples Krang flags.
+that the recurrence marcher flags exactly the samples Krang flags. The second form uses the
+per-ray constants and cos θs only (no trigonometric call), with Krang's own expressions
+`αboundary = a sin θs` and `βboundary² = (cos²θo − cos²θs)(α² − a² sin²θs)/(cos²θs − 1)`.
 """
 @inline function krang_visible(pix::Krang.SlowLightIntensityPixel, θs::T) where {T}
     α, β = Krang.screen_coordinate(pix)
@@ -274,6 +280,31 @@ that the recurrence marcher flags exactly the samples Krang flags.
         (abs(β) + eps(T)) < βbound && return false
     end
     return true
+end
+
+struct VisibilityConstants{T}
+    a::T
+    absα::T
+    α2::T
+    absβ_eps::T
+    abscosθo::T
+    cos2θo::T
+end
+@inline function VisibilityConstants(pix::Krang.SlowLightIntensityPixel)
+    α, β = Krang.screen_coordinate(pix)
+    T = typeof(α)
+    cθo = cos(Krang.inclination(pix))
+    return VisibilityConstants(Krang.metric(pix).spin, abs(α), α * α, abs(β) + eps(T), abs(cθo), cθo * cθo)
+end
+@inline function krang_visible(v::VisibilityConstants{T}, cosθs) where {T}
+    cosθs > v.abscosθo || return true
+    c2 = cosθs * cosθs
+    s2 = one(T) - c2
+    αmin = v.a * sqrt(s2)
+    v.absα >= αmin + eps(T) || return true              # βboundary = 0
+    temp = (v.cos2θo - c2) * (v.α2 - v.a * v.a * s2) / (c2 - one(T))
+    βbound = sqrt(max(temp, zero(temp)))
+    return !(v.absβ_eps < βbound)
 end
 
 # ---- the kernel ---------------------------------------------------------------------------

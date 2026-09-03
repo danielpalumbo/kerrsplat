@@ -11,9 +11,11 @@
 #  * large r (the ends of the ray, r ~ 1/τ): dt/dτ ≈ r² + 2r + …, subtract |dr/dτ| (1 + 2/r),
 #    whose integral is |Δ(r + 2 ln r)| on each monotone leg (the interval containing the
 #    radial turning point of a scattering ray is split there);
-#  * the horizon (plunging rays, 1/Δ → 1/(r − r₊)): subtract Q (dr/dτ)(r₊/(r(r − r₊)))/s₊ with
-#    Q the coefficient of 1/(r − r₊) at the horizon and s₊ = dr/dτ there; its integral is
-#    (Q/s₊) Δ ln((r − r₊)/r);
+#  * the horizon (plunging rays, 1/Δ = 1/((r − r₊)(r − r₋))): both poles by partial fractions,
+#    subtracting (dr/dτ)/s₊ · Σ± Q± r±/(r(r − r±)) with Q± the residues at r± and s₊ = dr/dτ at
+#    r₊; the integral is (1/s₊) Σ± Q± Δ ln((r − r±)/r). The r₋ pole is never reached but for
+#    near-extremal spin it sits only r₊ − r₋ ≈ 2√(1−a²) inside the horizon and its tail is not
+#    smooth on the sample spacing of the final plunge (a = 0.999: 5e-6 in t̃ without it);
 #  * the polar axis (λ/sin²θ, a spike of width ~θ_min at every polar turning point): with
 #    φ_am = am(X) and 1/sin²θ = C/(1 − n sn²X), ∫ λ dτ/sin²θ = λ C f [ g_c A(φ_am) +
 #    (1/f)∫(1 − g_c dn X)/(1 − n sn²X) dτ ], where A(φ) = ∫ dφ/(1 − n sin²φ) =
@@ -34,10 +36,13 @@ struct QuadratureConstants{T}
     a::T
     λ::T
     η::T
-    rp::T          # outer horizon
+    rp::T          # outer horizon r₊
+    rmn::T         # inner horizon r₋
     sp::T          # dr/dτ at the horizon on the inbound leg
-    Qt::T          # coefficient of 1/(r − r₊) in dt/dτ at the horizon
+    Qt::T          # residue of dt/dτ at r₊ (partial fractions of 1/Δ)
+    Qtm::T         # residue at r₋
     Qϕ::T          # same for dφ/dτ
+    Qϕm::T
     fo::T          # Mino time of the radial turning point
     r4::T          # its radius (four-real-root rays; unused otherwise)
     scattering::Bool
@@ -61,7 +66,9 @@ end
     E = rp^2 + a^2 - a * λ
     sp = -abs(E)
     Qt = (rp^2 + a^2) * E / (rp - rmn)
+    Qtm = -(rmn^2 + a^2) * (rmn^2 + a^2 - a * λ) / (rp - rmn)
     Qϕ = a * (2 * rp - a * λ) / (rp - rmn)
+    Qϕm = -a * (2 * rmn - a * λ) / (rp - rmn)
     scattering = case isa Case2 && !isfinite(radial_valid_until(rm))   # turning point outside the horizon
     r4 = case isa Case2 ? real(Krang.roots(pix)[4]) : T(NaN)
     μ = -pm.μ / (one(T) - pm.μ)                    # the (negative) parameter of the closed form
@@ -74,15 +81,13 @@ end
         n = up
     end
     K2 = 2 * JacobiElliptic.K(pm.μ) / pm.scale
-    return QuadratureConstants(a, λ, η, rp, sp, Qt, Qϕ, rm.fo, r4, scattering, C, n,
+    return QuadratureConstants(a, λ, η, rp, rmn, sp, Qt, Qtm, Qϕ, Qϕm, rm.fo, r4, scattering, C, n,
                                sqrt(max(one(T) - n, zero(T))), inv(sqrt(one(T) - μ)), pm.tempfac, pm.offset, K2)
 end
 
 "Antiderivative of the large-r subtraction |dr/dτ|(1 + 2/r) along a monotone leg."
 @inline F_large_r(r) = r + 2 * log(r)
 
-"Antiderivative of the horizon subtraction (per unit Q)."
-@inline F_horizon(qc::QuadratureConstants, r) = log((r - qc.rp) / r) / qc.sp
 
 """
     polar_A(qc, τ, sn, cn)
@@ -97,22 +102,23 @@ number of X = (τ + offset)/f (am(X + 2K) = am(X) + π; tan(am X) = sn X / cn X)
 end
 
 """
-    smooth_integrands(qc, r, θ, s, sn, cn, dn) -> (g_t, g_φ)
+    smooth_integrands(qc, r, cosθ, s, sn, cn, dn) -> (g_t, g_φ)
 
 The Simpson integrands: the Mino-time rates minus the three singular pieces. `s = dr/dτ`
 (signed); `sn, cn, dn` are the polar Jacobi functions at the closed form's own parameter.
 """
-@inline function smooth_integrands(qc::QuadratureConstants{T}, r, θ, s, sn, cn, dn) where {T}
+@inline function smooth_integrands(qc::QuadratureConstants{T}, r, cosθ, s, sn, cn, dn) where {T}
     a = qc.a
     λ = qc.λ
     Δ = r^2 - 2 * r + a^2
-    s2 = sin(θ)^2
+    s2 = 1 - cosθ * cosθ
     ft = (r^2 + a^2) * (r^2 + a^2 - a * λ) / Δ + a * (λ - a * s2)
     fϕ = a * (2 * r - a * λ) / Δ
-    w = s * qc.rp / (r * (r - qc.rp)) / qc.sp
-    gt = ft - abs(s) * (1 + 2 / r) - qc.Qt * w
+    wp = s * qc.rp / (r * (r - qc.rp)) / qc.sp
+    wm = s * qc.rmn / (r * (r - qc.rmn)) / qc.sp
+    gt = ft - abs(s) * (1 + 2 / r) - qc.Qt * wp - qc.Qtm * wm
     gpol = λ * qc.C * (1 - qc.gc * dn) / (1 - qc.n * sn * sn)
-    gϕ = fϕ - qc.Qϕ * w + gpol
+    gϕ = fϕ - qc.Qϕ * wp - qc.Qϕm * wm + gpol
     return gt, gϕ
 end
 
@@ -125,6 +131,7 @@ functions at the closed form's parameter, and the two smooth integrands.
 struct RayPoint{T}
     r::T
     θ::T
+    cosθ::T
     νr::Bool
     νθ::Bool
     s::T
@@ -136,14 +143,14 @@ end
 
 @inline function ray_point(qc::QuadratureConstants{T}, rm::RadialMarcher, pm::PolarMarcher, xr::JacobiState, xθ::JacobiState, τ) where {T}
     r = radius(rm, xr)
-    θ, νθ = polar_angle(pm, xθ)
+    θ, νθ, cosθ = polar_angle_cos(pm, xθ)
     νr = radial_sign(rm, τ)
     s = (νr ? -one(T) : one(T)) * sqrt(max(Krang.r_potential(Krang.Kerr(qc.a), qc.η, qc.λ, r), zero(T)))
     sn = xθ.sn / (pm.scale * xθ.dn)
     cn = xθ.cn / xθ.dn
     dn = inv(xθ.dn)
-    gt, gϕ = smooth_integrands(qc, r, θ, s, sn, cn, dn)
-    return RayPoint(r, θ, νr, νθ, s, sn, cn, gt, gϕ)
+    gt, gϕ = smooth_integrands(qc, r, cosθ, s, sn, cn, dn)
+    return RayPoint(r, θ, cosθ, νr, νθ, s, sn, cn, gt, gϕ)
 end
 
 # direct (non-recurrence) evaluation of a ray point, for the turning-point split
@@ -159,13 +166,13 @@ end
     τ = qc.fo
     xθ = jacobi_state(polar_argument(pm, τ), pm.μ)
     r = qc.r4
-    θ, νθ = polar_angle(pm, xθ)
+    θ, νθ, cosθ = polar_angle_cos(pm, xθ)
     s = zero(T)
     sn = xθ.sn / (pm.scale * xθ.dn)
     cn = xθ.cn / xθ.dn
     dn = inv(xθ.dn)
-    gt, gϕ = smooth_integrands(qc, r, θ, s, sn, cn, dn)
-    return RayPoint(r, θ, true, νθ, s, sn, cn, gt, gϕ)
+    gt, gϕ = smooth_integrands(qc, r, cosθ, s, sn, cn, dn)
+    return RayPoint(r, θ, cosθ, true, νθ, s, sn, cn, gt, gϕ)
 end
 
 @inline simpson3(fa, fm, fb, h) = h / 6 * (fa + 4 * fm + fb)
@@ -178,9 +185,12 @@ Simpson panel of the smooth integrands plus the closed-form pieces.
 """
 @inline function interval_increment(qc::QuadratureConstants, pa::RayPoint, pm_::RayPoint, pb::RayPoint, τa, τb)
     h = τb - τa
-    It = simpson3(pa.gt, pm_.gt, pb.gt, h) + abs(F_large_r(pb.r) - F_large_r(pa.r)) +
-         qc.Qt * (F_horizon(qc, pb.r) - F_horizon(qc, pa.r))
-    Iϕ = simpson3(pa.gϕ, pm_.gϕ, pb.gϕ, h) + qc.Qϕ * (F_horizon(qc, pb.r) - F_horizon(qc, pa.r)) +
+    ra, rb = pa.r, pb.r
+    ΔFr = (rb - ra) + 2 * log(rb / ra)                                   # Δ(r + 2 ln r)
+    ΔFp = log((rb - qc.rp) * ra / ((ra - qc.rp) * rb)) / qc.sp            # Δ ln((r − r₊)/r) / s₊
+    ΔFm = log((rb - qc.rmn) * ra / ((ra - qc.rmn) * rb)) / qc.sp          # Δ ln((r − r₋)/r) / s₊
+    It = simpson3(pa.gt, pm_.gt, pb.gt, h) + abs(ΔFr) + qc.Qt * ΔFp + qc.Qtm * ΔFm
+    Iϕ = simpson3(pa.gϕ, pm_.gϕ, pb.gϕ, h) + qc.Qϕ * ΔFp + qc.Qϕm * ΔFm +
          qc.λ * qc.C * qc.f * qc.gc * (polar_A(qc, τb, pb.sn, pb.cn) - polar_A(qc, τa, pa.sn, pa.cn))
     return It, Iϕ
 end
@@ -210,7 +220,8 @@ end
     ϕ = d1.ϕ
     rt = zero(T)
     rϕ = zero(T)
-    store_sample!(S, j, 1, GeodesicSample(t, pa.r, pa.θ, ϕ, pa.νr, pa.νθ, (Δτ <= τ_valid) & krang_visible(pix, pa.θ)))
+    vis = VisibilityConstants(pix)
+    store_sample!(S, j, 1, GeodesicSample(t, pa.r, pa.θ, ϕ, pa.νr, pa.νθ, (Δτ <= τ_valid) & krang_visible(vis, pa.cosθ)))
     for k in 2:N
         τa = (k - 1) * Δτ
         τb = k * Δτ
@@ -249,7 +260,7 @@ end
                 ϕ = d.ϕ
             end
         end
-        store_sample!(S, j, k, GeodesicSample(t, pb.r, pb.θ, ϕ, pb.νr, pb.νθ, (τb <= τ_valid) & krang_visible(pix, pb.θ)))
+        store_sample!(S, j, k, GeodesicSample(t, pb.r, pb.θ, ϕ, pb.νr, pb.νθ, (τb <= τ_valid) & krang_visible(vis, pb.cosθ)))
         pa = pb
     end
     @inbounds resid_t[j] = rt

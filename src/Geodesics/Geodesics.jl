@@ -43,9 +43,9 @@ export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mi
 export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel
 export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
 export Direct, Recurrence, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
-export Case2, Case3, Case4, radial_marcher, PolarMarcher, radius, polar_angle
+export Case2, Case3, Case4, radial_marcher, PolarMarcher, radius, polar_angle, polar_angle_cos
 export radial_parameter, near_critical, NEAR_CRITICAL_ONE_MINUS_K
-export QuadratureConstants, quadrature_march!, recurrence_march!
+export QuadratureConstants, quadrature_march!, recurrence_march!, quasi_cartesian_kerr_schild
 
 include("camera.jl")
 include("pixel_constants.jl")
@@ -53,6 +53,7 @@ include("direct_march.jl")
 include("jacobi.jl")
 include("recurrence.jl")
 include("quadrature.jl")
+include("coordinates.jl")
 include("cache.jl")
 
 # Krang's `_θs` evaluates `unsafe_trunc(Int, τ / τ̂)`. ForwardDiff provides no such method, so
