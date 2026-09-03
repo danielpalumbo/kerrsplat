@@ -71,22 +71,26 @@ end
     ThinRenderer(params, t_obs)
 
 Fused-march consumer for the optically-thin image: `params` is the `NSPLATPARAMS × nsplat`
-parameter matrix (on the backend of the cache), `t_obs` the observation time. Per sample the
-accumulator gains g² · Σ_i j_i(t_obs − t̃, x) · Σ_BL · Δτ; invalid samples and samples inside
-r_h(1 + 1e-3) contribute nothing.
+parameter matrix (on the backend of the cache), `t_obs` the observation time, given as a
+scalar or as a one-element array on the same backend (every field of the consumer is an array
+so that Enzyme can carry its adjoint through GPU kernels, where scalar active arguments are
+not supported). Per sample the accumulator gains g² · Σ_i j_i(t_obs − t̃, x) · Σ_BL · Δτ;
+invalid samples and samples inside r_h(1 + 1e-3) contribute nothing.
 """
-struct ThinRenderer{P,T}
+struct ThinRenderer{P,V}
     params::P
-    t_obs::T
+    t_obs::V
 end
 Adapt.@adapt_structure ThinRenderer
+ThinRenderer(params::AbstractMatrix{T}, t_obs::Real) where {T} =
+    ThinRenderer(params, fill!(similar(params, 1), T(t_obs)))
 
 @inline function (c::ThinRenderer)(acc, j, k, s::GeodesicSample{T}, Δτ, pix) where {T}
     met = Krang.metric(pix)
     rh = Krang.horizon(met)
     (s.ok && (rh * (1 + T(1e-3)) < s.r < T(1e3))) || return acc
     x, y, z = quasi_cartesian_kerr_schild(met, s.r, s.θ, s.ϕ)
-    t = c.t_obs - s.t
+    t = @inbounds(c.t_obs[1]) - s.t
     jtot = zero(T)
     for i in 1:size(c.params, 2)
         jtot += splat_emissivity(c.params, i, t, x, y, z)

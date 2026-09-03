@@ -176,18 +176,19 @@ march!(m::Recurrence, cache::GeodesicCache, ranges, met, θo) =
 march!(::Fused, cache::GeodesicCache, ranges, met, θo) = nothing
 
 """
-    fused_march!(f, out, cache; acc0 = zero(eltype(out)), workgroup = 128)
+    fused_march!(f, out, cache; workgroup = 128)
 
 Run the marcher of `cache` (a `Fused(M)` cache after `regenerate!`, or any regenerated cache
 with `M` taken from its marcher) with the consumer `f` folded over each ray's samples,
-`acc = f(acc, j, k, sample, Δτ, pix)` starting from `acc0`, and write each ray's final
-accumulator to `out` (sorted order; `unsort`/`to_screen` map it to the screen). The anchor
-residuals of this run replace `cache.residual_t`, `cache.residual_ϕ`. Synchronizes the backend.
+`acc = f(acc, j, k, sample, Δτ, pix)` starting from `zero(eltype(out))`, and write each ray's
+final accumulator to `out` (sorted order; `unsort`/`to_screen` map it to the screen). The
+anchor residuals of this run replace `cache.residual_t`, `cache.residual_ϕ`. Synchronizes the
+backend.
 """
-function fused_march!(f, out, cache::GeodesicCache{T,N}; acc0 = zero(eltype(out)), workgroup::Integer = 128) where {T,N}
+function fused_march!(f, out, cache::GeodesicCache{T,N}; workgroup::Integer = 128) where {T,N}
     cache.generation >= 1 || throw(ArgumentError("regenerate! the cache first"))
     M = cache.marcher isa Direct ? 64 : anchor_interval(cache.marcher)
-    fused_march!(f, out, acc0, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, Krang.Kerr(cache.spin), cache.θo,
+    fused_march!(f, out, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, Krang.Kerr(cache.spin), cache.θo,
                  cache.nval, Val(M); workgroup = workgroup)
     KA.synchronize(cache.backend)
     return out

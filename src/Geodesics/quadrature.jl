@@ -313,11 +313,14 @@ end
     @inbounds resid_ϕ[j] = rϕ
 end
 
-# K2 fused mode: the consumer's accumulator per ray goes to `out[j]`
-@kernel function fused_march_kernel!(out, pc, resid_t, resid_ϕ, met::Krang.Kerr, θo, case, f, acc0, ::Val{N}, ::Val{M}, offset) where {N,M}
+# K2 fused mode: the consumer's accumulator per ray goes to `out[j]`. The accumulator starts
+# from zero(eltype(out)) inside the kernel rather than from an argument: a scalar initial value
+# stored into the differentiable accumulator becomes an "active" kernel argument under Enzyme's
+# runtime activity, which the GPU rules reject.
+@kernel function fused_march_kernel!(out, pc, resid_t, resid_ϕ, met::Krang.Kerr, θo, case, f, ::Val{N}, ::Val{M}, offset) where {N,M}
     j0 = @index(Global, Linear)
     j = j0 + offset
-    acc, rt, rϕ = march_ray(f, acc0, pc, j, met, θo, case, Val(N), Val(M))
+    acc, rt, rϕ = march_ray(f, zero(eltype(out)), pc, j, met, θo, case, Val(N), Val(M))
     @inbounds out[j] = acc
     @inbounds resid_t[j] = rt
     @inbounds resid_ϕ[j] = rϕ
@@ -345,18 +348,19 @@ function quadrature_march!(S::GeodesicSamples, pc::PixelConstants, resid_t, resi
 end
 
 """
-    fused_march!(f, out, acc0, pc, resid_t, resid_ϕ, ranges, met, θo, Val(N), Val(M); workgroup = 128)
+    fused_march!(f, out, pc, resid_t, resid_ϕ, ranges, met, θo, Val(N), Val(M); workgroup = 128)
 
-Run the marcher with the consumer `f` folded over every ray's samples (see [`march_ray`](@ref))
-and write each ray's final accumulator to `out` (sorted order); nothing is stored per sample.
+Run the marcher with the consumer `f` folded over every ray's samples (see [`march_ray`](@ref)),
+starting from `zero(eltype(out))`, and write each ray's final accumulator to `out` (sorted
+order); nothing is stored per sample.
 """
-function fused_march!(f, out, acc0, pc::PixelConstants, resid_t, resid_ϕ, ranges, met::Krang.Kerr, θo,
+function fused_march!(f, out, pc::PixelConstants, resid_t, resid_ϕ, ranges, met::Krang.Kerr, θo,
                       ::Val{N}, ::Val{M}; workgroup::Integer = 128) where {N,M}
     length(out) == npixels(pc) || throw(DimensionMismatch("output and pixel counts differ"))
     backend = KA.get_backend(out)
     for (case, rng) in ((Case2(), ranges.case2), (Case3(), ranges.case3), (Case4(), ranges.case4))
         isempty(rng) && continue
-        fused_march_kernel!(backend, workgroup)(out, pc, resid_t, resid_ϕ, met, θo, case, f, acc0, Val(N), Val(M), first(rng) - 1;
+        fused_march_kernel!(backend, workgroup)(out, pc, resid_t, resid_ϕ, met, θo, case, f, Val(N), Val(M), first(rng) - 1;
                                                 ndrange = length(rng))
     end
     return out
