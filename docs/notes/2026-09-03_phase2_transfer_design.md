@@ -87,5 +87,13 @@ each PR can be validated on its own.
    230 GHz images disagree at the 60% level, because the rotation sense is then reversed relative
    to the geometry. Also found and guarded: rotativities of 1e-170 from density tails underflowed
    the squared angles of the emission integral.
-6. **Polarized splats**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity) as elements of
-   `RadiativeTransport`, Enzyme gradients, a polarized fit test.
+6. **Polarized splats** (`polarized-splats`): `Splats.PolarizedSplats` (20 parameters per splat:
+   the thin splat's geometry and envelope, ln nₑ, ln Θe, ln B, the field direction in the fluid
+   frame, the ZAMO 3-velocity) as elements of `RadiativeTransport`; `polarized_image`. Gates: the
+   fused march against a host loop over stored samples (4e-18), CUDA against the CPU backend
+   (7e-14), Enzyme reverse gradients of an image loss for all 40 parameters of two overlapping
+   splats against a fourth-order stencil (1.6e-7; 0.19 s per gradient at 10² × 100 after a
+   7-minute first compile), and an Adam fit recovering a perturbed splat (loss down 140×).
+
+Phase 2 is complete with this step. Open: power-law rotativities (Marszewski+ 2021), κ
+distributions, GPU-side Enzyme gradients, interval culling for many splats.

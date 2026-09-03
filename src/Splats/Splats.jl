@@ -24,6 +24,7 @@ ZAMO redshift factor g from the analytic photon momentum.
 module Splats
 
 using ..Geodesics
+using ..Transfer
 using Adapt
 using Krang
 using StaticArrays
@@ -32,6 +33,7 @@ using KernelAbstractions
 const KA = KernelAbstractions
 
 export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, ThinRenderer, thin_image!, thin_image
+export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image
 
 """
     SPLAT_PARAMS
@@ -120,5 +122,7 @@ function thin_image(cache::GeodesicCache{T}, params, t_obs) where {T}
     thin_image!(out, cache, params, t_obs)
     return to_screen(cache, out)
 end
+
+include("polarized.jl")
 
 end

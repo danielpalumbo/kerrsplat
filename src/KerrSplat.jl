@@ -15,10 +15,10 @@ module KerrSplat
 
 include("Geodesics/Geodesics.jl")
 using .Geodesics
-include("Splats/Splats.jl")
-using .Splats
 include("Transfer/Transfer.jl")
 using .Transfer
+include("Splats/Splats.jl")
+using .Splats
 
 export Geodesics, Splats, Transfer
 
