@@ -19,6 +19,21 @@ function prepare_backend!(::CUDA.CUDABackend; stack_bytes::Integer = CUDA_STACK_
 end
 
 """
+    Direct()
+    Recurrence(M = 64)   (a `Recurrence{M}`)
+
+Marcher choice for [`regenerate!`](@ref). `Direct` evaluates Krang's closed forms at every
+sample (the reference; slow). `Recurrence{M}` advances r and θ by the Jacobi addition theorems
+and re-anchors to the closed form every `M` samples (plan §4); it does not yet produce t̃ and
+φ (NaN), pending step 4 of the plan.
+"""
+struct Direct end
+struct Recurrence{M} end
+Recurrence(M::Integer = 64) = Recurrence{Int(M)}()
+
+anchor_interval(::Recurrence{M}) where {M} = M
+
+"""
     GeodesicCache(backend, camera, Val(N))
     GeodesicCache(backend, camera, N)
 
@@ -50,6 +65,7 @@ mutable struct GeodesicCache{T,N,B<:KA.Backend,VT<:AbstractVector{T},VI<:Abstrac
     spin::T
     θo::T
     generation::Int
+    marcher::Union{Direct,Recurrence}
 end
 
 function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) where {T,N}
@@ -65,7 +81,7 @@ function GeodesicCache(backend::KA.Backend, camera::Camera{T}, nval::Val{N}) whe
     samples = GeodesicSamples{T}(backend, npix, N)
     empty = (case2 = 1:0, case3 = 1:0, case4 = 1:0)
     return GeodesicCache(backend, nval, αs, βs, size(camera), numreals_screen, perm,
-                         collect(1:npix), empty, consts, samples, T(NaN), T(NaN), 0)
+                         collect(1:npix), empty, consts, samples, T(NaN), T(NaN), 0, Direct())
 end
 GeodesicCache(backend::KA.Backend, camera::Camera, N::Integer) = GeodesicCache(backend, camera, Val(Int(N)))
 
@@ -77,21 +93,23 @@ KA.get_backend(c::GeodesicCache) = c.backend
 
 function Base.show(io::IO, c::GeodesicCache{T,N}) where {T,N}
     print(io, "GeodesicCache{$T}: ", npixels(c), " pixels ", c.screen_size, " × ", N,
-          " samples on ", nameof(typeof(c.backend)), "; a = ", c.spin, ", θo = ", c.θo,
+          " samples on ", nameof(typeof(c.backend)), " (", c.marcher, "); a = ", c.spin, ", θo = ", c.θo,
           "; cases (4,2,0 real roots): ", length(c.ranges.case2), "/", length(c.ranges.case3),
           "/", length(c.ranges.case4))
 end
 
 """
-    regenerate!(cache, a, θo; workgroup = 256)
-    regenerate!(cache, a, θo, camera; workgroup = 256)
+    regenerate!(cache, a, θo; marcher = Direct(), workgroup = 256)
+    regenerate!(cache, a, θo, camera; marcher = Direct(), workgroup = 256)
 
 Rebuild everything in `cache` for spin `a` and observer inclination `θo` (radians), optionally
 with a new camera of the same pixel count: K0 (root cases, screen order) → case sort (host)
-→ K1 (per-pixel constants, sorted order) → K2 (stored samples). Synchronizes the backend
-before returning. Returns `cache`.
+→ K1 (per-pixel constants, sorted order) → K2 (stored samples, by `marcher`; see
+[`Direct`](@ref) and [`Recurrence`](@ref)). Synchronizes the backend before returning.
+Returns `cache`.
 """
-function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; workgroup::Integer = 256) where {T,N}
+function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::Union{Direct,Recurrence} = Direct(),
+                     workgroup::Integer = 256) where {T,N}
     a = T(spin)
     θ = T(θo)
     backend = cache.backend
@@ -107,14 +125,19 @@ function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; workgroup
     cache.ranges = ranges
 
     pixel_constants_kernel!(backend, workgroup)(cache.consts, met, θ, cache.αs, cache.βs, cache.perm; ndrange = npix)
-    direct_march!(cache.samples, cache.consts, met, θ, cache.nval)
+    march!(marcher, cache.samples, cache.consts, ranges, met, θ, cache.nval)
     KA.synchronize(backend)
 
     cache.spin = a
     cache.θo = θ
     cache.generation += 1
+    cache.marcher = marcher
     return cache
 end
+
+march!(::Direct, S, pc, ranges, met, θo, nval::Val) = direct_march!(S, pc, met, θo, nval)
+march!(m::Recurrence, S, pc, ranges, met, θo, nval::Val) =
+    recurrence_march!(S, pc, ranges, met, θo, nval, Val(anchor_interval(m)))
 
 function regenerate!(cache::GeodesicCache, spin::Real, θo::Real, camera::Camera; kwargs...)
     npixels(camera) == npixels(cache) ||
