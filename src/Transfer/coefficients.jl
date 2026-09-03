@@ -13,7 +13,8 @@
 """
     StokesCoefficients(jI, jQ, jV, αI, αQ, αV, ρQ, ρV)
 
-Transfer coefficients in the field-aligned Stokes basis, where the U components vanish.
+Transfer coefficients in the field-aligned Stokes basis (Q axis perpendicular to the projected
+field), where the U components vanish.
 """
 struct StokesCoefficients{T}
     jI::T
