@@ -27,7 +27,11 @@ the CPU and against BigFloat references.
   ray's largest anchor residual as an error estimate. `Fused(64)` with `fused_march!(f, out,
   cache)` runs the same marcher inside a consumer `f(acc, j, k, sample, Δτ, pix)` without
   storing samples; `tiles(camera, n)` splits large screens.
-- `test/` — gates 1–3 of the GPU plan: every stored quantity against Krang on the CPU, the
+- `src/Splats/` — `KerrSplat.Splats`: Gaussian plasma splats (position, shape, temporal
+  envelope, amplitude as 13 unconstrained parameters per splat) and `render`, their
+  optically-thin image through the fused marcher (Phase 1 of the roadmap: unpolarized,
+  frequency-independent, ZAMO-frame emitters, slow light), differentiable with Enzyme.
+- `test/` — gates 1–5 of the GPU plan: every stored quantity against Krang on the CPU, the
   recurrence against a BigFloat evaluation of the closed forms and the quadrature against a
   BigFloat integration of the rates (`test/highprec_reference.jl`), on both the CPU and the
   CUDA backend.

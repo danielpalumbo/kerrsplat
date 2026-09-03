@@ -6,12 +6,16 @@ movies. The design lives in `docs/plans/`. Submodules:
 
 - [`Geodesics`](@ref KerrSplat.Geodesics): GPU-resident per-pixel and per-sample geodesic
   data (Krang's analytic geodesics evaluated inside KernelAbstractions kernels).
+- [`Splats`](@ref KerrSplat.Splats): Gaussian plasma splats and their optically-thin rendering
+  through the fused marcher (Phase 1 of the roadmap).
 """
 module KerrSplat
 
 include("Geodesics/Geodesics.jl")
 using .Geodesics
+include("Splats/Splats.jl")
+using .Splats
 
-export Geodesics
+export Geodesics, Splats
 
 end
