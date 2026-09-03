@@ -61,8 +61,16 @@ each PR can be validated on its own.
    `jac_fluid_u_zamo_d`, g and χ against Krang's `synchrotronPolarization` (1e-15 on 400 random
    rays, samples, velocities and fields), the pitch angle against an explicit construction, and
    the kernel on CPU and CUDA.
-4. **Gold et al. (2020) suite**: unpolarized analytic models through the fused marcher with the
-   unit scaling (M, D, Jy); 2% on the published fluxes.
+4. **Gold et al. (2020) suite** (`transfer-gold2020`): `UnpolarizedTransport` (a fused-march
+   consumer with the front-to-back accumulator `UnpolarizedState`, the unit scaling of the
+   `transport.jl` header: Δ = (L/ν_obs) Σ Δτ over the invariants j/ν², να) renders ipole's
+   analytic models 1–5 (test/test_gold2020.jl). Total fluxes at 128², 2000 samples per ray:
+   1.6604, 1.4488, 0.4453, 0.2726, 0.0257 Jy against the published 1.6465, 1.4360, 0.4418,
+   0.2710, 0.0255 Jy, i.e. 0.6–0.9% high for every model, unchanged at 256² × 4000 and at
+   48² × 500, so it is not discretization; candidates are ipole's camera at r = 1000 M (ours is
+   at infinity) and the provenance of the published numbers (a cross-code table). ipole's own
+   test accepts 2%, which is the gate here. Model 2 (Schwarzschild) runs at a = 1e-3 because
+   Krang's analytic solution returns NaN at a = 0 (upstream_issues.md item 11).
 5. **Polarized splats and images**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity),
    per-splat Mueller assembly M = Σ R(χ_k) M_k R(χ_k)ᵀ, the two-splat overlap and Faraday-screen
    tests of the addendum, polarized images against ipole (HDF5 or Jipole) and Enzyme gradients.
