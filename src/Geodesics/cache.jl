@@ -1,15 +1,24 @@
 # The geodesic cache and regenerate! (plan §9 step 2).
 
 """
-    prepare_backend!(backend)
+    prepare_backend!(backend; stack_bytes = cuda_stack_bytes(T))
 
 One-time device configuration needed before Krang code runs in kernels. On CUDA this raises
 the per-thread stack limit: Krang's Float64 radial integrals overflow the default 1 KB stack,
 which shows up as an illegal memory access (plan §2, item 3). No-op elsewhere.
 """
-prepare_backend!(::KA.Backend) = nothing
+prepare_backend!(::KA.Backend; kwargs...) = nothing
 
 const CUDA_STACK_BYTES = 4096
+
+"""
+    cuda_stack_bytes(T)
+
+Per-thread stack the kernels need for scalar type `T`: 4 KB for Float64 (measured: K1 and
+both K2 marchers up to 1000 samples), 16 KB for two-partial ForwardDiff duals (12 KB fails),
+scaled up for wider duals.
+"""
+cuda_stack_bytes(::Type{T}) where {T} = sizeof(T) <= 8 ? CUDA_STACK_BYTES : 16384 * cld(sizeof(T), 24)
 
 function prepare_backend!(::CUDA.CUDABackend; stack_bytes::Integer = CUDA_STACK_BYTES)
     if CUDA.limit(CUDA.LIMIT_STACK_SIZE) < stack_bytes
@@ -122,7 +131,7 @@ function regenerate!(cache::GeodesicCache{T,N}, spin::Real, θo::Real; marcher::
     a = T(spin)
     θ = T(θo)
     backend = cache.backend
-    prepare_backend!(backend)
+    prepare_backend!(backend; stack_bytes = cuda_stack_bytes(T))
     met = Krang.Kerr(a)
     npix = npixels(cache)
 

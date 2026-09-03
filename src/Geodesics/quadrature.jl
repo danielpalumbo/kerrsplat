@@ -153,6 +153,21 @@ end
     return ray_point(qc, rm, pm, xr, xθ, τ)
 end
 
+# the ray point at the radial turning point itself: r = r₄ and dr/dτ ≡ 0 for every spacetime,
+# so s is an exact zero (√R has an infinite derivative at R = 0, which would poison dual numbers)
+@inline function ray_point_turning(qc::QuadratureConstants{T}, rm::RadialMarcher, pm::PolarMarcher) where {T}
+    τ = qc.fo
+    xθ = jacobi_state(polar_argument(pm, τ), pm.μ)
+    r = qc.r4
+    θ, νθ = polar_angle(pm, xθ)
+    s = zero(T)
+    sn = xθ.sn / (pm.scale * xθ.dn)
+    cn = xθ.cn / xθ.dn
+    dn = inv(xθ.dn)
+    gt, gϕ = smooth_integrands(qc, r, θ, s, sn, cn, dn)
+    return RayPoint(r, θ, true, νθ, s, sn, cn, gt, gϕ)
+end
+
 @inline simpson3(fa, fm, fb, h) = h / 6 * (fa + 4 * fm + fb)
 
 """
@@ -213,7 +228,7 @@ end
         pb = ray_point(qc, rm, pm, xr, xθ, τb)
         if qc.scattering && (τa < qc.fo < τb)
             # split at the radial turning point (dr/dτ = 0 there, r = r4)
-            pt = ray_point_direct(qc, rm, pm, qc.fo)
+            pt = ray_point_turning(qc, rm, pm)
             p1 = ray_point_direct(qc, rm, pm, (τa + qc.fo) / 2)
             p2 = ray_point_direct(qc, rm, pm, (qc.fo + τb) / 2)
             It1, Iϕ1 = interval_increment(qc, pa, p1, pt, τa, qc.fo)

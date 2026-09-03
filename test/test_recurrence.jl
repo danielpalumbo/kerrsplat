@@ -182,7 +182,7 @@ function test_recurrence(backend, refs; N::Int, M::Int, label::String)
                         (dθ < 0) == s.νθ || (nνθ_rec += 1)
                         (dθ < 0) == d.νθ || (nνθ_krang += 1)
                     end
-                    @test isnan(s.t) && isnan(s.ϕ)
+                    @test isfinite(s.t) && isfinite(s.ϕ)
                     rr, θr = Rref[j, k], Θref[j, k]
                     erec_r[j] = max(erec_r[j], abs(s.r - rr) / max(rr, 1.0))
                     edir_r[j] = max(edir_r[j], abs(d.r - rr) / max(rr, 1.0))
