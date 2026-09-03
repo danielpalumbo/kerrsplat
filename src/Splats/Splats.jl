@@ -24,13 +24,14 @@ ZAMO redshift factor g from the analytic photon momentum.
 module Splats
 
 using ..Geodesics
+using Adapt
 using Krang
 using StaticArrays
 using KernelAbstractions
 
 const KA = KernelAbstractions
 
-export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, ThinRenderer, render!, render
+export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, ThinRenderer, thin_image!, thin_image
 
 """
     SPLAT_PARAMS
@@ -78,6 +79,7 @@ struct ThinRenderer{P,T}
     params::P
     t_obs::T
 end
+Adapt.@adapt_structure ThinRenderer
 
 @inline function (c::ThinRenderer)(acc, j, k, s::GeodesicSample{T}, Δτ, pix) where {T}
     met = Krang.metric(pix)
@@ -97,21 +99,21 @@ end
 end
 
 """
-    render!(out, cache, params, t_obs)
+    thin_image!(out, cache, params, t_obs)
 
 Optically-thin image of the splats `params` at observation time `t_obs` through a regenerated
 `GeodesicCache` (any marcher; `Fused` needs no sample storage). `out` is a vector of `npixels`
 in sorted order (use `to_screen(cache, out)` for the screen); returns `out`.
 """
-function render!(out, cache::GeodesicCache, params, t_obs)
+function thin_image!(out, cache::GeodesicCache, params, t_obs)
     fused_march!(ThinRenderer(params, t_obs), out, cache)
     return out
 end
 
 "Screen-shaped optically-thin image (allocating)."
-function render(cache::GeodesicCache{T}, params, t_obs) where {T}
+function thin_image(cache::GeodesicCache{T}, params, t_obs) where {T}
     out = KA.allocate(cache.backend, T, npixels(cache))
-    render!(out, cache, params, t_obs)
+    thin_image!(out, cache, params, t_obs)
     return to_screen(cache, out)
 end
 
