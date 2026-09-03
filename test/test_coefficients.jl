@@ -6,6 +6,7 @@
 # a KernelAbstractions kernel on the requested backend (Bessels.jl, gamma and pow on CUDA).
 
 using DelimitedFiles
+using KerrSplat.Geodesics
 using KerrSplat.Transfer
 using KerrSplat.Transfer: ME, CL, EE, HPL
 
@@ -33,6 +34,7 @@ relerr(a, b) = abs(a - b) / max(abs(b), 1e-280)
 end
 
 function test_coefficients(backend; tol = 1e-12, label = "")
+    Geodesics.prepare_backend!(backend)
     @testset "Transfer coefficients vs symphony tables ($label)" begin
         th, nth = read_table("thermal_table.csv")
         worst = zeros(13)
