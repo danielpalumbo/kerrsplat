@@ -109,4 +109,87 @@ end
 using Random: randperm
 import Random
 
+# ---- partition hygiene: prune, densify, merge (addendum §5.2.3, 3DGS practice) --------------------
+"Row index of a polarized splat parameter by name."
+prow(name::Symbol) = findfirst(==(name), POLARIZED_SPLAT_PARAMS)
+
+"""
+    prune(params; fraction = 1e-4) -> (params, kept)
+
+Drop splats whose density × volume proxy, e^{logne + s₁ + s₂ + s₃}, is below `fraction` of the
+largest. Returns the reduced matrix and the indices kept.
+"""
+function prune(params::AbstractMatrix; fraction = 1e-4)
+    w = [exp(params[13, i] + params[4, i] + params[5, i] + params[6, i]) for i in 1:size(params, 2)]
+    kept = findall(>=(fraction * maximum(w)), w)
+    return params[:, kept], kept
+end
+
+"""
+    densify(params, grad; threshold, scale_factor = 1.6) -> params
+
+Split every splat whose position-gradient norm (rows x, y, z of `grad`) exceeds `threshold` into
+two: the children sit at ±½ of the largest principal scale along that axis, with all scales
+divided by `scale_factor` (the usual Gaussian-splatting split) and the density set so that the
+total density × volume of the pair equals the parent's, keeping the other parameters. Returns
+the enlarged matrix.
+"""
+function densify(params::AbstractMatrix{T}, grad::AbstractMatrix; threshold, scale_factor = 1.6) where {T}
+    cols = Vector{Vector{T}}()
+    for i in 1:size(params, 2)
+        g = sqrt(grad[1, i]^2 + grad[2, i]^2 + grad[3, i]^2)
+        col = params[:, i]
+        if g > threshold
+            k = argmax(col[4:6])
+            R = Splats.quaternion_rotation(col[7], col[8], col[9], col[10])
+            axis = R[:, k] * exp(col[3 + k]) / 2
+            for sgn in (-1, 1)
+                c = copy(col)
+                c[1:3] .+= sgn * axis
+                c[4:6] .-= log(scale_factor)
+                c[13] += 3 * log(scale_factor) - log(2)
+                push!(cols, c)
+            end
+        else
+            push!(cols, col)
+        end
+    end
+    return reduce(hcat, cols)
+end
+
+"""
+    merge(params; position_tol = 0.2, shape_tol = 0.1) -> (params, groups)
+
+Merge splats whose centres lie within `position_tol` (M) and whose log-scales agree within
+`shape_tol`: the merged splat carries the summed density (exact for co-located identical parcels,
+since the transfer coefficients add) and the density-weighted mean of the other parameters.
+"""
+function merge(params::AbstractMatrix{T}; position_tol = 0.2, shape_tol = 0.1) where {T}
+    n = size(params, 2)
+    assigned = zeros(Int, n)
+    groups = Vector{Vector{Int}}()
+    for i in 1:n
+        assigned[i] == 0 || continue
+        g = [i]; assigned[i] = length(groups) + 1
+        for j in i+1:n
+            assigned[j] == 0 || continue
+            dpos = sqrt(sum(abs2, params[1:3, i] .- params[1:3, j]))
+            dshape = maximum(abs.(params[4:6, i] .- params[4:6, j]))
+            if dpos <= position_tol && dshape <= shape_tol
+                push!(g, j); assigned[j] = assigned[i]
+            end
+        end
+        push!(groups, g)
+    end
+    out = Matrix{T}(undef, size(params, 1), length(groups))
+    for (k, g) in enumerate(groups)
+        w = exp.(params[13, g]); wsum = sum(w)
+        out[:, k] = sum(params[:, g] .* (w ./ wsum)', dims = 2)
+        out[13, k] = log(wsum)
+    end
+    return out, groups
+end
+
+export prune, densify, merge
+
 end
