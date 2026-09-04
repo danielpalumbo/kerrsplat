@@ -15,6 +15,7 @@
  *            Dexter ρ_V variant, for completeness.
  *   power law: j_{I,Q,V} and α_{I,Q,V} from Pandya+ (2016) [power_law_*]; symphony has no
  *            power-law rotativities.
+ *   kappa:   see kappa_table.c (generated from upstream symphony, whose kappa_I is the correct one).
  */
 #include <stdio.h>
 #include <math.h>
@@ -100,5 +101,6 @@ int main(void)
             jI, jQ, jV, aI, aQ, aV);
   }
   fclose(fp);
+
   return 0;
 }

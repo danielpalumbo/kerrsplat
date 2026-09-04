@@ -71,3 +71,19 @@ this repository's tests or session diagnostics; none has been filed upstream yet
    (the rest of the Carlson code is generic). `_sqrt(x) = sqrt(x)` as a fallback would do.
 3. **`ellipj` is not reachable at top level** although listed in the exports (defined in
    `CarlsonAlg` only); `JacobiElliptic.CarlsonAlg.ellipj` works.
+
+## ipole and symphony (fitting formulae)
+
+1. **ipole's `kappa_I` cubes Γ(κ/4 − 1/3)** in N_high (src/symphony/kappa_fits.c, three
+   `tgamma(params->kappa/4.-1./3.)` factors); upstream symphony and Pandya+ (2016) eq. 36 have it
+   once. ipole's κ Stokes I emissivity is therefore wrong at high ν/ν_w (up to 60% on the grid of
+   `validation/symphony/kappa_table.csv`).
+2. **ipole's `kappa_V` is identically zero**: its guard `(Nhigh < SMALL*SMALL) ? 0 : …` tests a
+   quantity that is always negative (N_high carries a leading minus). Upstream symphony has no such
+   guard; KerrSplat guards on |N_high|.
+3. **Both codes interpolate ρ_Q between κ = 5 and the thermal limit with the wrong divisor**
+   (`fits.c`: `((8 − κ) ρ_Q,κ=5 + (κ − 5) ρ_Q,thermal) / 5.0` over an interval of length 3), so
+   ρ_Q at κ = 5 is 0.6 of the κ = 5 fit; ρ_V's branches avoid this by catching κ = 5 in the
+   [4.5, 5] interval. KerrSplat interpolates with the interval length.
+4. **symphony's `rho_nu_fit` prints its validity warnings to stdout**, which corrupts programs
+   that write tables to stdout (filter with `grep "^[0-9]"`).

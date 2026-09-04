@@ -95,8 +95,16 @@ each PR can be validated on its own.
    splats against a fourth-order stencil (1.6e-7; 0.19 s per gradient at 10² × 100 after a
    7-minute first compile), and an Adam fit recovering a perturbed splat (loss down 140×).
 
-Phase 2 is complete with this step. Open: κ distributions, GPU-side Enzyme gradients,
-interval culling for many splats.
+Phase 2 is complete with this step. Open: GPU-side Enzyme gradients, interval culling for many
+splats.
+
+8. **κ distributions** (`kappa-coefficients`): `kappa_synchrotron(ne, κ, w, B, ν, θ, hyp)` with
+   the Pandya+ (2016) fits for j and α (the hypergeometric factor ₂F₁(κ − 1/3, κ + 1, κ + 2/3,
+   −κw) from HypergeometricFunctions.jl on the host, `kappa_hypergeometric`) and the Marszewski+
+   (2021) fits for ρ_Q, ρ_V interpolated in κ ∈ [3.5, 5]. Validated against a table generated
+   from upstream symphony (`validation/symphony/kappa_table.c`), not ipole's copy, which cubes a
+   Gamma factor of j_I and zeroes j_V (upstream_issues.md); j_V against symphony's numerical
+   integration to 29%.
 
 7. **Power-law rotativities** (`powerlaw-rotativities`): Marszewski+ (2021) turn out to provide
    rotativity fits only for κ distributions (their eqs. 51–54); the power-law ρ_Q, ρ_V come from
