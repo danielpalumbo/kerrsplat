@@ -11,8 +11,8 @@ envelope:
     j(t, x) = A · exp(−½ (x − μ)ᵀ Σ⁻¹ (x − μ)) · exp(−½ ((t − t₀)/w)²),
     Σ = R(q) diag(e^{2s}) R(q)ᵀ,
 
-parameterized by the 13 unconstrained numbers (μ ∈ ℝ³, s ∈ ℝ³, q ∈ ℝ⁴ normalized on use,
-t₀, ln w, ln A) of one column of a parameter matrix (see [`SPLAT_PARAMS`](@ref)), so that
+parameterized by the 14 unconstrained numbers (μ ∈ ℝ³, s ∈ ℝ³, q ∈ ℝ⁴ normalized on use,
+t₀, ln w, ln A, and the pattern angular velocity ω) of one column of a parameter matrix (see [`SPLAT_PARAMS`](@ref)), so that
 every parameter can move freely under gradient descent. Coordinates and times are in units
 of GM/c² and GM/c³ (addendum §4.2).
 
@@ -32,16 +32,34 @@ using KernelAbstractions
 
 const KA = KernelAbstractions
 
-export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, ThinRenderer, thin_image!, thin_image
-export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image
+export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRenderer, thin_image!, thin_image
+export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image, polarized_cube, flux_density
 
 """
     SPLAT_PARAMS
 
-Row layout of a splat parameter column: `(:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw, :logA)`.
+Row layout of a splat parameter column:
+`(:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw, :logA, :omega)`. The last entry is
+the pattern angular velocity about the spin axis (radians per M): the splat's centre and
+orientation at time t are those at t₀ rotated by ω (t − t₀) (motion mode B of the addendum, a
+rigid orbit of the emission pattern, independent of the fluid velocity that sets the redshift).
 """
-const SPLAT_PARAMS = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw, :logA)
+const SPLAT_PARAMS = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :t0, :logw, :logA, :omega)
 const NSPLATPARAMS = length(SPLAT_PARAMS)
+
+"Offset of the point (x, y, z) from the centre of splat `i` at time `t`, in the splat's co-rotating frame."
+@inline function pattern_offset(p, i, t, x, y, z, iω)
+    @inbounds begin
+        φ = p[iω, i] * (t - p[11, i])
+        sφ, cφ = sincos(φ)
+        cx = p[1, i] * cφ - p[2, i] * sφ                # centre rotated about the spin axis
+        cy = p[1, i] * sφ + p[2, i] * cφ
+        d = SVector(x - cx, y - cy, z - p[3, i])
+        dr = SVector(d[1] * cφ + d[2] * sφ, -d[1] * sφ + d[2] * cφ, d[3])   # back to the frame at t₀
+        R = quaternion_rotation(p[7, i], p[8, i], p[9, i], p[10, i])
+        return R' * dr                                 # in the splat's principal frame
+    end
+end
 
 "Rotation matrix of a (not necessarily normalized) quaternion (w, x, y, z)."
 @inline function quaternion_rotation(q1, q2, q3, q4)
@@ -60,9 +78,7 @@ quasi-Cartesian position `(x, y, z)`.
 """
 @inline function splat_emissivity(p, i, t, x, y, z)
     @inbounds begin
-        d = SVector(x - p[1, i], y - p[2, i], z - p[3, i])
-        R = quaternion_rotation(p[7, i], p[8, i], p[9, i], p[10, i])
-        u = R' * d                                   # in the splat's principal frame
+        u = pattern_offset(p, i, t, x, y, z, 14)
         q2 = (u[1] * exp(-p[4, i]))^2 + (u[2] * exp(-p[5, i]))^2 + (u[3] * exp(-p[6, i]))^2
         τ2 = ((t - p[11, i]) * exp(-p[12, i]))^2
         return exp(p[13, i] - (q2 + τ2) / 2)

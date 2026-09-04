@@ -17,9 +17,19 @@ lags more). The echo's surface brightness is as high as the direct image's (Liou
 region-integrated flux is 8% of it (demagnification). A wide envelope makes the image independent
 of the observation time to 1e-13 (the fast-light limit). Runs on CPU and CUDA.
 
+## Motion mode B and cubes (`splat-motion`)
+
+Both splat types carry a pattern angular velocity ω (last parameter row): the centre and the
+orientation at time t are those at t₀ rotated rigidly about the spin axis by ω (t − t₀), evaluated
+at each sample's emission time; the fluid velocity (redshift, beaming, polarization frame) stays a
+separate parameter, which is the pattern-versus-fluid separation of the addendum. Gates
+(test/test_motion.jl): the emissivity of a rotating splat equals that of its statically rotated
+copy (1e-16), a movie frame repeats after one pattern period (1e-14), and the Enzyme gradient with
+respect to ω matches a fourth-order stencil (2e-13). `polarized_cube(cache, params, times, νs, L)`
+assembles Stokes movies over observation times and frequencies from one geodesic cache, and
+`flux_density` converts to Jy per pixel.
+
 ## Remaining Phase 3 items
 
-- Motion modes for the splat centres (addendum §6.2, modes A/B/C): advected centres from a
-  velocity model and trajectory knots, with the pattern-vs-fluid separation test.
-- Multi-frequency cubes and movie assembly over (t_obs, ν) sharing the geodesic cache (the loop
-  is trivial; the deliverable is the cube layout and its likelihood).
+- Motion mode C (centres advected by a velocity model, trajectory knots) and the fit-based
+  pattern-versus-fluid separation test (Phase 4 material: fit ω and ũ jointly from a movie).

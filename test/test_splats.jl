@@ -17,8 +17,8 @@ using KerrSplat.Splats
 "Two test splats: one near the equatorial plane, one above it, born at different times."
 function test_splat_params()
     p = zeros(NSPLATPARAMS, 2)
-    p[:, 1] = [6.0, 4.0, 0.5, log(1.5), log(1.2), log(0.8), 1.0, 0.1, -0.2, 0.3, 0.0, log(40.0), log(2.0)]
-    p[:, 2] = [-3.0, 2.0, 2.5, log(1.0), log(1.0), log(2.0), 0.9, -0.3, 0.2, 0.1, 10.0, log(15.0), log(1.0)]
+    p[:, 1] = [6.0, 4.0, 0.5, log(1.5), log(1.2), log(0.8), 1.0, 0.1, -0.2, 0.3, 0.0, log(40.0), log(2.0), 0.0]
+    p[:, 2] = [-3.0, 2.0, 2.5, log(1.0), log(1.0), log(2.0), 0.9, -0.3, 0.2, 0.1, 10.0, log(15.0), log(1.0), 0.0]
     return p
 end
 
