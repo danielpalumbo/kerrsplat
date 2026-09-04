@@ -252,4 +252,93 @@ end
 
 export fisher, audit
 
+# ---- schedules: staged unfreezing, annealing, frequency curriculum, hygiene ----------------------
+"""
+    Stage(; free = nothing, iterations = 100, η = 0.02, η_end = η, batch = nothing, freqs = nothing, label = "")
+
+One stage of a fitting schedule: the parameter rows to free (names or indices; `nothing` frees
+all), the number of Adam iterations, the learning rate annealed from `η` to `η_end` (cosine), the
+minibatch `(nframes, nfreqs)` or `nothing` for full batches, and the frequency indices of the
+movie that enter (`nothing` for all): the frequency curriculum of the addendum starts with the
+optically and Faraday thin channels and adds the thick ones later.
+"""
+Base.@kwdef struct Stage
+    free::Any = nothing
+    iterations::Int = 100
+    η::Float64 = 0.02
+    η_end::Float64 = η
+    batch::Any = nothing
+    freqs::Any = nothing
+    label::String = ""
+end
+
+"""
+    Hygiene(; every = 0, prune_fraction = 1e-4, densify_threshold = Inf, merge_position = 0.2, merge_shape = 0.1, max_splats = typemax(Int))
+
+Partition hygiene applied every `every` iterations of a stage (0 disables): `prune` of splats
+below `prune_fraction` of the largest density × volume, `merge` of co-located parcels, and
+`densify` of splats whose position-gradient norm exceeds `densify_threshold` while the count
+stays below `max_splats`. Every pass re-creates the optimizer state.
+"""
+Base.@kwdef struct Hygiene
+    every::Int = 0
+    prune_fraction::Float64 = 1e-4
+    densify_threshold::Float64 = Inf
+    merge_position::Float64 = 0.2
+    merge_shape::Float64 = 0.1
+    max_splats::Int = typemax(Int)
+end
+
+"""
+    fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing)
+        -> (params, history, events)
+
+Run the stages in order on a parameter matrix (returned, since hygiene can change its size).
+`history` holds the χ² after every iteration (the stage's minibatch and frequency subset) and
+`events` the hygiene passes as `(stage, iteration, nsplats_before, nsplats_after)`.
+"""
+function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
+              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing) where {T}
+    history = T[]
+    events = Tuple{Int,Int,Int,Int}[]
+    for (si, st) in enumerate(stages)
+        free = st.free === nothing ? trues(size(params)) : freeze(params, st.free)
+        mask = T.(free)
+        opt = Optimisers.setup(Optimisers.Adam(st.η), params)
+        freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
+        for it in 1:st.iterations
+            η = st.η_end + (st.η - st.η_end) * (1 + cos(π * (it - 1) / max(st.iterations - 1, 1))) / 2
+            Optimisers.adjust!(opt, η)
+            frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
+            freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
+            f(q) = chi2(q, movie, cache, L; frames, freqs)
+            g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1]
+            if hygiene.every > 0 && it % hygiene.every == 0
+                before = size(params, 2)
+                q, kept = prune(params; fraction = hygiene.prune_fraction)
+                gk = g[:, kept]
+                q, groups = merge(q; position_tol = hygiene.merge_position, shape_tol = hygiene.merge_shape)
+                gm = reduce(hcat, (sum(gk[:, grp], dims = 2) for grp in groups))
+                if size(q, 2) < hygiene.max_splats
+                    q = densify(q, gm; threshold = hygiene.densify_threshold)
+                end
+                if size(q) != size(params) || q != params
+                    params = q
+                    push!(events, (si, it, before, size(params, 2)))
+                    free = st.free === nothing ? trues(size(params)) : freeze(params, st.free)
+                    mask = T.(free)
+                    opt = Optimisers.setup(Optimisers.Adam(η), params)
+                    continue
+                end
+            end
+            opt, params = Optimisers.update!(opt, params, g .* mask)
+            push!(history, f(params))
+            callback === nothing || callback(si, it, params, history[end])
+        end
+    end
+    return params, history, events
+end
+
+export Stage, Hygiene
+
 end
