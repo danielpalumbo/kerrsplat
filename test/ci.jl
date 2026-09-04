@@ -3,7 +3,11 @@
 using Test
 using KerrSplat
 using KerrSplat.Geodesics
+using KerrSplat.Transfer
+using KerrSplat.Splats
 using KerrSplat.Fit
+using Enzyme
+using LinearAlgebra
 using KernelAbstractions
 using CUDA
 using Random
@@ -19,6 +23,7 @@ include("test_gold2020.jl")
 include("test_polarized.jl")
 include("riaf_model.jl")
 include("test_uvfits.jl")
+include("test_polarized_splats.jl")
 
 @testset "KerrSplat CI subset" begin
     test_geodesics(CPU(); res = 24, N = 16, tol = 1e-12, label = "CPU")
@@ -30,4 +35,5 @@ include("test_uvfits.jl")
     test_gold2020(CPU(); res = 24, N = 300, tol = 0.03, label = "CPU coarse")
     test_polarized(CPU(); label = "CPU")
     test_uvfits()
+    test_reflection()
 end

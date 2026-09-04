@@ -192,3 +192,49 @@ function test_populations(backend; res = 16, N = 200, label = "")
         end
     end
 end
+
+"""
+    test_reflection()
+
+Parity gate for the polarized splats: the Kerr spacetime is symmetric under the equatorial
+reflection z → −z and (with the spin reversed) under y → −y, so the image of a source seen
+from below the equator (θo = 163°, the M87 geometry) must be the β-mirror of the image of the
+reflected source seen from 17°, and the image at spin −a the α-mirror of the reflected source
+at +a. The reflection maps the field as an axial vector (B → −B on top of the geometric
+mirror), reverses the mirrored velocity component, and flips the signs of U and V. Pins the
+observer inclinations beyond 90°, negative spins and the handedness of the screen basis.
+"""
+function test_reflection(; res = 24, N = 60)
+    fov = 20.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    M_solar = 6.5e9; L = gravitational_radius(M_solar); ν = 230e9
+    function image(a, θo, q)
+        cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+        regenerate!(cache, a, θo; marcher = Fused(64))
+        polarized_image(cache, q, 0.0, ν, L)
+    end
+    S(x, k) = getindex.(x, k)
+    rel(x, y) = sqrt(sum((x .- y) .^ 2) / sum(y .^ 2))
+    p = zeros(NPOLARIZEDPARAMS, 2)
+    p[:, 1] = [5.0, 2.0, 0.5, log(1.5), log(1.5), log(1.0), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e6), log(30.0), log(8.0), 1.0, 0.5, 0.3, 0.3, 0.1, 0.0]
+    p[:, 2] = [-3.0, -4.0, -1.0, log(1.0), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(20.0), log(15.0), 2.0, -1.0, -0.2, 0.4, -0.1, 0.0]
+    @testset "equatorial and azimuthal reflections" begin
+        A = image(0.94, deg2rad(163.0), p)
+        q = copy(p); q[3, :] .= -q[3, :]; q[17, :] .+= π; q[20, :] .= -q[20, :]           # z → −z: B → −(mirror), u_z reversed
+        D = image(0.94, deg2rad(17.0), q)
+        for k in 1:4
+            @test rel(reverse(S(D, k); dims = 2) .* (k >= 3 ? -1 : 1), S(A, k)) < 1e-10
+        end
+        B = image(0.94, deg2rad(17.0), p)
+        r = copy(p); r[2, :] .= -r[2, :]; r[16, :] .= π .- r[16, :]; r[17, :] .= π .- r[17, :]; r[19, :] .= -r[19, :]   # y → −y, spin reversed
+        E = image(-0.94, deg2rad(17.0), r)
+        for k in 1:4
+            @test rel(reverse(S(E, k); dims = 1) .* (k >= 3 ? -1 : 1), S(B, k)) < 1e-10
+        end
+        # the gate has teeth: a polar-vector mirror of the field (no B → −B) breaks V
+        q2 = copy(q); q2[17, :] .-= π; q2[16, :] .= π .- q2[16, :]
+        D2 = image(0.94, deg2rad(17.0), q2)
+        @test rel(-reverse(S(D2, 4); dims = 2), S(A, 4)) > 0.1
+        @info "reflection: θo = 163° vs the mirrored source at 17°, and spin −0.94 vs +0.94, agree to $(maximum(rel(reverse(S(D, k); dims = 2) .* (k >= 3 ? -1 : 1), S(A, k)) for k in 1:4)) and $(maximum(rel(reverse(S(E, k); dims = 1) .* (k >= 3 ? -1 : 1), S(B, k)) for k in 1:4)); |V|/I = $(round(sqrt(sum(S(A, 4) .^ 2) / sum(S(A, 1) .^ 2)); sigdigits = 2))"
+    end
+end
