@@ -23,6 +23,11 @@ before any performance work.
 - Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
 - Enzyme with non-`const` globals captured in closures hits an internal error; make them
   `const` or pass them as arguments.
+- Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
+  hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
+  with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.
+- The full test suite writes its progress to stderr and takes over an hour; run it through a
+  pipe (`… 2>&1 | tee log`), since output redirected to a file is buffered until exit.
 
 ## Git workflow
 - `main` is changed through pull requests. Work on a branch named `<topic>` (e.g.
