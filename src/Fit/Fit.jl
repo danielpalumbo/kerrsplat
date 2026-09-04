@@ -48,7 +48,7 @@ StokesMovie(data::AbstractArray{SVector{4,T},4}, times, νs, σ; mask = trues(si
 the polarized splat model rendered through `cache` (already regenerated) and the length unit `L`.
 Written as a plain function of `params` so that Enzyme can differentiate it.
 """
-function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs)) where {T}
+function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), priors = nothing) where {T}
     out = Vector{RadiativeState{T}}(undef, npixels(cache))
     nα, nβ = size(movie.data, 1), size(movie.data, 2)
     total = zero(T)
@@ -64,7 +64,7 @@ function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames 
             total += r[1] * r[1] + r[2] * r[2] + r[3] * r[3] + r[4] * r[4]
         end
     end
-    return total
+    return total + penalty(params, priors)
 end
 
 "Boolean mask over a parameter matrix that frees the given rows (by index or name) of all splats."
@@ -290,7 +290,7 @@ Base.@kwdef struct Hygiene
 end
 
 """
-    fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing)
+    fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing)
         -> (params, history, events)
 
 Run the stages in order on a parameter matrix (returned, since hygiene can change its size).
@@ -298,7 +298,7 @@ Run the stages in order on a parameter matrix (returned, since hygiene can chang
 `events` the hygiene passes as `(stage, iteration, nsplats_before, nsplats_after)`.
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
-              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing) where {T}
+              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing) where {T}
     history = T[]
     events = Tuple{Int,Int,Int,Int}[]
     for (si, st) in enumerate(stages)
@@ -311,7 +311,7 @@ function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicC
             Optimisers.adjust!(opt, η)
             frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
             freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
-            f(q) = chi2(q, movie, cache, L; frames, freqs)
+            f(q) = chi2(q, movie, cache, L; frames, freqs, priors)
             g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1]
             if hygiene.every > 0 && it % hygiene.every == 0
                 before = size(params, 2)
@@ -340,6 +340,53 @@ function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicC
 end
 
 export Stage, Hygiene
+
+# ---- priors and hierarchical shrinkage (addendum §6.4) ------------------------------------------
+"""
+    Prior(; rows, μ = nothing, σ, shrink = false)
+
+Gaussian penalty on parameter `rows` (names or indices) added to χ²: with `μ` a value per row
+(or a vector), Σ ((p − μ)/σ)² over the splats; with `shrink = true` the centre is the population
+mean over the splats instead (hierarchical shrinkage: per-splat values are drawn around a fitted
+population mean with spread `σ`, so that σ → ∞ recovers full independence and no flow model is
+imposed, only shared statistics if the data like them).
+"""
+Base.@kwdef struct Prior
+    rows::Any
+    μ::Any = nothing
+    σ::Any
+    shrink::Bool = false
+end
+
+"The prior penalty of a parameter matrix (a plain function for Enzyme)."
+function penalty(params::AbstractMatrix{T}, prior::Prior) where {T}
+    total = zero(T)
+    n = size(params, 2)
+    for (k, r) in enumerate(prior.rows)
+        i = r isa Symbol ? findfirst(==(r), POLARIZED_SPLAT_PARAMS) : r
+        σ = prior.σ isa Number ? prior.σ : prior.σ[k]
+        if prior.shrink
+            m = zero(T)
+            for j in 1:n
+                m += params[i, j]
+            end
+            m /= n
+            for j in 1:n
+                total += ((params[i, j] - m) / σ)^2
+            end
+        else
+            μ = prior.μ isa Number ? prior.μ : prior.μ[k]
+            for j in 1:n
+                total += ((params[i, j] - μ) / σ)^2
+            end
+        end
+    end
+    return total
+end
+penalty(params, priors::AbstractVector{Prior}) = sum(penalty(params, pr) for pr in priors; init = zero(eltype(params)))
+penalty(params, ::Nothing) = zero(eltype(params))
+
+export Prior, penalty
 
 include("fits.jl")
 include("spacetime.jl")
