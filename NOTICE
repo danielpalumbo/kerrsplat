@@ -1,0 +1,20 @@
+KerrSplat
+Copyright 2026 Daniel Palumbo
+
+This product includes software developed for Gaussian splatting of plasma into the Kerr
+spacetime (https://github.com/danielpalumbo/kerrsplat), licensed under the Apache License,
+Version 2.0.
+
+Third-party material and provenance:
+
+- Dependencies (not included in this repository) are installed by the Julia package manager
+  under their own licenses: Krang.jl and JacobiElliptic.jl (MIT), CUDA.jl, KernelAbstractions.jl,
+  Enzyme.jl, ForwardDiff.jl, StaticArrays.jl, Bessels.jl, Optimisers.jl, Adapt.jl (MIT).
+- validation/symphony/ contains small C programs of this project that are compiled together with
+  the GPL-licensed sources of ipole (https://github.com/AFD-Illinois/ipole) and symphony
+  (https://github.com/AFD-Illinois/symphony) to produce reference tables; those sources are not
+  included here, and the tables are the numerical output of those programs.
+- validation/ipole_riaf/ contains reference images computed with ipole (GPL) from its own
+  example model; they are program output, not ipole source code.
+- docs/plans/ cites and summarizes published work by others; no third-party text is reproduced
+  beyond short quotations and formulae.
