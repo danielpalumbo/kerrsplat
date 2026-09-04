@@ -65,3 +65,34 @@ function test_uvfits()
         @info "uvfits: $(length(tri)) triangles and $(length(quad)) quadrangles over $(length(unique(round.(clean.time; digits = 6)))) scans"
     end
 end
+
+"""
+    test_scan_average()
+
+`average_scans` on the synthetic fixture (one integration per scan) is the identity, and on a
+copy whose rows are doubled 20 s later with perturbed visibilities it applies ehtim's rules:
+earliest time, summed integration time, mean u, v, mean visibility, noise √(Σσ²)/n, absent
+Stokes parameters staying absent.
+"""
+function test_scan_average()
+    dir = joinpath(@__DIR__, "data")
+    obs = read_uvfits(joinpath(dir, "synth_eht2017.uvfits"))
+    @testset "scan averaging" begin
+        same = average_scans(obs)
+        @test length(same) == length(obs) && same.time == obs.time && same.vis == obs.vis && same.σ == obs.σ && same.u == obs.u
+        n = length(obs)
+        δ = [SVector{4}(0.01 * cis(k), 0.0im, 0.002im, 0.0im) for k in 1:n]
+        dbl = Fit.Observation{Float64}(vcat(obs.time, obs.time .+ 20 / 3600), vcat(obs.tint, obs.tint), vcat(obs.s1, obs.s1), vcat(obs.s2, obs.s2), obs.stations,
+                                       vcat(obs.u, obs.u .+ 1e3), vcat(obs.v, obs.v .- 1e3), vcat(obs.vis, obs.vis .+ δ),
+                                       vcat(obs.σ, [SVector(2σ[1], σ[2], Inf, σ[4]) for σ in obs.σ]), obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source)
+        av = average_scans(dbl)
+        @test length(av) == n && av.time == obs.time && av.tint == 2 .* obs.tint && all(av.u .≈ obs.u .+ 500) && all(av.v .≈ obs.v .- 500)
+        @test maximum(abs(av.vis[k][1] - (obs.vis[k][1] + δ[k][1] / 2)) for k in 1:n) < 1e-15
+        @test maximum(abs(av.σ[k][1] - sqrt(obs.σ[k][1]^2 + 4obs.σ[k][1]^2) / 2) for k in 1:n) < 1e-15
+        @test all(av.vis[k][3] == obs.vis[k][3] && av.σ[k][3] == obs.σ[k][3] for k in 1:n)   # U present in one row only: that row
+        @test all(abs(av.σ[k][2] - obs.σ[k][2] / sqrt(2)) < 1e-15 for k in 1:n)
+        # a gap larger than the scan threshold separates the rows again
+        far = Fit.Observation{Float64}(vcat(obs.time, obs.time .+ 0.1), dbl.tint, dbl.s1, dbl.s2, obs.stations, dbl.u, dbl.v, dbl.vis, dbl.σ, obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source)
+        @test length(average_scans(far)) == 2n
+    end
+end
