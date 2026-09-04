@@ -29,6 +29,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Field-level recovery on a voxel grid | `Splats` | truth of the noise-floor fit | density PSNR +3.7 dB, Θe error 0.22 → 0.17, B to 1.5% |
 | FITS movies (ehtim layout) | `Fit` | write/read round trip | 1e-9 |
 | Spin and inclination fit (Levenberg–Marquardt on duals) | `Fit` | noisy image of two splats | θo to 0.07°, a to 0.04 at 2.25 M pixels, χ² at the noise floor |
+| Visibility-domain χ² (direct transform) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
@@ -61,7 +62,8 @@ per-splat cost for many splats.
   the hypergeometric function on the GPU).
 - Interval culling of splats along rays (performance; accuracy first).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
-  `validation/riaf_fit/`) and the visibility-domain likelihood.
+  `validation/riaf_fit/`). The visibility χ² exists on the direct transform; closure quantities
+  and station gains (the Comrade.jl route) do not.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
   Daniel's call).
 

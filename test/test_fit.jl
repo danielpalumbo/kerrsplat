@@ -209,3 +209,60 @@ function test_fits_io(; res = 8, N = 60)
         @info "FITS round trip: $(length(paths)) files, pixel $(round(hdr.psize_deg * 3.6e9, digits = 2)) μas, peak $(maximum(norm.(S))) Jy/pixel"
     end
 end
+
+"""
+Visibilities: the direct transform at the grid frequencies matches the FFT of the image, the
+zero-spacing visibility is the flux density, and the χ² of a splat model against visibilities of
+its own image is zero while a perturbed model gives a positive value with an Enzyme gradient
+matching finite differences.
+"""
+function test_visibilities(; res = 8, N = 60)
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D_pc = 16.8e6; D = D_pc * Transfer.PC
+    L = gravitational_radius(M_solar); ν = 230e9
+    p = zeros(NPOLARIZEDPARAMS, 1)
+    p[:, 1] = [6.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(20.0), log(10.0), 1.0, 0.5, 0.0, 0.35, 0.0, 0.0]
+    img = polarized_image(cache, p, 0.0, ν, L)
+    psize = Δα * L / D
+    @testset "visibilities by direct transform" begin
+        # an explicit transform written from the sky coordinates of the pixels (RA offset −α toward the
+        # east, declination offset +β), as the definition V(u, v) = ∫ I e^{−2πi(u l + v m)} dΩ
+        I = getindex.(img, 1) .* (psize^2 / Transfer.JY)
+        us = Float64[]; vs = Float64[]; ref = ComplexF64[]
+        for kv in 0:2, ku in 0:2
+            u = ku / (res * psize); v = kv / (res * psize)
+            push!(us, u); push!(vs, v)
+            acc = 0.0im
+            for j in 1:res, i in 1:res
+                l = -camera.αs[i + (j - 1) * res] * L / D; m = camera.βs[i + (j - 1) * res] * L / D
+                acc += I[i, j] * cis(-2π * (u * l + v * m))
+            end
+            push!(ref, acc)
+        end
+        V = visibilities(img, Δα, L, D, us, vs)
+        @test maximum(abs.(getindex.(V, 1) .- ref)) < 1e-10 * abs(ref[1])
+        @test real(V[1][1]) ≈ sum(I) && abs(imag(V[1][1])) < 1e-12 * sum(I)
+        # χ² against the model's own visibilities is zero; a perturbed model is not, with a correct gradient
+        rng = Random.MersenneTwister(2)
+        u = 4e9 .* randn(rng, 20); v = 4e9 .* randn(rng, 20)
+        σ = SVector(0.01, 0.005, 0.005, 0.002) * abs(V[1][1])
+        data = VisibilityData(u, v, visibilities(img, Δα, L, D, u, v), σ)
+        loss(q) = (out = Vector{RadiativeState{Float64}}(undef, npixels(cache)); fill!(out, zero(RadiativeState{Float64}));
+                   polarized_image!(out, cache, q, 0.0, ν, L); chi2_visibilities(map(st -> observed_stokes(st, ν), to_screen(cache, out)), Δα, L, D, data))
+        @test loss(p) < 1e-18
+        q0 = copy(p); q0[1] += 0.5; q0[13] -= 0.2
+        χ = loss(q0)
+        @test χ > 1
+        g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), q0)[1]
+        for i in (1, 13, 16)
+            h = 1e-4; f(x) = (q = copy(q0); q[i] = x; loss(q)); x = q0[i]
+            fd = (-f(x + 2h) + 8f(x + h) - 8f(x - h) + f(x - 2h)) / (12h)
+            @test abs(g[i] - fd) / abs(fd) < 1e-5
+        end
+        @info "visibilities: zero-spacing $(round(real(V[1][1]), digits = 4)) Jy; χ² of the perturbed model $χ over 20 baselines"
+    end
+end
