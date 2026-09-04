@@ -21,9 +21,12 @@ include("test_transfer_step.jl")
 include("test_frames.jl")
 include("test_gold2020.jl")
 include("test_polarized.jl")
+include("test_polarized_splats.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
+@info "computing the BigFloat gate-2 references"
 gate2_refs = gate2_references()
+@info "references ready; starting the CPU tests"
 
 @testset "KerrSplat" begin
     test_jacobi()
@@ -45,8 +48,12 @@ gate2_refs = gate2_references()
         test_frames(CPU(); label = "CPU")
         test_gold2020(CPU(); res = 48, N = 500, tol = 0.03, label = "CPU coarse")
         test_polarized(CPU(); label = "CPU")
+        test_polarized_splats(CPU(); res = 24, N = 300, label = "CPU")
+        test_polarized_splat_gradients(; res = 10, N = 100, tol = 1e-5)
+        test_polarized_splat_fit(; res = 10, N = 100, iterations = 150)
     end
     if CUDA.functional()
+        @info "CPU tests done; starting the CUDA tests"
         @testset "Geodesics on CUDA" begin
             # Measured GPU/CPU agreement: r, θ to 1e-12 and t̃ to 1e-10 everywhere. The looser
             # tolerances cover rounding differences amplified by Krang's internal cancellation in
@@ -66,6 +73,7 @@ gate2_refs = gate2_references()
             test_gold2020(CUDABackend(); res = 128, N = 2000, label = "CUDA")
             test_polarized(CUDABackend(); label = "CUDA")
             test_riaf_vs_ipole(CUDABackend(); N = 2000, label = "CUDA")
+            test_polarized_splats(CUDABackend(); res = 48, N = 600, label = "CUDA")
             @test CUDA.limit(CUDA.LIMIT_STACK_SIZE) >= Geodesics.cuda_stack_bytes(Float64)
         end
     else
