@@ -1,5 +1,8 @@
 # GPU-resident Kerr geodesics for KerrSplat: plan
 
+> Status (2026-09-03): steps 2–6 of §9 are implemented and merged; `docs/STATUS.md` maps every
+> layer of the package to its validation gate, and the later phases of the main plan build on this one.
+
 **Date:** 2026-09-02. Companion to `kerrsplat_evaluation_and_plan.md` (2026-07-09) and `kerrsplat_maximal_generality_addendum.md` (2026-07-10). Scope: the geodesic layer only, i.e. everything that changes when spin `a`, inclination `θo`, or the camera changes. Inference is out of scope here.
 
 > **Status 2026-09-03** (`KerrSplat.Geodesics`, PRs #2–#4): steps 2–6 of §9 are implemented and

@@ -17,10 +17,14 @@ and integrates the full Stokes transfer equation along the rays with synchrotron
 validated against ipole's symphony fits, an exact constant-coefficient step validated against
 BigFloat, Walker–Penrose frame angles validated against Krang, Stokes I fluxes validated on the
 Gold et al. (2020) test problems and full Stokes images validated against ipole's RIAF model
-(0.2–2% pixel norms). Gaussian splats carry either a thin emissivity or a thermal plasma
-(density, temperature, field, velocity) and render, with slow light and a pattern rotation, as
-Stokes movie cubes differentiable with Enzyme (fits of positions, plasma, field, velocity and
-pattern rate from synthetic movies are part of the tests).
+(0.2–2% pixel norms). Gaussian splats carry either a thin emissivity or a plasma parcel (thermal,
+power-law or κ electrons; density, temperature or index, field, velocity) and render, with slow
+light and pattern rotation or advection, as Stokes movie cubes differentiable with Enzyme. The
+inference layer fits them to Stokes movies in the image or visibility domain (χ², closures,
+station gains, priors, staged and minibatched schedules with densification and pruning, a Fisher
+audit, spin and inclination by forward-mode duals) and reads and writes ehtim-style FITS movies;
+a cross-model fit reproduces ipole's RIAF images with twelve splats. `docs/STATUS.md` maps every
+layer to the gate that validates it.
 
 ## Package layout
 
@@ -44,9 +48,14 @@ pattern rate from synthetic movies are part of the tests).
   ipole's field-aligned Stokes basis, screen basis north = +β, east = −α.
 - `src/Splats/` — `KerrSplat.Splats`: Gaussian plasma splats with a temporal envelope and a
   pattern rotation, either with a thin emissivity (14 parameters, `thin_image`) or as one-zone
-  thermal plasma parcels (21 parameters: density, temperature, field strength and direction,
-  ZAMO velocity; `polarized_image`, `polarized_cube`), rendered through the fused marcher with
-  slow light and differentiable with Enzyme.
+  plasma parcels (21 parameters for thermal electrons, 22 for power-law or κ electrons: density,
+  temperature or index, field strength and direction, ZAMO velocity; `polarized_image`,
+  `polarized_cube`), centres optionally advected along trajectory knots, rendered through the
+  fused marcher with slow light and differentiable with Enzyme; field-level views on a voxel grid.
+- `src/Fit/` — `KerrSplat.Fit`: Stokes movies (`StokesMovie`, FITS I/O), χ² in the image domain
+  and on visibilities, closures and self-calibrated visibilities, priors and hierarchical
+  shrinkage, `fit!` with staged unfreezing, annealing, a frequency curriculum and periodic
+  prune/merge/densify, the Fisher audit, and `fit_spacetime` for spin and inclination.
 - `test/` — gates 1–5 of the GPU plan (every stored quantity against Krang on the CPU, the
   recurrence against a BigFloat evaluation of the closed forms, the quadrature against a
   BigFloat integration of the rates), the Phase 2 gates (symphony tables, BigFloat transfer
