@@ -36,11 +36,11 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
 per sample-splat. Polarized transport (`bench/polarized_bench.jl`, 128² × 1000 samples, one
-frequency): 97 ns per sample with one splat, 170 ns with four, 366 ns with sixteen (about 18 ns
-per additional splat: the Gaussian weight decides whether the frames, coefficients and exact step
-run), i.e. 6 s for a 128² Stokes image of sixteen splats and about a quarter of an hour for a
-cube of twenty frames and eight frequencies. Interval culling would remove most of the
-per-splat cost for many splats.
+frequency): 97 ns per sample with one splat, 170 ns with four, 366 ns with sixteen, 520 ns with
+sixty-four (the bounding-sphere early-out of `outside_support` rejects far splats for a `sincos`
+and a few multiplications, 20% faster than the full weight at sixty-four splats), i.e. 6 s for a
+128² Stokes image of sixteen splats and about a quarter of an hour for a cube of twenty frames
+and eight frequencies. Per-ray interval lists would remove the remaining per-splat cost.
 
 ## Conventions that were settled by validation
 
@@ -62,7 +62,7 @@ per-splat cost for many splats.
   kernels; the host path on the CPU backend is what the fits use. Forward-mode duals work on both.
 - κ populations inside the splats (the coefficients exist; the hypergeometric factor is a host
   quantity per population).
-- Interval culling of splats along rays (performance; accuracy first).
+- Per-ray interval lists for many splats (the per-sample bounding-sphere early-out exists).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
   `validation/riaf_fit/`). The visibility and closure χ² exist on the direct transform; station-gain
   fitting and the Comrade.jl route do not.
