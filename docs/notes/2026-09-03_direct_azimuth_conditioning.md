@@ -72,3 +72,70 @@ Two smaller, unrelated effects seen at the same time:
 4. **The α ≈ 0 columns matter physically** only through the emission at those positions;
    an error of 1e-7 M is far below the splat scales of interest, but it is an accuracy floor
    of the direct formulation that the recurrence/quadrature path should beat, not inherit.
+
+---
+
+# Addendum (same day): radius near the critical curve, and the Jacobi amplitude
+
+Found while validating the recurrence marcher (plan step 3, gate 2) against a BigFloat
+re-evaluation of the closed forms (`test/highprec_reference.jl`: Krang's Float64 roots
+Newton-polished in 256-bit arithmetic, then the same Gralla–Lupsasca expressions in BigFloat).
+
+## Krang's direct r(τ) loses accuracy from 1 − k ≈ 1e-2 inward
+
+Errors of the direct evaluation against the BigFloat reference (a = 0.94, θo = 60°, pixels at
+screen radius ρ_c(1 ± δ) around the critical curve; "r < 50" restricts to samples inside 50 M):
+
+| side | δ | 1 − k | max rel. error in r | r < 50 |
+|---|---|---|---|---|
+| out (4 real roots) | 1e-3 | 4.4e-2 | 7e-12 | 1e-12 |
+| out | 1e-4 | 1.4e-2 | 1.0e-10 | 2e-11 |
+| out | 1e-5 | 4.5e-3 | 5.8e-10 | 1.4e-10 |
+| out | 1e-6 | 1.4e-3 | 2.3e-9 | 7.7e-10 |
+| out | 1e-8 | 1.4e-4 | 7.4e-8 | 2.5e-8 |
+| in (2 real roots) | 1e-5 | 1.3e-6 | 2.6e-10 | 2.6e-10 |
+| in | 1e-6 | 1.3e-7 | 2.2e-9 | 2.2e-9 |
+| in | 1e-7 | 1.3e-8 | **1.3** | 0.2 |
+
+θ stays at 1e-13 to 1e-15 throughout. Two mechanisms:
+
+1. **Root conditioning (dominant).** Near the critical curve r₃ ≈ r₄ is a near-double root of
+   the radial quartic. With coefficients rounded at ε ≈ 1e-16 the roots are determined only to
+   ε/r₄₃, so r₄₃ itself (and 1 − k, which sets the number of half-orbits before escape) carries
+   a relative error ε/r₄₃² — 1e-8 at 1 − k ≈ 1e-4. Every downstream quantity inherits it. Both
+   the direct and the recurrence path use the same roots and show the same error. The fix, if
+   ever needed, is to solve the quartic in extended precision in K1 (cheap: K1 is 18 ms for
+   65,536 pixels); on a 256² screen of ±10 M only 16 pixels have 1 − k < 1e-4 and 1648 have
+   1 − k < 1e-2, so the practical impact is a ring of pixels with r accurate to 1e-10…1e-8.
+2. **`JacobiElliptic._am` asymptotic branch.** For 1 − m < √eps ≈ 1.5e-8 the amplitude switches
+   to A&S 16.15.4, a first-order expansion whose error term m₁ cosh(u) grows without bound: at
+   u ≈ 2K ≈ 21 the returned sn, cn are wrong by 0.4. Krang's direct evaluation returns nonsense
+   there (negative radii). Up to 1 − m = 1e-7 the AGM branch is accurate to 4e-15. Worth an
+   upstream issue; `NEAR_CRITICAL_ONE_MINUS_K = 1e-7` flags such pixels in `PixelConstants`
+   (none occur on ordinary grids).
+
+A third, smaller effect is specific to Krang's form of the four-real-root radius,
+r = (r₃₁ r₄ − r₃ r₄₁ sn²)/(r₃₁ − r₄₁ sn²): the denominator cancels near the observer end for
+near-critical rays, so the absolute rounding of sn² becomes a relative error ~ r/r₄₃ in r. The
+recurrence uses the equivalent r = (r₃ r₄₁ cn² − r₁ r₄₃)/(r₄₁ cn² − r₃₄), which cancels between
+quantities carried with relative accuracy. With Float64 roots the improvement is invisible
+(mechanism 1 dominates), but it costs nothing.
+
+## Per-ray constants must be the ones Krang used
+
+Krang stores I0_inf per pixel and evaluates the Jacobi functions with a parameter k rebuilt at
+every sample from the roots. Any marcher that rebuilds k differently — even by one ulp, e.g.
+`abs(z)` (hypot) instead of Krang's `√abs2(z)` for |r₃ − r₂| — pays for it on near-critical
+case-3 rays: at the first samples the argument is X ≈ 1.9 K ≈ 16 and ∂cn/∂k ≈ e^X/8 ≈ 1e6, so
+the inconsistency between the k inside I0_inf and the k inside cn moved r by 5e-9 while the
+self-consistent pairs (Krang's, and the BigFloat reference's) agree to 4e-14. `radial_marcher`
+therefore copies Krang's expressions token for token. The anchored quadrature of t̃ and φ (plan
+step 4) must respect the same rule for every constant it shares with Krang's anchors.
+
+## Recurrence accuracy
+
+With re-anchoring every 64 samples, the recurrence for r and θ is indistinguishable from the
+direct evaluation against the BigFloat reference at every tested pixel (θ to 1e-13; r to 1e-13
+away from the critical curve and to the root-limited values above near it), the momentum signs
+ν_r, ν_θ and the validity flags agree with Krang's at every sample, and the per-sample cost is
+a few nanoseconds instead of the ~12 elliptic evaluations of the direct path.

@@ -17,7 +17,8 @@ Structure of arrays holding, for every pixel, what Krang precomputes in
 the four radial roots `r1…r4` (complex); the radial antiderivatives at infinity `I0_inf`,
 `Iϕ_inf`, `It_inf` and the I0-subtracted pieces `I1_inf, I2_inf, Ip_inf, Im_inf`; the total
 Mino time `τ_total`; the angular antiderivatives `(Gθo, Gθhat)`, `(Gϕo, Gϕhat)`,
-`(Gto, Gthat)`; and `numreals`, the number of real radial roots (4: Krang's cases 1 and 2,
+`(Gto, Gthat)`; `k_r`, the elliptic parameter of the radial closed form (1 − k_r → 0 at the
+critical curve); and `numreals`, the number of real radial roots (4: Krang's cases 1 and 2,
 scattering orbits; 2: case 3; 0: case 4).
 
 Pixels are stored in root-case-sorted order (see [`GeodesicCache`](@ref)`.perm`) so that each
@@ -48,6 +49,7 @@ struct PixelConstants{T,VT<:AbstractVector{T},VC<:AbstractVector{Complex{T}},VI<
     Gϕhat::VT
     Gto::VT
     Gthat::VT
+    k_r::VT
     numreals::VI
 end
 Adapt.@adapt_structure PixelConstants
@@ -65,6 +67,7 @@ function PixelConstants{T}(backend::KA.Backend, npix::Integer) where {T}
         c(), c(), c(), c(),
         v(), v(), v(), v(), v(), v(), v(), v(),
         v(), v(), v(), v(), v(), v(),
+        v(),
         KA.allocate(backend, Int8, npix),
     )
 end
@@ -148,6 +151,7 @@ end
         Gto, Gthat = pix.absGto_Gthat
         pc.Gto[j] = Gto
         pc.Gthat[j] = Gthat
+        pc.k_r[j] = radial_parameter(pix)
         pc.numreals[j] = num_real_roots(pix.roots)
     end
 end

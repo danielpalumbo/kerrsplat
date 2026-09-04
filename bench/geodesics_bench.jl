@@ -32,7 +32,15 @@ function timed_stages(cache, a, θo)
     t0 = time()
     Geodesics.direct_march!(cache.samples, cache.consts, met, θo, cache.nval); sync()
     t_k2 = time() - t0
-    return (k0 = t_k0, sort = t_sort, k1 = t_k1, k2 = t_k2)
+    Geodesics.recurrence_march!(cache.samples, cache.consts, cache.ranges, met, θo, cache.nval, Val(64)); sync()   # compile
+    t0 = time()
+    Geodesics.recurrence_march!(cache.samples, cache.consts, cache.ranges, met, θo, cache.nval, Val(64)); sync()
+    t_rec = time() - t0
+    Geodesics.quadrature_march!(cache.samples, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, met, θo, cache.nval, Val(64)); sync()
+    t0 = time()
+    Geodesics.quadrature_march!(cache.samples, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, met, θo, cache.nval, Val(64)); sync()
+    t_quad = time() - t0
+    return (k0 = t_k0, sort = t_sort, k1 = t_k1, k2 = t_k2, rec = t_rec, quad = t_quad)
 end
 
 for (name, backend) in (("CUDA", CUDABackend()), ("CPU ($(Threads.nthreads()) threads)", CPU()))
@@ -40,11 +48,13 @@ for (name, backend) in (("CUDA", CUDABackend()), ("CPU ($(Threads.nthreads()) th
     cache = GeodesicCache(backend, camera, Val(N))
     t0 = time(); regenerate!(cache, a, θo); t_first = time() - t0          # includes compilation
     t0 = time(); regenerate!(cache, a, θo); t_warm = time() - t0
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    t0 = time(); regenerate!(cache, a, θo; marcher = Recurrence(64)); t_warm_rec = time() - t0
     s = timed_stages(cache, a, θo)
     npix = npixels(cache)
-    @printf("[%s] regenerate!: first %.1f s (compile), warm %.3f s\n", name, t_first, t_warm)
-    @printf("[%s]   K0 root cases %.4f s | sort %.4f s | K1 constants %.4f s (%.1f µs/px) | K2 direct march %.3f s (%.1f ns/sample)\n",
-            name, s.k0, s.sort, s.k1, s.k1 / npix * 1e6, s.k2, s.k2 / (npix * N) * 1e9)
+    @printf("[%s] regenerate!: Direct first %.1f s (compile), warm %.3f s; Recurrence(64) warm %.3f s\n", name, t_first, t_warm, t_warm_rec)
+    @printf("[%s]   K0 root cases %.4f s | sort %.4f s | K1 constants %.4f s (%.1f µs/px) | K2 direct march %.3f s (%.1f ns/sample) | K2 recurrence (r, θ; anchor 64) %.4f s (%.2f ns/sample) | K2 recurrence + quadrature (t̃, r, θ, φ) %.4f s (%.2f ns/sample)\n",
+            name, s.k0, s.sort, s.k1, s.k1 / npix * 1e6, s.k2, s.k2 / (npix * N) * 1e9, s.rec, s.rec / (npix * N) * 1e9, s.quad, s.quad / (npix * N) * 1e9)
     @printf("[%s]   stored samples: %.2f GB; cases 4/2/0 real roots: %d/%d/%d\n", name, sizeof(cache.samples) / 1e9,
             length(cache.ranges.case2), length(cache.ranges.case3), length(cache.ranges.case4))
     flush(stdout)

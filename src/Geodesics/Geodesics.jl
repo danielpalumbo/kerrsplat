@@ -12,8 +12,14 @@ camera change.
 * `direct_march.jl` — kernel K2 in stored mode: one thread per ray marches `N` uniform
   Mino-time samples and writes (t̃, r, θ, φ, ν_r, ν_θ, ok) into [`GeodesicSamples`](@ref).
   This is the *reference* marcher: it calls Krang's closed-form `emission_coordinates` at
-  every sample. The addition-theorem recurrence of plan §4 will be added next to it and
-  validated against it at every sample.
+  every sample.
+* `jacobi.jl`, `recurrence.jl` — K2 in recurrence mode (plan §4): r(τ) and θ(τ) advanced by
+  the Jacobi addition theorems with periodic re-anchoring, validated against the direct
+  marcher and a BigFloat reference at every sample.
+* `quadrature.jl` — t̃(τ) and φ(τ) by Simpson quadrature of the Mino-time rates between
+  Krang anchors, with the large-r, horizon and polar-axis singular parts integrated in closed
+  form. This is what `Recurrence(M)` runs; each ray's largest anchor residual is kept as an
+  error estimate.
 * `cache.jl` — [`GeodesicCache`](@ref) owning the device buffers, and
   [`regenerate!`](@ref)`(cache, a, θo[, camera])`.
 
@@ -25,6 +31,7 @@ module Geodesics
 using Adapt
 using CUDA
 using ForwardDiff
+using JacobiElliptic
 using KernelAbstractions
 using Krang
 using StaticArrays
@@ -35,10 +42,19 @@ export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache
 export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mino_times
 export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel
 export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
+export Direct, Recurrence, Fused, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
+export march_ray, fused_march!, has_samples, tiles
+export Case2, Case3, Case4, radial_marcher, PolarMarcher, radius, polar_angle, polar_angle_cos
+export radial_parameter, near_critical, NEAR_CRITICAL_ONE_MINUS_K
+export QuadratureConstants, quadrature_march!, recurrence_march!, quasi_cartesian_kerr_schild
 
 include("camera.jl")
 include("pixel_constants.jl")
 include("direct_march.jl")
+include("jacobi.jl")
+include("recurrence.jl")
+include("quadrature.jl")
+include("coordinates.jl")
 include("cache.jl")
 
 # Krang's `_θs` evaluates `unsafe_trunc(Int, τ / τ̂)`. ForwardDiff provides no such method, so
@@ -50,9 +66,13 @@ Base.unsafe_trunc(::Type{I}, d::ForwardDiff.Dual) where {I<:Integer} =
 """
     host(x)
 
-Copy a device-resident structure (a `PixelConstants`, `GeodesicSamples`, or any array) to host
-`Array`s, field by field. Identity for host arrays.
+Copy a structure of arrays (a `PixelConstants`, `GeodesicSamples`, or any array) to fresh host
+`Array`s, field by field. Always a copy, also for host arrays, so that the result survives a
+later `regenerate!` of the cache it came from.
 """
-host(x) = Adapt.adapt(Array, x)
+host(x) = Adapt.adapt(HostCopy(), x)
+
+struct HostCopy end
+Adapt.adapt_storage(::HostCopy, x::AbstractArray) = Array(x)
 
 end

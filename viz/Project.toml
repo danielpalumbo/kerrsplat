@@ -1,0 +1,8 @@
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+KerrSplat = "11b6c985-b832-4e08-af24-12e7205e8b77"
+Krang = "54806c32-d51a-438d-8447-e0041be2fbfb"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
