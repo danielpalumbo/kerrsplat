@@ -73,8 +73,11 @@ nf, Θf, Bf = field_grid(q, 0.0, grid, grid, zgrid)
 nt = [riaf_fields(x, y, z)[1] for x in grid, y in grid, z in zgrid]
 Θt = [riaf_fields(x, y, z)[2] for x in grid, y in grid, z in zgrid]
 Bt = [riaf_fields(x, y, z)[3] for x in grid, y in grid, z in zgrid]
-w = nt ./ sum(nt)
-println("fields vs the analytic RIAF (density-weighted over the grid): density ratio fitted/true $(sum(w .* nf ./ max.(nt, eps()))) , Θe relative error $(sum(w .* abs.(Θf .- Θt) ./ Θt)), B relative error $(sum(w .* abs.(Bf .- Bt) ./ Bt))")
+# compare where the RIAF has density and the fit put some (the emitting region), weighting by the RIAF density
+mask = (nt .> 0.01 * maximum(nt)) .& (nf .> 0.01 * maximum(nf))
+w = nt .* mask ./ sum(nt .* mask)
+println("fields vs the analytic RIAF, RIAF-density-weighted over the voxels where both have density (", count(mask), " of ", length(mask), "): density ratio fitted/true $(sum((w .* nf ./ nt)[mask])), Θe relative error $(sum((w .* abs.(Θf .- Θt) ./ Θt)[mask])), B relative error $(sum((w .* abs.(Bf .- Bt) ./ Bt)[mask]))")
+println("fraction of the RIAF's density (r < 10 M, |z| < 2 M) covered by the splats' 1% contours: ", sum(nt .* (nf .> 0.01 * maximum(nf))) / sum(nt))
 mkpath(joinpath(@__DIR__, "output"))
 writedlm(joinpath(@__DIR__, "output", "fitted_params.csv"), q, ',')
 img = polarized_image(cache, q, 0.0, ν, L)
