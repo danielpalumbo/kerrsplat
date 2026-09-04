@@ -111,3 +111,49 @@ end
 
 "Flux density per pixel [Jy] from an intensity or Stokes image for a pixel side `Δα` (M), length unit `L` and distance `D` (cm)."
 flux_density(img, Δα, L, D) = img .* (Transfer.pixel_solid_angle(Δα, L, D) / Transfer.JY)
+
+"""
+    fields(params, t, x, y, z) -> (ne, Θe, B)
+
+Field-level view of a set of polarized splats at an event (addendum §5.2.3): the total electron
+density Σ nₑ,ₖ Gₖ and the density-weighted mean temperature and field strength of the parcels
+present there (zero temperature and field where there is no density).
+"""
+function fields(p::AbstractMatrix{T}, t, x, y, z) where {T}
+    ne = zero(T); wΘ = zero(T); wB = zero(T)
+    for i in 1:size(p, 2)
+        n = exp(p[13, i]) * splat_weight(p, i, t, x, y, z)
+        ne += n; wΘ += n * exp(p[14, i]); wB += n * exp(p[15, i])
+    end
+    return ne > 0 ? (ne, wΘ / ne, wB / ne) : (zero(T), zero(T), zero(T))
+end
+
+"""
+    field_grid(params, t, xs, ys, zs) -> (ne, Θe, B)
+
+`fields` on a voxel grid, as three arrays of size (length(xs), length(ys), length(zs)).
+"""
+function field_grid(p::AbstractMatrix{T}, t, xs, ys, zs) where {T}
+    ne = Array{T}(undef, length(xs), length(ys), length(zs)); Θ = similar(ne); B = similar(ne)
+    for (k, z) in enumerate(zs), (j, y) in enumerate(ys), (i, x) in enumerate(xs)
+        ne[i, j, k], Θ[i, j, k], B[i, j, k] = fields(p, t, x, y, z)
+    end
+    return ne, Θ, B
+end
+
+"""
+    recovery_metrics(p_fit, p_true, t, xs, ys, zs) -> NamedTuple
+
+Voxel-grid comparison of the fields of a fitted splat set with the truth (the self-consistency
+test of plan §7.5 item 7): the peak signal-to-noise ratio of the density, PSNR = 10 log₁₀(max nₑ²/MSE),
+and the density-weighted relative errors of temperature and field strength.
+"""
+function recovery_metrics(p_fit, p_true, t, xs, ys, zs)
+    nf, Θf, Bf = field_grid(p_fit, t, xs, ys, zs)
+    nt, Θt, Bt = field_grid(p_true, t, xs, ys, zs)
+    mse = sum(abs2, nf .- nt) / length(nt)
+    psnr = 10 * log10(maximum(nt)^2 / mse)
+    w = nt ./ sum(nt)
+    return (psnr_density = psnr, rel_density = sqrt(mse) / maximum(nt),
+            temperature = sum(w .* abs.(Θf .- Θt) ./ max.(Θt, eps())), field = sum(w .* abs.(Bf .- Bt) ./ max.(Bt, eps())))
+end
