@@ -145,3 +145,53 @@ function test_powerlaw_rotativities(; tol_V = 0.05, tol_Q = 0.35)
         @info "power-law rotativities vs symphony on $used rows with ν > 3 ν_min: worst relative differences ρV $worstV, ρQ $worstQ; signs agree on $nsignV / $nsignQ"
     end
 end
+
+"""
+κ-distribution coefficients against the table generated from upstream symphony's fits (Pandya+
+2016 for j and α with the hypergeometric factor from HypergeometricFunctions.jl instead of GSL,
+Marszewski+ 2021 for ρ with the codes' interpolation in κ; ipole's copy cubes a Gamma factor of
+j_I and zeroes j_V, upstream does neither). The κ = 5 rows of ρ_Q are excluded (both codes divide
+that interpolation by 5 instead of 3). j_V is also checked against symphony's numerical
+evaluation (validation/symphony/kappa_jv_table.csv), which the fit reproduces only roughly.
+"""
+function test_kappa_coefficients(; tol = 1e-10)
+    tb, n = read_table("kappa_table.csv")
+    @testset "κ coefficients vs symphony ($n rows)" begin
+        worst = zeros(8)
+        hyp = Dict{Tuple{Float64,Float64},Float64}()
+        for i in 1:n
+            ν, κ, w, B, ne, θ = tb["nu"][i], tb["kappa"][i], tb["w"][i], tb["B"][i], tb["ne"][i], tb["theta"][i]
+            h = get!(hyp, (κ, w)) do
+                kappa_hypergeometric(κ, w)
+            end
+            c = kappa_synchrotron(ne, κ, w, B, ν, θ, h)
+            vals = (c.jI, c.jQ, c.αI, c.αQ, c.αV, c.ρQ, c.ρV)
+            refs = (tb["jI"][i], tb["jQ"][i], tb["aI"][i], tb["aQ"][i], tb["aV"][i], tb["rhoQ"][i], tb["rhoV"][i])
+            for k in 1:7
+                k == 6 && κ == 5 && continue                  # the codes divide the ρ_Q interpolation at κ = 5 by 5 instead of 3
+                worst[k] = max(worst[k], relerr(vals[k], refs[k]))
+            end
+            @test isfinite(c.jV)
+            if tb["jV"][i] != 0
+                worst[8] = max(worst[8], relerr(c.jV, tb["jV"][i]))
+            end
+        end
+        for k in 1:8
+            @test worst[k] < tol
+        end
+        @info "κ coefficients vs symphony ($n rows): worst relative errors" jI = worst[1] jQ = worst[2] jV = worst[8] αI = worst[3] αQ = worst[4] αV = worst[5] ρQ = worst[6] ρV = worst[7]
+        path = joinpath(SYMPHONY_DIR, "kappa_jv_table.csv")
+        if isfile(path)
+            tj, nj = read_table("kappa_jv_table.csv")
+            worstv = 0.0
+            for i in 1:nj
+                ν, κ, w, B, ne, θ = tj["nu"][i], tj["kappa"][i], tj["w"][i], tj["B"][i], tj["ne"][i], tj["theta"][i]
+                c = kappa_synchrotron(ne, κ, w, B, ν, θ, kappa_hypergeometric(κ, w))
+                worstv = max(worstv, abs(c.jV / tj["jV"][i] - 1))
+                @test sign(c.jV) == sign(tj["jV"][i])
+            end
+            @test worstv < 0.5
+            @info "κ j_V fit vs symphony's numerical evaluation ($nj points): worst relative difference $worstv"
+        end
+    end
+end

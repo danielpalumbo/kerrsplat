@@ -31,6 +31,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Spin and inclination fit (Levenberg–Marquardt on duals) | `Fit` | noisy image of two splats | θo to 0.07°, a to 0.04 at 2.25 M pixels, χ² at the noise floor |
 | Visibility-domain χ² (direct transform) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
 | Closure phases and log closure amplitudes | `Fit` | invariance under station gains; Enzyme vs stencil | 1e-12; 1e-5 |
+| κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
@@ -59,8 +60,8 @@ per-splat cost for many splats.
 
 - GPU-side reverse-mode gradients: Enzyme 0.13.199 (the newest release) fails device-side inside
   kernels; the host path on the CPU backend is what the fits use. Forward-mode duals work on both.
-- κ distributions (Marszewski+ 2021 have the κ rotativity fits; symphony's κ emissivities need
-  the hypergeometric function on the GPU).
+- κ populations inside the splats (the coefficients exist; the hypergeometric factor is a host
+  quantity per population).
 - Interval culling of splats along rays (performance; accuracy first).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
   `validation/riaf_fit/`). The visibility and closure χ² exist on the direct transform; station-gain
