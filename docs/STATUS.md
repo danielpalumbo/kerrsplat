@@ -37,6 +37,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |
 | Composite models (background + splats) | `Transfer` | empty model, element order, RIAF + splat | rounding |
 | Cross-model fit to ipole's RIAF (1 and 2 frequencies, with and without shrinkage) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
+| Fit to a GRMHD snapshot (KHARMA Sgr A*, ipole image, 130°) | `validation/grmhd_fit` | ipole full-Stokes image | 5.3/2.1/2.4/0.5% of the I norm; flux 9% low |
 | Priors and hierarchical shrinkage | `Fit` | explicit sums; Enzyme vs analytic gradient | 1e-10 |
 | Station gains (self-calibration χ²) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
@@ -72,10 +73,9 @@ and eight frequencies. Per-ray interval lists would remove the remaining per-spl
   kernels; the host path on the CPU backend is what the fits use. Forward-mode duals work on both.
 - The κ splats hold their hypergeometric factors fixed during a fit (κ and w are not fitted).
 - Per-ray interval lists for many splats (the per-sample bounding-sphere early-out exists).
-- Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
-  `validation/riaf_fit/`). The visibility, closure and self-calibration χ² exist on the direct
-  transform and uvfits files are read natively (validated against ehtim on real M87 data); the
-  Comrade.jl route (its likelihoods and samplers) does not.
+- Fits to ipole-rendered GRMHD movies (gate 7 ii): a KHARMA snapshot image is fitted to a few
+  per cent (`validation/grmhd_fit`, note `docs/notes/2026-09-04_grmhd_snapshot_fit.md`); movies
+  need fluid dumps or an ipole movie, which this machine does not have.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
   Daniel's call).
 
