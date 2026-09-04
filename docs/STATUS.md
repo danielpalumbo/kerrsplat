@@ -38,6 +38,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Priors and hierarchical shrinkage | `Fit` | explicit sums; Enzyme vs analytic gradient | 1e-10 |
 | Station gains (self-calibration χ²) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
+| Reflection parity (observers beyond 90°, negative spin, U and V handedness) | `Splats` | equatorial and azimuthal mirror images of the mirrored source (axial field) | 1e-11 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
