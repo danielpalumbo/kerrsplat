@@ -19,6 +19,7 @@ include("test_splats.jl")
 include("test_coefficients.jl")
 include("test_transfer_step.jl")
 include("test_frames.jl")
+include("test_gold2020.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
 gate2_refs = gate2_references()
@@ -41,6 +42,7 @@ gate2_refs = gate2_references()
         test_coefficients(CPU(); label = "CPU")
         test_transfer_step(CPU(); label = "CPU")
         test_frames(CPU(); label = "CPU")
+        test_gold2020(CPU(); res = 48, N = 500, tol = 0.03, label = "CPU coarse")
     end
     if CUDA.functional()
         @testset "Geodesics on CUDA" begin
@@ -59,6 +61,7 @@ gate2_refs = gate2_references()
             test_coefficients(CUDABackend(); label = "CUDA")
             test_transfer_step(CUDABackend(); label = "CUDA")
             test_frames(CUDABackend(); label = "CUDA")
+            test_gold2020(CUDABackend(); res = 128, N = 2000, label = "CUDA")
             @test CUDA.limit(CUDA.LIMIT_STACK_SIZE) >= Geodesics.cuda_stack_bytes(Float64)
         end
     else

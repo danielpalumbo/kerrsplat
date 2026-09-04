@@ -54,6 +54,13 @@ this repository's tests or session diagnostics; none has been filed upstream yet
     fail with `InvalidIRError` on the GPU. `KerrSplat.Geodesics.quasi_cartesian_kerr_schild`
     is the same map without the warning.
 
+11. **Zero spin is not supported by the analytic geodesics.** At `a = 0` exactly,
+    `emission_coordinates` returns NaN for t, θ and φ (the polar roots u± are built from η/a²),
+    and at `a = 1e-8` `_θs` throws a `DomainError` in `acos`. From `a = 1e-5` upward the samples
+    are finite and vary smoothly with a (KerrSplat's cache at a = 1e-5 … 1e-2 against 2e-2). A
+    Schwarzschild branch of the polar solution (Δθ-based, no division by a) would close the gap;
+    until then Schwarzschild models use `a = 1e-3` (relative effects O(a)).
+
 ## JacobiElliptic.jl (0.3.10)
 
 1. **`_am` asymptotic branch for 1 − m < √eps.** A&S 16.15.4 is used for m₁ < √eps ≈ 1.5e-8,

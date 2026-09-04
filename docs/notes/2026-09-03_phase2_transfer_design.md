@@ -8,9 +8,10 @@ each PR can be validated on its own.
 
 - **ipole** (`~/local_scripts/ipole`, C, GPL): the polarized validation reference of the plan.
   Its symphony fitting formulae build standalone against GSL (`validation/symphony/`), which is
-  how the coefficient tables were generated. The full code needs HDF5, which is not installed
-  here (no `libhdf5`, no `h5cc`), so images from ipole itself need either a conda HDF5 or the
-  Jipole port; deferred to the polarized-image gate.
+  how the coefficient tables were generated. The full code needs HDF5, absent from the system;
+  a conda environment provides it: `mamba create -n ipole-build -c conda-forge hdf5 gsl`, then
+  in a copy of the checkout `make MODEL=<model> CC=gcc HDF5_DIR=$HOME/miniforge-pypy3/envs/ipole-build GSL_DIR=/usr`
+  and run with `LD_LIBRARY_PATH=$HOME/miniforge-pypy3/envs/ipole-build/lib`.
 - **Gold et al. (2020) GRRT test suite**: ipole's `model/analytic/model.c` and
   `tests/analytic/analytic_test.py` define five unpolarized analytic models with published total
   fluxes (1.6465, 1.4360, 0.4418, 0.2710, 0.0255 Jy at 230 GHz, 2% tolerance). They need no
@@ -61,8 +62,19 @@ each PR can be validated on its own.
    `jac_fluid_u_zamo_d`, g and χ against Krang's `synchrotronPolarization` (1e-15 on 400 random
    rays, samples, velocities and fields), the pitch angle against an explicit construction, and
    the kernel on CPU and CUDA.
-4. **Gold et al. (2020) suite**: unpolarized analytic models through the fused marcher with the
-   unit scaling (M, D, Jy); 2% on the published fluxes.
+4. **Gold et al. (2020) suite** (`transfer-gold2020`): `UnpolarizedTransport` (a fused-march
+   consumer with the front-to-back accumulator `UnpolarizedState`, the unit scaling of the
+   `transport.jl` header: Δ = (L/ν_obs) Σ Δτ over the invariants j/ν², να) renders ipole's
+   analytic models 1–5 (test/test_gold2020.jl). Total fluxes at 128², 2000 samples per ray:
+   1.6604, 1.4488, 0.4453, 0.2726, 0.0257 Jy against the published 1.6465, 1.4360, 0.4418,
+   0.2710, 0.0255 Jy, i.e. 0.6–0.9% high for every model, unchanged at 256² × 4000 and at
+   48² × 500. ipole itself (built against a conda HDF5 in the session scratch directory; see
+   below) gives 1.6576, 1.4501, 0.4488, 0.2741, 0.02591 Jy, also 0.7–1.0% above the table, and
+   within −0.8% … +0.2% of us; its model-3 flux moves from 0.4495 toward our 0.4453 when its
+   camera is moved from 1000 M to 10000 M (0.4475) or its geodesic steps are refined tenfold
+   (0.4484), so the residual is ipole's discretization. ipole's own test accepts 2%, which is
+   the gate here. Model 2 (Schwarzschild) runs at a = 1e-3 because
+   Krang's analytic solution returns NaN at a = 0 (upstream_issues.md item 11).
 5. **Polarized splats and images**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity),
    per-splat Mueller assembly M = Σ R(χ_k) M_k R(χ_k)ᵀ, the two-splat overlap and Faraday-screen
    tests of the addendum, polarized images against ipole (HDF5 or Jipole) and Enzyme gradients.
