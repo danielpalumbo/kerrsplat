@@ -342,5 +342,6 @@ end
 export Stage, Hygiene
 
 include("fits.jl")
+include("spacetime.jl")
 
 end
