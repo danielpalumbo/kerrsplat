@@ -111,8 +111,12 @@ function test_polarized_splat_gradients(; res = 10, N = 100, tol = 1e-5)
         # splat whose temporal envelope is flat over the observation have gradients of 1e-12)
         err = 0.0
         gmax = maximum(abs, g)
+        iω = findfirst(==(:omega), POLARIZED_SPLAT_PARAMS)
         for i in eachindex(p_start)
-            h = 1e-3 * max(1.0, abs(p_start[i]))
+            row = (i - 1) % NPOLARIZEDPARAMS + 1
+            # the loss depends on ω through angles ω t with |t| up to ~50 M, so the stencil's truncation error
+            # (∝ (t h)⁴) needs a much smaller step on that row
+            h = row == iω ? 2e-5 : 1e-3 * max(1.0, abs(p_start[i]))
             f(x) = (q = copy(p_start); q[i] = x; loss(q))
             x = p_start[i]
             fd = (-f(x + 2h) + 8f(x + h) - 8f(x - h) + f(x - 2h)) / (12h)
