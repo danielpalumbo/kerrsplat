@@ -58,3 +58,22 @@ field strength and temperature between neighbours in many ways, and the spectral
 constrains the sum of their contributions, not the split. This is the case for the priors,
 hierarchical shrinkage and field-level regularization of the addendum, and for merge hygiene
 between overlapping parcels, before field-level conclusions are drawn from such fits.
+
+## Hierarchical shrinkage (σ = 0.3 on ln nₑ, ln Θe, ln B; `--shrink 0.3`)
+
+| Quantity | 1 frequency | 1 frequency + shrinkage | 2 frequencies | 2 frequencies + shrinkage |
+|---|---|---|---|---|
+| χ²/N (data term) | 0.018 | 0.030 | 0.077 | 0.052 |
+| Density ratio fitted/true | 0.68 | 0.58 | 0.61 | 0.70 |
+| Θe relative error | 36% | 32% | 42% | 33% |
+| B relative error | 63% | 62% | 111% | 130% |
+
+Shrinking the parcels' plasma parameters toward their population means changes the recovered
+fields by tens of per cent in either direction and leaves the field strength wrong by a factor
+of two: the images are fit in every case, and the partition of a smooth flow into a dozen parcels
+is not made unique by shared statistics at this resolution and noise. Two ways forward follow
+from what now exists: a composite model (`Transfer.CompositeModel`) with a parametric background
+flow fitted jointly with a few splats for the deviations, which recovers the fields by
+construction where the background holds, and field-level regularization on the voxel grid of
+`recovery_metrics` (smoothness of the density-weighted Θe and B) as a penalty. Both are
+optimization design questions rather than pipeline pieces, and are left for the science phase.
