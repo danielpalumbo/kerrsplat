@@ -34,6 +34,7 @@ const KA = KernelAbstractions
 
 export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRenderer, thin_image!, thin_image
 export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image, polarized_cube, flux_density
+export trajectory_knots, KnotSplats, boyer_lindquist, coordinate_velocity
 
 """
     SPLAT_PARAMS
@@ -140,5 +141,6 @@ function thin_image(cache::GeodesicCache{T}, params, t_obs) where {T}
 end
 
 include("polarized.jl")
+include("trajectories.jl")
 
 end
