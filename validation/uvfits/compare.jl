@@ -2,6 +2,12 @@
 using Test, KerrSplat, KerrSplat.Fit, StaticArrays, DelimitedFiles
 include(joinpath(@__DIR__, "..", "..", "test", "test_uvfits.jl"))   # _ehtim_csv
 obs = read_uvfits(ARGS[1]); ref = _ehtim_csv(ARGS[2])
+"--scan-average" in ARGS && (obs = average_scans(obs); println("scan-averaged"))
+# ehtim orders averaged rows by baseline, this reader by first appearance: compare in (time, baseline) order
+po = sortperm(collect(zip(round.(obs.time; digits = 7), obs.stations[obs.s1], obs.stations[obs.s2])))
+pr = sortperm(collect(zip(round.(ref.time; digits = 7), ref.t1, ref.t2)))
+obs = Fit.Observation{Float64}(obs.time[po], obs.tint[po], obs.s1[po], obs.s2[po], obs.stations, obs.u[po], obs.v[po], obs.vis[po], obs.σ[po], obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source)
+ref = (time = ref.time[pr], t1 = ref.t1[pr], t2 = ref.t2[pr], u = ref.u[pr], v = ref.v[pr], vis = ref.vis[pr], σ = ref.σ[pr], tint = ref.tint[pr])
 n = length(obs)
 println("rows $n (ehtim $(length(ref.time))); mjd $(obs.mjd); freq $(obs.freq) Hz; source $(obs.source); stations $(obs.stations)")
 n == length(ref.time) || error("row count differs")

@@ -246,4 +246,48 @@ function _signed(bl, i, j)
     return 0
 end
 
-export Observation, read_uvfits, scan_triangles, scan_quadrangles
+"""
+    average_scans(o::Observation; gap = 0.0165) -> Observation
+
+Coherent scan averaging with ehtim's rules (`add_scans` and `avg_coherent(0, scan_avg = true)`
+with predicted errors): scans are the runs of distinct time stamps separated by less than `gap`
+hours (59.4 s by default); within a scan every baseline's rows are averaged, the visibility as
+the plain mean over the rows where the Stokes parameter is present, its noise as √(Σσ²)/n, `u`
+and `v` as means, `tint` as the sum and `time` as the earliest stamp. Rows keep their order of
+first appearance.
+"""
+function average_scans(o::Observation{T}; gap = 0.0165) where {T}
+    stamps = sort(unique(o.time))
+    scan_of = Dict{T,Int}()
+    id = 1
+    for (k, t) in enumerate(stamps)
+        scan_of[t] = id
+        k < length(stamps) && stamps[k + 1] - t > gap && (id += 1)
+    end
+    groups = Dict{Tuple{Int,Int,Int},Vector{Int}}()
+    order = Tuple{Int,Int,Int}[]
+    for r in eachindex(o.time)
+        key = (scan_of[o.time[r]], o.s1[r], o.s2[r])
+        haskey(groups, key) || (groups[key] = Int[]; push!(order, key))
+        push!(groups[key], r)
+    end
+    time = T[]; tint = T[]; s1 = Int[]; s2 = Int[]; u = T[]; v = T[]
+    vis = SVector{4,Complex{T}}[]; σ = SVector{4,T}[]
+    for key in order
+        rows = groups[key]
+        push!(time, minimum(o.time[r] for r in rows)); push!(tint, sum(o.tint[r] for r in rows))
+        push!(s1, key[2]); push!(s2, key[3])
+        push!(u, sum(o.u[r] for r in rows) / length(rows)); push!(v, sum(o.v[r] for r in rows) / length(rows))
+        vk = zeros(Complex{T}, 4); sk = fill(T(Inf), 4)
+        for k in 1:4
+            present = [r for r in rows if isfinite(o.σ[r][k])]
+            isempty(present) && continue
+            vk[k] = sum(o.vis[r][k] for r in present) / length(present)
+            sk[k] = sqrt(sum(o.σ[r][k]^2 for r in present)) / length(present)
+        end
+        push!(vis, SVector{4}(vk)); push!(σ, SVector{4}(sk))
+    end
+    return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source)
+end
+
+export Observation, read_uvfits, average_scans, scan_triangles, scan_quadrangles

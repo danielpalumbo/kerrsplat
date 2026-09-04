@@ -31,6 +31,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | FITS movies (ehtim layout) | `Fit` | write/read round trip | 1e-9 |
 | Spin and inclination fit (Levenberg–Marquardt on duals) | `Fit` | noisy image of two splats | θo to 0.07°, a to 0.04 at 2.25 M pixels, χ² at the noise floor |
 | Visibility-domain χ² (direct transform, EHT sign convention) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
+| Scan averaging (`average_scans`, ehtim's rules) | `Fit` | ehtim's `avg_coherent(scan_avg)` on real M87 data; hand-built doubled rows | 5e-9 Jy; exact |
 | uvfits reader (`read_uvfits`, scan closures) | `Fit` | ehtim's parse of an ehtim-written observation and of real M87 data; transform of the source image vs ehtim's noiseless visibilities | 1e-7 Jy, 2e-7 in u, v; 6e-8 Jy |
 | Closure phases and log closure amplitudes | `Fit` | invariance under station gains; Enzyme vs stencil | 1e-12; 1e-5 |
 | κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |

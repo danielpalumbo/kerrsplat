@@ -35,5 +35,6 @@ include("test_polarized_splats.jl")
     test_gold2020(CPU(); res = 24, N = 300, tol = 0.03, label = "CPU coarse")
     test_polarized(CPU(); label = "CPU")
     test_uvfits()
+    test_scan_average()
     test_reflection()
 end
