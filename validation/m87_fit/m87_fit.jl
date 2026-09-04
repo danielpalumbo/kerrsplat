@@ -4,7 +4,7 @@
 #   julia -t 8 --project=../.. m87_fit.jl --data <file.uvfits> [--res 32] [--samples 60] [--iterations 300]
 #                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--sigma-flux 0.01] [--seed 1]
 #                                          [--mode closures|selfcal] [--scan-average] [--sigma-gain 0.1] [--eta-gain 0.01]
-#                                          [--init params.csv] [--uvmin 0.1] [--densify 16] [--tag name]
+#                                          [--init params.csv] [--init-gains gains.csv] [--uvmin 0.1] [--densify 16] [--tag name]
 #
 # Mode `closures` (default) fits the Stokes I closure phases and log closure amplitudes with a
 # flux prior. Mode `selfcal` fits the complex visibilities of all four Stokes parameters with one
@@ -33,6 +33,7 @@ flux = getopt("--flux", 0.6); σflux = getopt("--sigma-flux", 0.01); seed = geto
 mode = getstr("--mode", "closures"); σgain = getopt("--sigma-gain", 0.1); tag = getstr("--tag", mode)
 init = getstr("--init", ""); ηgain = getopt("--eta-gain", 0.01); uvmin = getopt("--uvmin", 0.0)   # Gλ; drops shorter baselines
 maxsplats = getopt("--densify", 0)                    # > 0: selfcal runs through Fit.fit! with hygiene (densification up to this many splats)
+init_gains = getstr("--init-gains", "")               # a saved gains matrix (2 × nstations·nscans) to continue a self-calibration
 path = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_2017_101_lo_hops_netcal_StokesI.uvfits")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
@@ -100,6 +101,11 @@ selfcal_loss(q, g) = chi2_visibilities(image_of(q), Δα, L, D, vdata, g, t1, t2
 total_flux(q) = sum(getindex.(image_of(q), 1)) * psize^2 / Transfer.JY
 
 gains = zeros(2, nst * nscans)
+if !isempty(init_gains)
+    gains = Matrix{Float64}(readdlm(init_gains, ','))
+    size(gains) == (2, nst * nscans) || error("--init-gains: expected a 2 × $(nst * nscans) matrix, got $(size(gains))")
+    @info "gains initialized from $init_gains"
+end
 if mode == "closures"
     @info "start" loss = loss(p) flux_Jy = total_flux(p)
 else

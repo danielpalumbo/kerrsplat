@@ -39,6 +39,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Composite models (background + splats) | `Transfer` | empty model, element order, RIAF + splat | rounding |
 | Cross-model fit to ipole's RIAF (1 and 2 frequencies, with and without shrinkage) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
 | Fit to a GRMHD snapshot (KHARMA Sgr A*, ipole image, 130°) | `validation/grmhd_fit` | ipole full-Stokes image | 5.3/2.1/2.4/0.5% of the I norm; flux 9% low |
+| Real EHT data: M87 2017 (closure fit; self-calibrated polarimetric fit) | `validation/m87_fit` | public uvfits files; ehtim-validated reader | closure χ²/N 1.5; visibility χ²/N 7 with six parcels (open) |
 | Priors and hierarchical shrinkage | `Fit` | explicit sums; Enzyme vs analytic gradient | 1e-10 |
 | Station gains (self-calibration χ², per station or per station and scan) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
