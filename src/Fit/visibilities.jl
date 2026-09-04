@@ -57,3 +57,69 @@ function chi2_visibilities(image, Δα, L, D, data::VisibilityData)
 end
 
 export visibilities, VisibilityData, chi2_visibilities
+
+# ---- closure quantities ---------------------------------------------------------------------------
+"""
+    closure_phases(vis, triangles) -> Vector
+
+Closure phases arg(V₁V₂V₃) of Stokes I for `triangles` given as triples of visibility indices
+whose baselines (ij, jk, ki) close; Stokes I is the first component of each visibility.
+"""
+function closure_phases(vis::AbstractVector, triangles)
+    return [angle(vis[t[1]][1] * vis[t[2]][1] * vis[t[3]][1]) for t in triangles]
+end
+
+"""
+    log_closure_amplitudes(vis, quadrangles) -> Vector
+
+Log closure amplitudes ln(|V₁₂||V₃₄|/(|V₁₃||V₂₄|)) of Stokes I for `quadrangles` given as
+4-tuples of visibility indices (12, 34, 13, 24).
+"""
+function log_closure_amplitudes(vis::AbstractVector, quadrangles)
+    return [log(abs(vis[q[1]][1]) * abs(vis[q[2]][1]) / (abs(vis[q[3]][1]) * abs(vis[q[4]][1]))) for q in quadrangles]
+end
+
+"""
+    ClosureData(u, v, triangles, phases, σ_phase, quadrangles, logamps, σ_logamp)
+
+Observed closure phases (radians) on `triangles` and log closure amplitudes on `quadrangles`
+(index tuples into the baselines `u`, `v`) with their standard deviations (any of the two sets
+may be empty).
+"""
+struct ClosureData{U,V,TR,P,SP,Q,A,SA}
+    u::U
+    v::V
+    triangles::TR
+    phases::P
+    σ_phase::SP
+    quadrangles::Q
+    logamps::A
+    σ_logamp::SA
+end
+
+"""
+    chi2_closures(image, Δα, L, D, data::ClosureData)
+
+χ² of a model image against closure phases (with the phase difference wrapped to (−π, π])
+and log closure amplitudes; gain-independent, so the usual likelihood for calibrated-free fits.
+"""
+function chi2_closures(image, Δα, L, D, data::ClosureData)
+    model = visibilities(image, Δα, L, D, data.u, data.v)
+    total = zero(real(eltype(first(model))))
+    if !isempty(data.triangles)
+        cp = closure_phases(model, data.triangles)
+        for k in eachindex(cp)
+            d = rem(cp[k] - data.phases[k], 2 * oftype(cp[k], π), RoundNearest)
+            total += (d / data.σ_phase[k])^2
+        end
+    end
+    if !isempty(data.quadrangles)
+        la = log_closure_amplitudes(model, data.quadrangles)
+        for k in eachindex(la)
+            total += ((la[k] - data.logamps[k]) / data.σ_logamp[k])^2
+        end
+    end
+    return total
+end
+
+export closure_phases, log_closure_amplitudes, ClosureData, chi2_closures

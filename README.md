@@ -68,8 +68,10 @@ use the CUDA 12.8 runtime; `LocalPreferences.toml` carries that pin. To set up:
 
     JULIA_PKG_USE_CLI_GIT=true julia --project=. -e 'import Pkg; Pkg.instantiate()'
 
-Run the tests with `julia -t 8 --project=. test/runtests.jl` (or `Pkg.test()`); GPU tests run
-when `CUDA.functional()`. Kernels that contain Krang code need a per-thread stack larger than
+Run the tests with `julia -t 8 --project=. test/runtests.jl 2>&1 | tee log` (or `Pkg.test()`);
+GPU tests run when `CUDA.functional()`. The full suite takes over two hours (BigFloat references
+and Enzyme compilations); `test/ci.jl` is the CPU-only subset that GitHub Actions runs on every
+push and pull request. Kernels that contain Krang code need a per-thread stack larger than
 CUDA's default; `regenerate!` raises it through `Geodesics.prepare_backend!`.
 
 - `docs/plans/` — the project plan (2026-07-09), the one-zone-splat addendum (2026-07-10), and
