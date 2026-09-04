@@ -210,7 +210,20 @@ function kernel_gradient!(dparams, dout, cache::GeodesicCache{T,N}, params, t_ob
     out = KernelAbstractions.allocate(backend, T, npixels(cache))
     met = Krang.Kerr(cache.spin)
     M = Geodesics.anchor_interval(cache.marcher)
-    for (case, rng) in ((Case2(), cache.ranges.case2), (Case3(), cache.ranges.case3), (Case4(), cache.ranges.case4))
+    cases = ((Case2(), cache.ranges.case2), (Case3(), cache.ranges.case3), (Case4(), cache.ranges.case4))
+    # Compile each specialization on a single work item first: on the CPU backend a full launch
+    # spreads the first call over several worker tasks, and concurrent Enzyme compilation of the
+    # same kernel deadlocks (observed with 8 threads; single-threaded it never did).
+    dparams_w = similar(dparams); fill!(dparams_w, zero(T))
+    dtvec_w = similar(dtvec); fill!(dtvec_w, zero(T))
+    dout_w = copy(dout)                                   # the reverse pass consumes the seed it is given
+    for (case, rng) in cases
+        isempty(rng) && continue
+        ray_adjoint_kernel!(backend, 1)(out, dout_w, dparams_w, params, tvec, dtvec_w, cache.consts, met, cache.θo, case, Val(N), Val(M), first(rng) - 1;
+                                        ndrange = 1)
+        KernelAbstractions.synchronize(backend)
+    end
+    for (case, rng) in cases
         isempty(rng) && continue
         ray_adjoint_kernel!(backend, 64)(out, dout, dparams, params, tvec, dtvec, cache.consts, met, cache.θo, case, Val(N), Val(M), first(rng) - 1;
                                          ndrange = length(rng))
