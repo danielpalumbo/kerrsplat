@@ -168,13 +168,48 @@ transport (symphony `maxwell_juettner_leung_I`).
 end
 
 """
-    powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ) -> StokesCoefficients
+    powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ) -> (ρQ, ρV)
+
+Faraday conversion and rotation coefficients of a power-law distribution from Jones & O'Dell
+(1977, appendix C) as written in Dexter (2016, eqs. B1–B3), with the perpendicular gyrofrequency
+ν_B⊥ = eB sin θ/(2π mₑ c) and ν_min = γmin² ν_B⊥:
+
+    ρ⊥ = nₑ e² (p − 1) / (mₑ c ν_B⊥ (γmin^(1−p) − γmax^(1−p))),
+    ρ_Q = −ρ⊥ (ν_B⊥/ν)³ γmin^(2−p) [1 − (ν_min/ν)^(p/2−1)] / (p/2 − 1),
+    ρ_V = 2 (p + 2)/(p + 1) ρ⊥ (ν_B⊥/ν)² γmin^(−(p+1)) ln γmin cot θ.
+
+Approximate expressions valid for ν ≳ 3 ν_min (and γmin ≲ 10², Dexter 2016); the sign
+convention is Dexter's, which ipole shares. Against symphony's numerical susceptibility-tensor
+evaluation (test_powerlaw_rotativities) they agree in sign everywhere in that window, ρ_V to 3%
+and ρ_Q to 30% (p = 2.5–3.5); below ν_min they are wrong by orders of magnitude, so callers
+should keep power-law parcels within the window (`powerlaw_rotativities_valid`).
+"""
+@inline function powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ)
+    T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
+    sinθ, cosθ = sincos(θ)
+    νB = EE * B * sinθ / (2 * T(π) * ME * CL)
+    ρperp = ne * EE^2 * (p - 1) / (ME * CL * νB * (γmin^(1 - p) - γmax^(1 - p)))
+    νmin = γmin^2 * νB
+    ρQ = -ρperp * (νB / ν)^3 * γmin^(2 - p) * (1 - (νmin / ν)^(p / 2 - 1)) / (p / 2 - 1)
+    ρV = 2 * (p + 2) / (p + 1) * ρperp * (νB / ν)^2 * γmin^(-(p + 1)) * log(γmin) * cosθ / sinθ
+    return ρQ, ρV
+end
+
+"Whether (ν, B, θ, γmin) lie in the validity window of `powerlaw_rotativities`, ν > 3 γmin² ν_B⊥."
+@inline function powerlaw_rotativities_valid(γmin, B, ν, θ)
+    T = typeof(float(γmin * B * ν * θ))
+    return ν > 3 * γmin^2 * EE * B * sin(θ) / (2 * T(π) * ME * CL)
+end
+
+"""
+    powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ; rotativities = true) -> StokesCoefficients
 
 Power-law synchrotron emissivities and absorptivities from the Pandya et al. (2016) fits
-(symphony `power_law_*`, ipole's signs), for electrons n(γ) ∝ γ^(−p) on [γmin, γmax]. Symphony
-has no power-law rotativities, so ρ_Q = ρ_V = 0 here.
+(symphony `power_law_*`, ipole's signs), for electrons n(γ) ∝ γ^(−p) on [γmin, γmax], with the
+Jones & O'Dell rotativities of [`powerlaw_rotativities`](@ref) (symphony's fits have none;
+`rotativities = false` leaves ρ_Q = ρ_V = 0 as ipole does).
 """
-@inline function powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ)
+@inline function powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ; rotativities::Bool = true)
     T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
     sinθ, cosθ = sincos(θ)
     νc = EE * B / (2 * T(π) * ME * CL)
@@ -192,7 +227,8 @@ has no power-law rotativities, so ρ_Q = ρ_V = 0 here.
     aQ = aI * ((17 / T(500)) * p - 43 / T(1250))^(43 / 500)
     term6 = ((31 / T(10)) * sinθ^(-48 / 25) - 31 / T(10))^(64 / 125)
     aV = aI * ((71 / T(100)) * p + 22 / T(625))^(197 / 500) * term6 * (ν / (νc * sinθ))^(-1 / 2) * sign(cosθ)
-    return StokesCoefficients(jI, jQ, jV, aI, aQ, aV, zero(T), zero(T))
+    ρQ, ρV = rotativities ? powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ) : (zero(T), zero(T))
+    return StokesCoefficients(jI, jQ, jV, aI, aQ, aV, ρQ, ρV)
 end
 
 """

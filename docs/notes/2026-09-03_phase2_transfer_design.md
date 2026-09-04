@@ -95,5 +95,13 @@ each PR can be validated on its own.
    splats against a fourth-order stencil (1.6e-7; 0.19 s per gradient at 10² × 100 after a
    7-minute first compile), and an Adam fit recovering a perturbed splat (loss down 140×).
 
-Phase 2 is complete with this step. Open: power-law rotativities (Marszewski+ 2021), κ
-distributions, GPU-side Enzyme gradients, interval culling for many splats.
+Phase 2 is complete with this step. Open: κ distributions, GPU-side Enzyme gradients,
+interval culling for many splats.
+
+7. **Power-law rotativities** (`powerlaw-rotativities`): Marszewski+ (2021) turn out to provide
+   rotativity fits only for κ distributions (their eqs. 51–54); the power-law ρ_Q, ρ_V come from
+   Jones & O'Dell (1977) as written in Dexter (2016, eqs. B1–B3, with the perpendicular
+   gyrofrequency), now `powerlaw_rotativities` and part of `powerlaw_synchrotron`. Reference:
+   the full symphony code's numerical susceptibility-tensor integration (`rho_nu`, driver
+   `validation/symphony/rho_pl.c`, tens of seconds per point), which fixes the sign convention
+   (ρ_Q < 0 at ν ≫ ν_min for power laws, unlike the thermal fits) and the magnitude.
