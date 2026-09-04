@@ -247,6 +247,23 @@ function _signed(bl, i, j)
 end
 
 """
+    scan_index(o::Observation; gap = 0.0165) -> Vector{Int}
+
+Scan number of every row: scans are the runs of distinct time stamps separated by less than
+`gap` hours (ehtim's `add_scans` rule), numbered from 1 in time order.
+"""
+function scan_index(o::Observation{T}; gap = 0.0165) where {T}
+    stamps = sort(unique(o.time))
+    scan_of = Dict{T,Int}()
+    id = 1
+    for (k, t) in enumerate(stamps)
+        scan_of[t] = id
+        k < length(stamps) && stamps[k + 1] - t > gap && (id += 1)
+    end
+    return [scan_of[t] for t in o.time]
+end
+
+"""
     average_scans(o::Observation; gap = 0.0165) -> Observation
 
 Coherent scan averaging with ehtim's rules (`add_scans` and `avg_coherent(0, scan_avg = true)`
@@ -257,17 +274,11 @@ and `v` as means, `tint` as the sum and `time` as the earliest stamp. Rows keep 
 first appearance.
 """
 function average_scans(o::Observation{T}; gap = 0.0165) where {T}
-    stamps = sort(unique(o.time))
-    scan_of = Dict{T,Int}()
-    id = 1
-    for (k, t) in enumerate(stamps)
-        scan_of[t] = id
-        k < length(stamps) && stamps[k + 1] - t > gap && (id += 1)
-    end
+    scans = scan_index(o; gap)
     groups = Dict{Tuple{Int,Int,Int},Vector{Int}}()
     order = Tuple{Int,Int,Int}[]
     for r in eachindex(o.time)
-        key = (scan_of[o.time[r]], o.s1[r], o.s2[r])
+        key = (scans[r], o.s1[r], o.s2[r])
         haskey(groups, key) || (groups[key] = Int[]; push!(order, key))
         push!(groups[key], r)
     end
@@ -290,4 +301,4 @@ function average_scans(o::Observation{T}; gap = 0.0165) where {T}
     return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source)
 end
 
-export Observation, read_uvfits, average_scans, scan_triangles, scan_quadrangles
+export Observation, read_uvfits, scan_index, average_scans, scan_triangles, scan_quadrangles

@@ -365,6 +365,22 @@ function test_gains(; res = 8, N = 60)
         fd = (-fp(y + 2h) + 8fp(y + h) - 8fp(y - h) + fp(y - 2h)) / (12h)
         @test abs(gp[1] - fd) / abs(fd) < 1e-5
         @info "gains: χ² at the true gains $χtrue (amplitude prior only), without gains $(chi2_visibilities(img, Δα, L, D, data, g0, s1, s2))"
+        # per-scan gains: two scans with different gains as the columns of a matrix indexed by (station, scan)
+        scan = [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+        g3 = hcat(gtrue, [-0.04 0.06 0.02 -0.1; -0.3 0.1 0.4 0.0])
+        t1 = scan_station.(s1, scan, 4); t2 = scan_station.(s2, scan, 4)
+        data3 = VisibilityData(u, v, apply_gains(V, g3, t1, t2), data.σ)
+        χ3 = chi2_visibilities(img, Δα, L, D, data3, g3, t1, t2; σ_logamp = 0.1)
+        @test χ3 ≈ sum((g3[1, :] ./ 0.1) .^ 2)
+        @test chi2_visibilities(img, Δα, L, D, data3, hcat(gtrue, gtrue), t1, t2) > 10 * χ3
+        loss3(g) = chi2_visibilities(img, Δα, L, D, data3, g, t1, t2)
+        g4 = g3 .+ 0.03 .* reshape(sin.(1:16), 2, 8)
+        gg3 = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss3), g4)[1]
+        for i in (1, 6, 11, 16)
+            h = 1e-4; fs(y) = (g = copy(g4); g[i] = y; loss3(g)); y = g4[i]      # not `f3`: `8f3(…)` is a Float32 literal
+            fd = (-fs(y + 2h) + 8fs(y + h) - 8fs(y - h) + fs(y - 2h)) / (12h)
+            @test abs(gg3[i] - fd) / abs(fd) < 1e-6
+        end
     end
 end
 

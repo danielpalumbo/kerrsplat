@@ -3,6 +3,14 @@
 #
 #   julia -t 8 --project=../.. m87_fit.jl --data <file.uvfits> [--res 32] [--samples 60] [--iterations 300]
 #                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--sigma-flux 0.01] [--seed 1]
+#                                          [--mode closures|selfcal] [--scan-average] [--sigma-gain 0.1] [--tag name]
+#
+# Mode `closures` (default) fits the Stokes I closure phases and log closure amplitudes with a
+# flux prior. Mode `selfcal` fits the complex visibilities of all four Stokes parameters with one
+# complex gain per station and scan as nuisance parameters (the same gain for every Stokes
+# parameter: R/L gain ratios and leakage are not modelled), with a Gaussian prior of `sigma-gain`
+# on the log-amplitudes and free phases; the flux is then set by the data. `--scan-average`
+# averages the data coherently over scans first (ehtim's rules).
 #
 # Geometry: M = 6.5e9 M⊙, D = 16.8 Mpc; the observer at inclination `inc` from the spin axis
 # (163° puts the jet toward us with the ring's southern side approaching). The splats start on a
@@ -21,12 +29,15 @@ getstr(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default 
 res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--iterations", 300)
 nsplat = getopt("--nsplat", 6); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
 flux = getopt("--flux", 0.6); σflux = getopt("--sigma-flux", 0.01); seed = getopt("--seed", 1); η = getopt("--eta", 0.02)
+mode = getstr("--mode", "closures"); σgain = getopt("--sigma-gain", 0.1); tag = getstr("--tag", mode)
 path = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_2017_101_lo_hops_netcal_StokesI.uvfits")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 6.5e9; D_pc = 16.8e6; D = D_pc * Transfer.PC; L = gravitational_radius(M_solar)
 obs = read_uvfits(path); ν = obs.freq
-@info "data" rows = length(obs) stations = obs.stations mjd = obs.mjd freq = ν
+"--scan-average" in ARGS && (obs = average_scans(obs))
+scans = scan_index(obs); nscans = maximum(scans)
+@info "data" rows = length(obs) stations = obs.stations mjd = obs.mjd freq = ν scans = nscans mode = mode polarized = count(r -> isfinite(obs.σ[r][2]), 1:length(obs))
 tri = scan_triangles(obs); quad = scan_quadrangles(obs)
 absidx(k) = abs(k)
 phases = closure_phases(obs.vis, tri)
@@ -63,32 +74,55 @@ function image_of(q)
     polarized_image!(out, cache, q, 0.0, ν, L)
     return map(st -> observed_stokes(st, ν), to_screen(cache, out))
 end
+vdata = VisibilityData(obs)
+ndata_vis = 2 * sum(count(isfinite, obs.σ[r]) for r in 1:length(obs))            # real and imaginary parts of the present Stokes visibilities
 function loss(q)
     img = image_of(q)
     F = sum(getindex.(img, 1)) * psize^2 / Transfer.JY
     return chi2_closures(img, Δα, L, D, data) + ((F - flux) / σflux)^2
 end
+nst = length(obs.stations)
+t1 = scan_station.(obs.s1, scans, nst); t2 = scan_station.(obs.s2, scans, nst)      # per-scan gains as matrix columns
+selfcal_loss(q, g) = chi2_visibilities(image_of(q), Δα, L, D, vdata, g, t1, t2; σ_logamp = σgain)
 total_flux(q) = sum(getindex.(image_of(q), 1)) * psize^2 / Transfer.JY
 
-@info "start" loss = loss(p) flux_Jy = total_flux(p)
+gains = zeros(2, nst * nscans)
+if mode == "closures"
+    @info "start" loss = loss(p) flux_Jy = total_flux(p)
+else
+    @info "start" loss = selfcal_loss(p, gains) reduced = selfcal_loss(p, gains) / ndata_vis flux_Jy = total_flux(p)
+end
 opt = Optimisers.setup(Optimisers.Adam(η), p)
+optg = Optimisers.setup(Optimisers.Adam(0.05), gains)
 t0 = time()
 for it in 1:iterations
-    g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p)[1]
+    if mode == "closures"
+        g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p)[1]
+    else
+        g, gg = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(selfcal_loss), p, gains)
+        global optg, gains = Optimisers.update!(optg, gains, gg)
+    end
     g[.!free] .= 0
     global opt, p = Optimisers.update!(opt, p, g)
     if it % 10 == 0 || it == 1
-        χ = loss(p)
-        @info "iteration $it" loss = χ reduced = χ / nclosure flux_Jy = total_flux(p) elapsed_min = (time() - t0) / 60
+        χ = mode == "closures" ? loss(p) : selfcal_loss(p, gains)
+        @info "iteration $it" loss = χ reduced = χ / (mode == "closures" ? nclosure : ndata_vis) flux_Jy = total_flux(p) elapsed_min = (time() - t0) / 60
     end
 end
 img = image_of(p)
 χ = chi2_closures(img, Δα, L, D, data)
-@info "final" closure_chi2 = χ reduced = χ / nclosure flux_Jy = total_flux(p) minutes = (time() - t0) / 60
-write_stokes_fits(joinpath(outdir, "m87_fit.fits"), img, Δα; M_solar, D_pc, freq = ν, mjd = obs.mjd, source = "M87")
-writedlm(joinpath(outdir, "m87_params.csv"), p, ',')
-open(joinpath(outdir, "m87_summary.txt"), "w") do io
-    println(io, "closure χ² $χ over $nclosure closure quantities (reduced $(χ / nclosure)); total flux $(total_flux(p)) Jy")
+if mode == "selfcal"
+    χv = selfcal_loss(p, gains)
+    @info "final (self-calibration)" chi2 = χv reduced = χv / ndata_vis closure_chi2 = χ closure_reduced = χ / nclosure flux_Jy = total_flux(p) minutes = (time() - t0) / 60 gain_amplitude_rms = sqrt(sum(abs2, gains[1, :]) / size(gains, 2))
+else
+    @info "final" closure_chi2 = χ reduced = χ / nclosure flux_Jy = total_flux(p) minutes = (time() - t0) / 60
+end
+write_stokes_fits(joinpath(outdir, "m87_$(tag).fits"), img, Δα; M_solar, D_pc, freq = ν, mjd = obs.mjd, source = "M87")
+writedlm(joinpath(outdir, "m87_$(tag)_params.csv"), p, ',')
+mode == "selfcal" && writedlm(joinpath(outdir, "m87_$(tag)_gains.csv"), gains, ',')
+open(joinpath(outdir, "m87_$(tag)_summary.txt"), "w") do io
+    println(io, "mode $mode; closure χ² $χ over $nclosure closure quantities (reduced $(χ / nclosure)); total flux $(total_flux(p)) Jy")
+    mode == "selfcal" && println(io, "self-calibration χ² $(selfcal_loss(p, gains)) over $ndata_vis data values (reduced $(selfcal_loss(p, gains) / ndata_vis)); net polarization Q, U, V / I of the model: $(sum(getindex.(img, 2)) / sum(getindex.(img, 1))), $(sum(getindex.(img, 3)) / sum(getindex.(img, 1))), $(sum(getindex.(img, 4)) / sum(getindex.(img, 1)))")
     println(io, "spin $a inclination $inc res $res samples $N iterations $iterations nsplat $nsplat")
     for i in 1:nsplat
         println(io, "splat $i: r = $(hypot(p[1, i], p[2, i])) M, z = $(p[3, i]), ne = $(exp(p[13, i])), Θe = $(exp(p[14, i])), B = $(exp(p[15, i])) G, u = $(p[18:20, i])")
