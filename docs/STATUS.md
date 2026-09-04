@@ -21,6 +21,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Polarized one-zone splats | `Splats` | host loop; CUDA vs CPU; Enzyme vs 4th-order stencil; fit | 4e-18; 7e-14; 2e-7; loss ÷140 |
 | Slow light | `Splats` | flare echo arrival times vs the lookback of the crossing rays | ±0.3 M |
 | Motion modes B and C | `Splats` | rotated copy; Keplerian orbit; mode C vs mode B | 1e-16; 1e-12; 0.14% |
+| Mode C as a soft constraint (`PatternPrior`) | `Fit` | Keplerian rate through the ZAMO tetrad; Enzyme vs stencil | 1e-12; 1e-6 |
 | χ², staged minibatched Adam, hygiene | `Fit` | noisy movie reaches the noise floor; merge exact | χ²/N = 1.0; 1e-12 |
 | Spacetime derivatives of polarized images | `Transfer`/`Splats` | finite differences | 3e-6 |
 | Fisher audit | `Fit` | (finding) nₑ–B–Θe degeneracy at one frequency | σ 0.58 → 0.45 with a second frequency |
