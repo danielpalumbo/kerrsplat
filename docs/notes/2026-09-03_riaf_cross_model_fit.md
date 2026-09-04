@@ -34,3 +34,27 @@ place the right temperatures and fields in the emitting region but trade density
 strength, and they do not represent the RIAF's extended low-density tails, which do not emit at
 230 GHz. A multi-frequency version of this fit, and the GRMHD movie once a dump is available,
 are the next steps of gate 7.
+
+## Two frequencies (230 and 345 GHz)
+
+The same fit with ipole's 345 GHz image added (`--freqs 2`; `validation/ipole_riaf/riaf_345_*.csv`,
+2048 data points, 17 minutes):
+
+| Quantity | one frequency | two frequencies |
+|---|---|---|
+| χ²/N at the end | 0.018 | 0.077 |
+| Splats | 12 | 12 |
+| Density ratio fitted/true (weighted) | 0.68 | 0.61 |
+| Θe relative error | 36% | 42% |
+| B relative error | 63% | 111% |
+| RIAF density inside the splats' 1% contours | 38% | 33% |
+
+Both images are reproduced (χ² per point well below one at the assumed noise), but the second
+frequency does not improve the recovered fields; it makes them worse. The Fisher audit's
+prediction (a second frequency lifts the temperature direction) holds for a single parcel near
+the truth; a twelve-parcel fit started from a ring has the partition non-uniqueness of addendum
+§5.2 on top: the smooth power-law RIAF can be represented by parcels that trade density against
+field strength and temperature between neighbours in many ways, and the spectral information
+constrains the sum of their contributions, not the split. This is the case for the priors,
+hierarchical shrinkage and field-level regularization of the addendum, and for merge hygiene
+between overlapping parcels, before field-level conclusions are drawn from such fits.

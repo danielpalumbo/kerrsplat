@@ -127,3 +127,23 @@ end
 
 "Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
 observed_stokes(st::RadiativeState, ν_obs) = st.S * ν_obs^3
+
+# ---- composite models ------------------------------------------------------------------------------
+"""
+    CompositeModel(a, b)
+
+The union of two `RadiativeTransport` models: its elements are those of `a` followed by those of
+`b` (the coefficients of overlapping elements add, so a background flow and a set of splats, or
+two splat sets with different populations, combine without any further work).
+"""
+struct CompositeModel{A,B}
+    a::A
+    b::B
+end
+Adapt.@adapt_structure CompositeModel
+nelements(m::CompositeModel) = nelements(m.a) + nelements(m.b)
+@inline function element(m::CompositeModel, i, pix, s, ν_obs)
+    na = nelements(m.a)
+    return i <= na ? element(m.a, i, pix, s, ν_obs) : element(m.b, i - na, pix, s, ν_obs)
+end
+export CompositeModel

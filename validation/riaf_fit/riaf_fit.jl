@@ -3,7 +3,7 @@
 # block-averaged to a coarse grid) starting from a ring of splats, with densification, and compare
 # the recovered fields with the RIAF model's analytic density, temperature and field strength.
 #
-#     julia -t 4 --project=. validation/riaf_fit/riaf_fit.jl [--res 16] [--samples 200] [--iterations 300]
+#     julia -t 4 --project=. validation/riaf_fit/riaf_fit.jl [--res 16] [--samples 200] [--iterations 300] [--freqs 1|2]
 #
 # Writes validation/riaf_fit/output/ (untracked): the fitted parameters (CSV), the model image (CSV)
 # and a summary; the numbers go into docs/notes.
@@ -15,19 +15,24 @@ getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default 
 const RES = getopt("--res", 16)
 const N = getopt("--samples", 200)
 const ITER = getopt("--iterations", 300)
+const NFREQ = getopt("--freqs", 1)                          # 1: 230 GHz; 2: 230 and 345 GHz
 const a = 0.9375; const θo = deg2rad(85.0); const ν = 230e9
+const νs = NFREQ == 1 ? [230e9] : [230e9, 345e9]
+const tags = NFREQ == 1 ? ["riaf_fine"] : ["riaf_fine", "riaf_345"]
 const M_solar = 4.3e6; const D = 8.3e3 * Transfer.PC; const L = gravitational_radius(M_solar)
 const fov = 200e-6 / 206264.806247 * D / L                     # 39.10 M, ipole's field of view
 
 # ---- data: ipole's 100² image block-averaged to RES² (RES must divide 100) -----------------------
 dir = joinpath(@__DIR__, "..", "ipole_riaf")
-ref = [readdlm(joinpath(dir, "riaf_fine_$(s).csv"), ',') for s in ("I", "Q", "U", "V")]
 b = 100 ÷ RES
-data = [SVector{4}(mean(ref[k][(i-1)*b+1:i*b, (j-1)*b+1:j*b]) for k in 1:4) for i in 1:RES, j in 1:RES]
-data = reshape(data, RES, RES, 1, 1)
-peak = maximum(norm.(data))
+data = Array{SVector{4,Float64}}(undef, RES, RES, 1, length(νs))
+for (l, tag) in enumerate(tags)
+    ref = [readdlm(joinpath(dir, "$(tag)_$(s).csv"), ',') for s in ("I", "Q", "U", "V")]
+    data[:, :, 1, l] = [SVector{4}(mean(ref[k][(i-1)*b+1:i*b, (j-1)*b+1:j*b]) for k in 1:4) for i in 1:RES, j in 1:RES]
+end
+peak = maximum(norm.(data[:, :, 1, 1]))
 σ = SVector(0.02, 0.01, 0.01, 0.005) * peak
-movie = StokesMovie(data, [0.0], [ν], σ)
+movie = StokesMovie(data, [0.0], νs, σ)
 # camera: the block centres of ipole's pixel grid (its x offset of 0.49 pixel included)
 xs = [(((i - 1) * b + (b - 1) / 2 + 0.49) / 100 - 0.5) * fov for i in 1:RES]
 ys = [(((j - 1) * b + (b - 1) / 2 + 0.5) / 100 - 0.5) * fov for j in 1:RES]
@@ -48,7 +53,7 @@ for k in 1:nring
     p[:, k] = [x, y, z, log(1.5), log(1.5), log(0.6), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e6), log(30.0), log(30.0), π / 2, π / 2, uz[2], uz[3], uz[4], 0.0]
 end
 χ0 = chi2(p, movie, cache, L)
-println("start: $nring splats, χ² = $χ0 for $(4 * length(data)) data points")
+println("start: $nring splats at $(length(νs)) frequenc$(length(νs) == 1 ? "y" : "ies"), χ² = $χ0 for $(4 * length(data)) data points")
 rng = MersenneTwister(1)
 stages = [Fit.Stage(free = (:logne, :logTe, :logB, :thB, :phB), iterations = ITER ÷ 5, η = 0.05, η_end = 0.02, label = "plasma"),
           Fit.Stage(iterations = ITER - ITER ÷ 5, η = 0.03, η_end = 0.003, label = "everything")]
@@ -78,11 +83,14 @@ mask = (nt .> 0.01 * maximum(nt)) .& (nf .> 0.01 * maximum(nf))
 w = nt .* mask ./ sum(nt .* mask)
 println("fields vs the analytic RIAF, RIAF-density-weighted over the voxels where both have density (", count(mask), " of ", length(mask), "): density ratio fitted/true $(sum((w .* nf ./ nt)[mask])), Θe relative error $(sum((w .* abs.(Θf .- Θt) ./ Θt)[mask])), B relative error $(sum((w .* abs.(Bf .- Bt) ./ Bt)[mask]))")
 println("fraction of the RIAF's density (r < 10 M, |z| < 2 M) covered by the splats' 1% contours: ", sum(nt .* (nf .> 0.01 * maximum(nf))) / sum(nt))
-mkpath(joinpath(@__DIR__, "output"))
-writedlm(joinpath(@__DIR__, "output", "fitted_params.csv"), q, ',')
-img = polarized_image(cache, q, 0.0, ν, L)
-for (k, s) in enumerate(("I", "Q", "U", "V"))
-    writedlm(joinpath(@__DIR__, "output", "model_$(s).csv"), getindex.(img, k), ',')
-    writedlm(joinpath(@__DIR__, "output", "data_$(s).csv"), getindex.(data[:, :, 1, 1], k), ',')
+outdir = joinpath(@__DIR__, "output", NFREQ == 1 ? "one_frequency" : "two_frequencies")
+mkpath(outdir)
+writedlm(joinpath(outdir, "fitted_params.csv"), q, ',')
+for (l, νl) in enumerate(νs)
+    img = polarized_image(cache, q, 0.0, νl, L)
+    for (k, s) in enumerate(("I", "Q", "U", "V"))
+        writedlm(joinpath(outdir, "model_$(s)_$(round(Int, νl / 1e9)).csv"), getindex.(img, k), ',')
+        writedlm(joinpath(outdir, "data_$(s)_$(round(Int, νl / 1e9)).csv"), getindex.(data[:, :, 1, l], k), ',')
+    end
 end
-println("wrote ", joinpath(@__DIR__, "output"))
+println("wrote ", outdir)
