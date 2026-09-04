@@ -38,11 +38,18 @@ each PR can be validated on its own.
 1. **Coefficients** (this PR, `transfer-coefficients`): `KerrSplat.Transfer` with the fits above,
    Bessels.jl for K₀, K₁, K₂ and Γ (verified on CUDA and with Enzyme), and the symphony tables as
    the gate (2016 thermal + 864 power-law rows; agreement 6e-14 and 7e-16 on CPU and CUDA).
-2. **Analytic step**: the constant-coefficient 4×4 solution (Landi Degl'Innocenti 1985 matrix
-   exponential plus the emission integral) with tests against `LinearAlgebra.exp` and quadrature,
-   Kirchhoff equilibrium, pure Faraday rotation, and ipole's split scheme in the small-step limit.
-   The observer-first sample order of the fused marcher composes the step operators front to back:
-   keep P = O₁…Oᵢ₋₁ and accumulate S += P Eᵢ, the polarized form of front-to-back compositing.
+2. **Analytic step** (`transfer-step`): `transfer_step(j, α, ρ, Δ)` returns the exact operator
+   exp(−KΔ) and the emission integral ∫₀^Δ exp(−Ku) du j for constant coefficients, in Landi
+   Degl'Innocenti's bounded-matrix form (even powers of K′ plus the two matrices M₂, M₃ that carry
+   the odd powers), with the scalar functions evaluated without cancellation in every regime
+   (series for small arguments, split exponentials at large optical depth, the nilpotent case
+   α⃗² = ρ⃗², α⃗ ⟂ ρ⃗ handled exactly). Gate: BigFloat matrix exponentials and integrals over 411
+   cases spanning optical depths 1e-9…2600 and rotation angles up to 3.5e5 rad; the attainable
+   accuracy is eps per radian of rotation (the angle itself is only known to that), measured
+   ≤ 1e-15 per radian, plus Kirchhoff equilibrium, rotation about ρ⃗, the semigroup property,
+   the unpolarized limit, ForwardDiff, and the kernel on CPU and CUDA. The observer-first sample
+   order of the fused marcher composes the step operators front to back: `RadiativeState` keeps
+   P = O₁…Oᵢ₋₁ and accumulates S += P Eᵢ, the polarized form of front-to-back compositing.
 3. **Frames**: photon momentum, fluid frame from a ZAMO velocity, redshift, pitch angle, and the
    Walker–Penrose rotation angle χ per splat; tests against Krang's `synchrotronPolarization`.
 4. **Gold et al. (2020) suite**: unpolarized analytic models through the fused marcher with the
