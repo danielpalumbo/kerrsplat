@@ -148,6 +148,18 @@ git-tree-sha1 = "389ad5c84de1ae7cf0e28e381131c98ea87d54fc"
 uuid = "fa961155-64e5-5f13-b03f-caf6b980ea82"
 version = "0.5.0"
 
+[[deps.CFITSIO]]
+deps = ["CFITSIO_jll"]
+git-tree-sha1 = "8c6b984c3928736d455eb53a6adf881457825269"
+uuid = "3b1b4be9-1499-4b22-8d78-7db3344d1961"
+version = "1.7.2"
+
+[[deps.CFITSIO_jll]]
+deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "LibCURL_jll", "Libdl", "Zlib_jll"]
+git-tree-sha1 = "d846411d1d7eb34739105f3d6fbba7c93beded3d"
+uuid = "b3e40c51-02ae-5482-8a39-3ace5868dcf4"
+version = "4.6.4+0"
+
 [[deps.CRC32c]]
 uuid = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 
@@ -518,6 +530,12 @@ deps = ["AbstractFFTs", "DocStringExtensions", "LinearAlgebra", "MuladdMacro", "
 git-tree-sha1 = "65e55303b72f4a567a51b174dd2c47496efeb95a"
 uuid = "b86e33f2-c0db-4aa1-a6e0-ab43e668529e"
 version = "0.3.1"
+
+[[deps.FITSIO]]
+deps = ["CFITSIO", "Printf", "Reexport", "Tables"]
+git-tree-sha1 = "f57de3f533590c785210893030736dc11c4a4afb"
+uuid = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
+version = "0.17.5"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
@@ -959,7 +977,7 @@ uuid = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 version = "0.6.12"
 
 [[deps.KerrSplat]]
-deps = ["Adapt", "Bessels", "CUDA", "CUDA_Compiler_jll", "CUDA_Runtime_jll", "Enzyme", "ForwardDiff", "JacobiElliptic", "KernelAbstractions", "Krang", "Optimisers", "StaticArrays"]
+deps = ["Adapt", "Bessels", "CUDA", "CUDA_Compiler_jll", "CUDA_Runtime_jll", "Enzyme", "FITSIO", "ForwardDiff", "JacobiElliptic", "KernelAbstractions", "Krang", "LinearAlgebra", "Optimisers", "Random", "StaticArrays"]
 path = "/home/daniel/local_scripts/kerrsplat"
 uuid = "11b6c985-b832-4e08-af24-12e7205e8b77"
 version = "0.1.0"
