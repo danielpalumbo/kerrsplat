@@ -33,7 +33,10 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Closure phases and log closure amplitudes | `Fit` | invariance under station gains; Enzyme vs stencil | 1e-12; 1e-5 |
 | κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |
 | Composite models (background + splats) | `Transfer` | empty model, element order, RIAF + splat | rounding |
-| Cross-model fit to ipole's RIAF (1 and 2 frequencies) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
+| Cross-model fit to ipole's RIAF (1 and 2 frequencies, with and without shrinkage) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
+| Priors and hierarchical shrinkage | `Fit` | explicit sums; Enzyme vs analytic gradient | 1e-10 |
+| Station gains (self-calibration χ²) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
+| Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
@@ -62,12 +65,11 @@ and eight frequencies. Per-ray interval lists would remove the remaining per-spl
 
 - GPU-side reverse-mode gradients: Enzyme 0.13.199 (the newest release) fails device-side inside
   kernels; the host path on the CPU backend is what the fits use. Forward-mode duals work on both.
-- κ populations inside the splats (the coefficients exist; the hypergeometric factor is a host
-  quantity per population).
+- The κ splats hold their hypergeometric factors fixed during a fit (κ and w are not fitted).
 - Per-ray interval lists for many splats (the per-sample bounding-sphere early-out exists).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
-  `validation/riaf_fit/`). The visibility and closure χ² exist on the direct transform; station-gain
-  fitting and the Comrade.jl route do not.
+  `validation/riaf_fit/`). The visibility, closure and self-calibration χ² exist on the direct
+  transform; the Comrade.jl route (its likelihoods and samplers) does not.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
   Daniel's call).
 

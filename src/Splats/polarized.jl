@@ -20,7 +20,7 @@ const NPOLARIZEDPARAMS = length(POLARIZED_SPLAT_PARAMS)
 "Gaussian × temporal-envelope weight (unit peak) of splat `i` at time `t` and position `(x, y, z)`."
 @inline function splat_weight(p, i, t, x, y, z)
     @inbounds begin
-        u = pattern_offset(p, i, t, x, y, z, 21)
+        u = pattern_offset(p, i, t, x, y, z, size(p, 1))     # the pattern rate is the last row of every layout
         q2 = (u[1] * exp(-p[4, i]))^2 + (u[2] * exp(-p[5, i]))^2 + (u[3] * exp(-p[6, i]))^2
         τ2 = ((t - p[11, i]) * exp(-p[12, i]))^2
         return exp(-(q2 + τ2) / 2)
