@@ -341,4 +341,6 @@ end
 
 export Stage, Hygiene
 
+include("fits.jl")
+
 end

@@ -167,3 +167,45 @@ function test_fit_schedule(; res = 8, N = 60)
         @info "schedule: χ² $χ0 → $χ1 with $(size(q, 2)) splats after hygiene events $events; distances of the recovered centres to the nearest true ones $(round.(d, digits = 2)) M"
     end
 end
+
+"""
+FITS round trip (the real-data path): a rendered Stokes movie written as ehtim-style FITS files
+(one per frame and frequency, Jy/pixel) is read back into a `StokesMovie` with the same
+intensities, times in M, frequencies and camera.
+"""
+function test_fits_io(; res = 8, N = 60)
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    axis = [(i - (res + 1) / 2) * Δα for i in 1:res]
+    camera = Geodesics.Camera(vec([axis[i] for i in 1:res, j in 1:res]), vec([axis[j] for i in 1:res, j in 1:res]), (res, res))
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D_pc = 16.8e6
+    L = gravitational_radius(M_solar)
+    p = zeros(NPOLARIZEDPARAMS, 1)
+    p[:, 1] = [6.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(20.0), log(10.0), 1.0, 0.5, 0.0, 0.35, 0.0, 0.0]
+    times = [0.0, 30.0]; νs = [230e9, 345e9]
+    cube = polarized_cube(cache, p, times, νs, L)
+    dir = mktempdir()
+    mjd0 = 60000.0
+    paths = String[]
+    for (l, ν) in enumerate(νs), (k, t) in enumerate(times)
+        path = joinpath(dir, "frame_$(k)_$(l).fits")
+        write_stokes_fits(path, cube[:, :, k, l], Δα; M_solar, D_pc, freq = ν, mjd = mjd0 + t * Fit.time_unit(M_solar) / 86400)
+        push!(paths, path)
+    end
+    σjy = SVector(1e-3, 5e-4, 5e-4, 2e-4)
+    movie, cam2, L2 = read_stokes_movie(reverse(paths); M_solar, D_pc, mjd0, σ = σjy)
+    @testset "FITS round trip of a Stokes movie" begin
+        @test L2 == L
+        @test maximum(norm.(movie.data .- cube)) < 1e-9 * maximum(norm.(cube))
+        @test isapprox(movie.times, times; atol = 1e-6)
+        @test movie.νs == νs
+        @test cam2.αs ≈ camera.αs && cam2.βs ≈ camera.βs
+        Ω = (Δα * L / (D_pc * Transfer.PC))^2
+        @test movie.σ ≈ σjy .* (Transfer.JY / Ω)
+        S, hdr = read_stokes_fits(paths[1])
+        @test hdr.bunit == "JY/PIXEL" && hdr.freq == 230e9
+        @info "FITS round trip: $(length(paths)) files, pixel $(round(hdr.psize_deg * 3.6e9, digits = 2)) μas, peak $(maximum(norm.(S))) Jy/pixel"
+    end
+end
