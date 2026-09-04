@@ -169,3 +169,15 @@ function chi2_visibilities(image, Δα, L, D, data::VisibilityData, gains::Abstr
 end
 
 export apply_gains
+
+"""
+    scan_station(s, scan, nstations) -> Int
+
+Column of a per-scan gain matrix (2 × nstations·nscans, see `apply_gains`) for station `s` in
+scan `scan`: gains that vary from scan to scan are the matrix gains of the "virtual stations"
+`scan_station.(s1, scan, n)`, `scan_station.(s2, scan, n)`, so that the validated matrix path
+(and its priors on every column) serves per-scan self-calibration.
+"""
+@inline scan_station(s::Integer, scan::Integer, nstations::Integer) = s + (scan - 1) * nstations
+
+export scan_station

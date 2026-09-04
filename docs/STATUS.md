@@ -39,7 +39,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Cross-model fit to ipole's RIAF (1 and 2 frequencies, with and without shrinkage) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
 | Fit to a GRMHD snapshot (KHARMA Sgr A*, ipole image, 130°) | `validation/grmhd_fit` | ipole full-Stokes image | 5.3/2.1/2.4/0.5% of the I norm; flux 9% low |
 | Priors and hierarchical shrinkage | `Fit` | explicit sums; Enzyme vs analytic gradient | 1e-10 |
-| Station gains (self-calibration χ²) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
+| Station gains (self-calibration χ², per station or per station and scan) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
 | Reflection parity (observers beyond 90°, negative spin, U and V handedness) | `Splats` | equatorial and azimuthal mirror images of the mirrored source (axial field) | 1e-11 |
 
