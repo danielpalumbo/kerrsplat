@@ -3,7 +3,7 @@
 # block-averaged to a coarse grid) starting from a ring of splats, with densification, and compare
 # the recovered fields with the RIAF model's analytic density, temperature and field strength.
 #
-#     julia -t 4 --project=. validation/riaf_fit/riaf_fit.jl [--res 16] [--samples 200] [--iterations 300] [--freqs 1|2]
+#     julia -t 4 --project=. validation/riaf_fit/riaf_fit.jl [--res 16] [--samples 200] [--iterations 300] [--freqs 1|2] [--shrink σ]
 #
 # Writes validation/riaf_fit/output/ (untracked): the fitted parameters (CSV), the model image (CSV)
 # and a summary; the numbers go into docs/notes.
@@ -16,6 +16,7 @@ const RES = getopt("--res", 16)
 const N = getopt("--samples", 200)
 const ITER = getopt("--iterations", 300)
 const NFREQ = getopt("--freqs", 1)                          # 1: 230 GHz; 2: 230 and 345 GHz
+const SHRINK = getopt("--shrink", 0.0)                      # > 0: hierarchical shrinkage of ln Θe, ln B, ln nₑ with this spread
 const a = 0.9375; const θo = deg2rad(85.0); const ν = 230e9
 const νs = NFREQ == 1 ? [230e9] : [230e9, 345e9]
 const tags = NFREQ == 1 ? ["riaf_fine"] : ["riaf_fine", "riaf_345"]
@@ -58,10 +59,11 @@ rng = MersenneTwister(1)
 stages = [Fit.Stage(free = (:logne, :logTe, :logB, :thB, :phB), iterations = ITER ÷ 5, η = 0.05, η_end = 0.02, label = "plasma"),
           Fit.Stage(iterations = ITER - ITER ÷ 5, η = 0.03, η_end = 0.003, label = "everything")]
 t0 = time()
+priors = SHRINK > 0 ? [Fit.Prior(rows = (:logTe, :logB, :logne), σ = SHRINK, shrink = true)] : nothing
 q, history, events = Fit.fit!(p, movie, cache, L, stages; hygiene = Fit.Hygiene(every = 40, densify_threshold = 0.0, max_splats = 12, prune_fraction = 1e-3),
-                              rng = rng, callback = (si, it, q, χ) -> (it % 20 == 0 && println("stage $si iteration $it: χ² = $χ, $(size(q, 2)) splats, $(round(time() - t0)) s")))
+                              rng = rng, priors, callback = (si, it, q, χ) -> (it % 20 == 0 && println("stage $si iteration $it: χ² = $χ, $(size(q, 2)) splats, $(round(time() - t0)) s")))
 χ1 = chi2(q, movie, cache, L)
-println("end: $(size(q, 2)) splats, χ² = $χ1 (χ²/N = $(χ1 / (4 * length(data)))); hygiene events $events; $(round(time() - t0)) s")
+println("end: $(size(q, 2)) splats, χ² = $χ1 (data only; shrinkage $SHRINK) (χ²/N = $(χ1 / (4 * length(data)))); hygiene events $events; $(round(time() - t0)) s")
 
 # ---- field comparison with the analytic RIAF on a voxel grid ------------------------------------
 m = riaf_example(a)
@@ -83,7 +85,7 @@ mask = (nt .> 0.01 * maximum(nt)) .& (nf .> 0.01 * maximum(nf))
 w = nt .* mask ./ sum(nt .* mask)
 println("fields vs the analytic RIAF, RIAF-density-weighted over the voxels where both have density (", count(mask), " of ", length(mask), "): density ratio fitted/true $(sum((w .* nf ./ nt)[mask])), Θe relative error $(sum((w .* abs.(Θf .- Θt) ./ Θt)[mask])), B relative error $(sum((w .* abs.(Bf .- Bt) ./ Bt)[mask]))")
 println("fraction of the RIAF's density (r < 10 M, |z| < 2 M) covered by the splats' 1% contours: ", sum(nt .* (nf .> 0.01 * maximum(nf))) / sum(nt))
-outdir = joinpath(@__DIR__, "output", NFREQ == 1 ? "one_frequency" : "two_frequencies")
+outdir = joinpath(@__DIR__, "output", (NFREQ == 1 ? "one_frequency" : "two_frequencies") * (SHRINK > 0 ? "_shrink" : ""))
 mkpath(outdir)
 writedlm(joinpath(outdir, "fitted_params.csv"), q, ',')
 for (l, νl) in enumerate(νs)
