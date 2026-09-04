@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: CPU gates (Julia 1.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      JULIA_NUM_THREADS: 4
+      JULIA_PKG_USE_CLI_GIT: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        run: julia --project=. -e 'import Pkg; Pkg.instantiate()'
+      - name: CPU gates
+        run: julia --project=. test/ci.jl
