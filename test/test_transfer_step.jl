@@ -80,6 +80,8 @@ function step_cases(rng)
     push!(cases, (j, SVector(1.0, 0.5, 0.1, 0.1), SVector(1e4, 2e3, 5e3), 1.0))                    # 10⁴ radians of rotation
     push!(cases, (j, SVector(1e-9, 5e-10, 1e-10, 1e-10), SVector(1e-8, 2e-9, 5e-9), 1e-3))         # everything tiny
     push!(cases, (j, SVector(1.0, 0.99, 0.0, 0.0), SVector(0.0, 0.0, 0.0), 5.0))                   # α_P at the cap
+    push!(cases, (j, SVector(0.0, 0.0, 0.0, 0.0), SVector(1e-216, 2e-218, 3e-162), 0.3))           # denormal rotativity, no absorption (density tails)
+    push!(cases, (j, SVector(2.0, 0.0, 0.0, 0.0), SVector(1e-170, 0.0, 1e-165), 0.3))              # denormal rotativity with absorption
     return cases
 end
 

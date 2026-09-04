@@ -47,7 +47,7 @@ function test_frames(backend; N = 400, label = "")
             B = SVector{3}(randn(rng, 3)) * 10.0^(2rand(rng) - 1)
             fr = local_frame(met, r, θ, Krang.η(pix), Krang.λ(pix), νr, νθ, α, β, θo, ũ, B)
             eα, eβ, g_k, _ = Krang.synchrotronPolarization(met, α, β, r, θ, θo, B / norm(B), SVector(βv, θz, φz), νr, νθ)
-            χ_k = atan(eα, eβ)
+            χ_k = Krang.evpa(eα, eβ)                 # atan(−e_α, e_β): the screen convention of frames.jl
             dχ = abs(rem2pi(fr.χ - χ_k, RoundNearest))
             worst_g = max(worst_g, abs(fr.g / g_k - 1)); worst_χ = max(worst_χ, dχ)
             # pitch angle from an explicit construction with Krang's Jacobians

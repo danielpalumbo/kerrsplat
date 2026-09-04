@@ -185,8 +185,9 @@ final accumulator to `out` (sorted order; `unsort`/`to_screen` map it to the scr
 anchor residuals of this run replace `cache.residual_t`, `cache.residual_ϕ`. Synchronizes the
 backend.
 """
-function fused_march!(f, out, cache::GeodesicCache{T,N}; workgroup::Integer = 128) where {T,N}
+function fused_march!(f, out, cache::GeodesicCache{T,N}; workgroup::Integer = 128, stack_bytes::Integer = 4 * cuda_stack_bytes(T)) where {T,N}
     cache.generation >= 1 || throw(ArgumentError("regenerate! the cache first"))
+    prepare_backend!(cache.backend; stack_bytes)     # consumers (polarized transfer, frames) need more stack than the march
     M = cache.marcher isa Direct ? 64 : anchor_interval(cache.marcher)
     fused_march!(f, out, cache.consts, cache.residual_t, cache.residual_ϕ, cache.ranges, Krang.Kerr(cache.spin), cache.θo,
                  cache.nval, Val(M); workgroup = workgroup)

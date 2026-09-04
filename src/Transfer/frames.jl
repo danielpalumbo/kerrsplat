@@ -13,11 +13,13 @@
 # e₂ = k̂ × e₁ (so that (e₁, e₂, k̂) is right-handed, with k̂ the propagation direction).
 #
 # Screen. e₁ is parallel-transported to the observer through the Walker–Penrose constant and lands
-# on the screen along (e_α, e_β). The screen Stokes basis is (north, east) = (+β, +α) with the
-# propagation direction toward the observer completing a right-handed triad, so χ = atan(e_α, e_β)
-# is the position angle of the local Q axis on the screen and the local coefficients rotate into the
-# screen basis by 2χ (`rotate_to_screen`). Whether +α is east on Krang's screen is a global sign of
-# U to be fixed against ipole images (see the Phase 2 design note).
+# on the screen along (e_α, e_β). The screen Stokes basis is (north, east) = (+β, −α), Krang's EVPA
+# convention (`Krang.evpa`), which with the propagation direction toward the observer forms a
+# right-handed triad: with it the Faraday rotation and conversion sense agrees with ipole's, and with
+# the opposite choice U flips sign at every frequency and the Faraday-affected Q, U, V at 230 GHz
+# disagree (test/test_polarized.jl, RIAF against ipole). So χ = atan(−e_α, e_β) is the position
+# angle of the local Q axis on the screen, and the local coefficients rotate into the screen basis
+# by 2χ (`rotate_to_screen`).
 
 """
     boost_zamo_to_fluid(ũ) -> SMatrix{4,4}
@@ -106,7 +108,7 @@ there, and ρ_V acts the same in every basis).
     f_bl = Krang.jac_bl_u_zamo_d(met, r, θ) * f_zamo
     κ1, κ2 = walker_penrose(met, r, θ, p_u, f_bl)
     eα, eβ = screen_direction(met, κ1, κ2, θo, α, β)
-    return LocalFrame(g, cosθB, atan(eα, eβ))
+    return LocalFrame(g, cosθB, atan(-eα, eβ))
 end
 
 "Convenience for the fused-march consumer: the frame from a pixel and a sample."
