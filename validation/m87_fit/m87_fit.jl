@@ -3,7 +3,8 @@
 #
 #   julia -t 8 --project=../.. m87_fit.jl --data <file.uvfits> [--res 32] [--samples 60] [--iterations 300]
 #                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--sigma-flux 0.01] [--seed 1]
-#                                          [--mode closures|selfcal] [--scan-average] [--sigma-gain 0.1] [--tag name]
+#                                          [--mode closures|selfcal] [--scan-average] [--sigma-gain 0.1] [--eta-gain 0.01]
+#                                          [--init params.csv] [--uvmin 0.1] [--tag name]
 #
 # Mode `closures` (default) fits the Stokes I closure phases and log closure amplitudes with a
 # flux prior. Mode `selfcal` fits the complex visibilities of all four Stokes parameters with one
@@ -30,12 +31,18 @@ res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--i
 nsplat = getopt("--nsplat", 6); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
 flux = getopt("--flux", 0.6); σflux = getopt("--sigma-flux", 0.01); seed = getopt("--seed", 1); η = getopt("--eta", 0.02)
 mode = getstr("--mode", "closures"); σgain = getopt("--sigma-gain", 0.1); tag = getstr("--tag", mode)
+init = getstr("--init", ""); ηgain = getopt("--eta-gain", 0.01); uvmin = getopt("--uvmin", 0.0)   # Gλ; drops shorter baselines
 path = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_2017_101_lo_hops_netcal_StokesI.uvfits")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 6.5e9; D_pc = 16.8e6; D = D_pc * Transfer.PC; L = gravitational_radius(M_solar)
 obs = read_uvfits(path); ν = obs.freq
 "--scan-average" in ARGS && (obs = average_scans(obs))
+if uvmin > 0                                          # the intra-site baselines see the jet's 1.2 Jy, not the ring
+    keep = hypot.(obs.u, obs.v) .>= uvmin * 1e9
+    obs = Fit.Observation{Float64}(obs.time[keep], obs.tint[keep], obs.s1[keep], obs.s2[keep], obs.stations, obs.u[keep], obs.v[keep], obs.vis[keep], obs.σ[keep], obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source)
+    @info "baselines shorter than $uvmin Gλ dropped" remaining = length(obs)
+end
 scans = scan_index(obs); nscans = maximum(scans)
 @info "data" rows = length(obs) stations = obs.stations mjd = obs.mjd freq = ν scans = nscans mode = mode polarized = count(r -> isfinite(obs.σ[r][2]), 1:length(obs))
 tri = scan_triangles(obs); quad = scan_quadrangles(obs)
@@ -67,6 +74,11 @@ for i in 1:nsplat
     p[:, i] = [r0 * cos(φ), r0 * sin(φ), 0.1 * randn(rng), log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0,
                0.0, log(1e9), log(3e5), log(30.0), log(10.0), π / 2, π / 2, 0.0, 0.35, 0.0, 0.0]
 end
+if !isempty(init)                                     # start from a saved parameter matrix (e.g. a closure fit)
+    p = Matrix{Float64}(readdlm(init, ','))
+    nsplat = size(p, 2)
+    @info "initialized from $init" nsplat
+end
 free = trues(size(p)); free[11, :] .= false; free[12, :] .= false; free[21, :] .= false
 
 function image_of(q)
@@ -93,7 +105,7 @@ else
     @info "start" loss = selfcal_loss(p, gains) reduced = selfcal_loss(p, gains) / ndata_vis flux_Jy = total_flux(p)
 end
 opt = Optimisers.setup(Optimisers.Adam(η), p)
-optg = Optimisers.setup(Optimisers.Adam(0.05), gains)
+optg = Optimisers.setup(Optimisers.Adam(ηgain), gains)
 t0 = time()
 for it in 1:iterations
     if mode == "closures"
