@@ -230,7 +230,8 @@ function test_visibilities(; res = 8, N = 60)
     psize = Δα * L / D
     @testset "visibilities by direct transform" begin
         # an explicit transform written from the sky coordinates of the pixels (RA offset −α toward the
-        # east, declination offset +β), as the definition V(u, v) = ∫ I e^{−2πi(u l + v m)} dΩ
+        # east, declination offset +β), as the definition V(u, v) = ∫ I e^{+2πi(u l + v m)} dΩ (the EHT
+        # sign convention; test_uvfits pins it against ehtim)
         I = getindex.(img, 1) .* (psize^2 / Transfer.JY)
         us = Float64[]; vs = Float64[]; ref = ComplexF64[]
         for kv in 0:2, ku in 0:2
@@ -239,7 +240,7 @@ function test_visibilities(; res = 8, N = 60)
             acc = 0.0im
             for j in 1:res, i in 1:res
                 l = -camera.αs[i + (j - 1) * res] * L / D; m = camera.βs[i + (j - 1) * res] * L / D
-                acc += I[i, j] * cis(-2π * (u * l + v * m))
+                acc += I[i, j] * cis(2π * (u * l + v * m))
             end
             push!(ref, acc)
         end

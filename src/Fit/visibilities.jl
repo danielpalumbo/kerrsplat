@@ -6,15 +6,21 @@
 """
     visibilities(image, Δα, L, D, u, v) -> Vector{Complex}
 
-Complex visibilities V(u, v) = Σ_pixels I(x, y) ΔΩ exp(−2πi (u x + v y)) of a Stokes image
-(matrix of 4-vectors, cgs intensity, x toward +α = west, y toward north) for baselines `u`, `v`
-in wavelengths, with the pixel size `Δα` in M, the length unit `L` and distance `D` in cm.
+Complex visibilities V(u, v) = Σ_pixels I ΔΩ exp(+2πi (u l + v m)) of a Stokes image (matrix
+of 4-vectors, cgs intensity, indexed with x toward +α = west and y toward north) at the sky
+offsets l (toward the east) and m (toward the north) of the pixels, for baselines `u`, `v` in
+wavelengths, with the pixel size `Δα` in M, the length unit `L` and distance `D` in cm.
 Returns the visibilities of the four Stokes parameters as a vector of `SVector{4}` in Jy. The
 zero-spacing values are the flux densities.
+
+The sign is the EHT convention (ehtim's `ftmatrix`: (u, v) of the baseline 1–2 is
+(x₁ − x₂)/λ), the one in which uvfits data from the EHT pipelines are read by
+[`read_uvfits`](@ref) without a flip; the gate `test_uvfits` pins it against ehtim's
+observation of a known image.
 """
 function visibilities(image::AbstractMatrix{<:SVector{4}}, Δα, L, D, u::AbstractVector, v::AbstractVector)
     nx, ny = size(image)
-    psize = Δα * L / D                           # radians; east is −α, so the RA offset of pixel i is −x
+    psize = Δα * L / D                           # radians; east is −α, so the sky offset l of pixel i is −x
     Ω = psize^2
     xs = [-(i - (nx + 1) / 2) * psize for i in 1:nx]
     ys = [(j - (ny + 1) / 2) * psize for j in 1:ny]
@@ -23,7 +29,7 @@ function visibilities(image::AbstractMatrix{<:SVector{4}}, Δα, L, D, u::Abstra
     for k in eachindex(u)
         acc = zero(SVector{4,Complex{T}})
         for j in 1:ny, i in 1:nx
-            ph = -2 * T(π) * (u[k] * xs[i] + v[k] * ys[j])
+            ph = 2 * T(π) * (u[k] * xs[i] + v[k] * ys[j])
             acc += image[i, j] .* (Ω / Transfer.JY * cis(ph))
         end
         out[k] = acc
@@ -63,20 +69,24 @@ export visibilities, VisibilityData, chi2_visibilities
     closure_phases(vis, triangles) -> Vector
 
 Closure phases arg(V₁V₂V₃) of Stokes I for `triangles` given as triples of visibility indices
-whose baselines (ij, jk, ki) close; Stokes I is the first component of each visibility.
+whose baselines (ij, jk, ki) close; Stokes I is the first component of each visibility. A
+negative index stands for the conjugate of that visibility (a baseline stored as ji).
 """
 function closure_phases(vis::AbstractVector, triangles)
-    return [angle(vis[t[1]][1] * vis[t[2]][1] * vis[t[3]][1]) for t in triangles]
+    return [angle(_signed_vis(vis, t[1]) * _signed_vis(vis, t[2]) * _signed_vis(vis, t[3])) for t in triangles]
 end
+
+"Stokes I visibility of row `k`, conjugated when `k` is negative (the stored baseline runs the other way)."
+@inline _signed_vis(vis, k) = k < 0 ? conj(vis[-k][1]) : vis[k][1]
 
 """
     log_closure_amplitudes(vis, quadrangles) -> Vector
 
 Log closure amplitudes ln(|V₁₂||V₃₄|/(|V₁₃||V₂₄|)) of Stokes I for `quadrangles` given as
-4-tuples of visibility indices (12, 34, 13, 24).
+4-tuples of visibility indices (12, 34, 13, 24); signs of the indices are ignored (amplitudes).
 """
 function log_closure_amplitudes(vis::AbstractVector, quadrangles)
-    return [log(abs(vis[q[1]][1]) * abs(vis[q[2]][1]) / (abs(vis[q[3]][1]) * abs(vis[q[4]][1]))) for q in quadrangles]
+    return [log(abs(_signed_vis(vis, q[1])) * abs(_signed_vis(vis, q[2])) / (abs(_signed_vis(vis, q[3])) * abs(_signed_vis(vis, q[4])))) for q in quadrangles]
 end
 
 """

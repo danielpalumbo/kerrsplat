@@ -391,5 +391,6 @@ export Prior, penalty
 include("fits.jl")
 include("spacetime.jl")
 include("visibilities.jl")
+include("uvfits.jl")
 
 end

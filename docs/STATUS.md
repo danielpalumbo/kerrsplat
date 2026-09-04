@@ -29,7 +29,8 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Field-level recovery on a voxel grid | `Splats` | truth of the noise-floor fit | density PSNR +3.7 dB, Θe error 0.22 → 0.17, B to 1.5% |
 | FITS movies (ehtim layout) | `Fit` | write/read round trip | 1e-9 |
 | Spin and inclination fit (Levenberg–Marquardt on duals) | `Fit` | noisy image of two splats | θo to 0.07°, a to 0.04 at 2.25 M pixels, χ² at the noise floor |
-| Visibility-domain χ² (direct transform) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
+| Visibility-domain χ² (direct transform, EHT sign convention) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
+| uvfits reader (`read_uvfits`, scan closures) | `Fit` | ehtim's parse of an ehtim-written observation and of real M87 data; transform of the source image vs ehtim's noiseless visibilities | 1e-7 Jy, 2e-7 in u, v; 6e-8 Jy |
 | Closure phases and log closure amplitudes | `Fit` | invariance under station gains; Enzyme vs stencil | 1e-12; 1e-5 |
 | κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |
 | Composite models (background + splats) | `Transfer` | empty model, element order, RIAF + splat | rounding |
@@ -69,7 +70,8 @@ and eight frequencies. Per-ray interval lists would remove the remaining per-spl
 - Per-ray interval lists for many splats (the per-sample bounding-sphere early-out exists).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
   `validation/riaf_fit/`). The visibility, closure and self-calibration χ² exist on the direct
-  transform; the Comrade.jl route (its likelihoods and samplers) does not.
+  transform and uvfits files are read natively (validated against ehtim on real M87 data); the
+  Comrade.jl route (its likelihoods and samplers) does not.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
   Daniel's call).
 
