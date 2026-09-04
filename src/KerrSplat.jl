@@ -10,6 +10,7 @@ movies. The design lives in `docs/plans/`. Submodules:
   through the fused marcher (Phase 1 of the roadmap).
 - [`Transfer`](@ref KerrSplat.Transfer): synchrotron transfer coefficients and (Phase 2)
   polarized radiative transfer along the cached rays.
+- [`Fit`](@ref KerrSplat.Fit): the χ² of Stokes movies and the fitting loop (Phase 4).
 """
 module KerrSplat
 
@@ -19,7 +20,9 @@ include("Transfer/Transfer.jl")
 using .Transfer
 include("Splats/Splats.jl")
 using .Splats
+include("Fit/Fit.jl")
+using .Fit
 
-export Geodesics, Splats, Transfer
+export Geodesics, Splats, Transfer, Fit
 
 end

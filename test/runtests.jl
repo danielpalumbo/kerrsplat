@@ -24,6 +24,7 @@ include("test_polarized.jl")
 include("test_polarized_splats.jl")
 include("test_slowlight.jl")
 include("test_motion.jl")
+include("test_fit.jl")
 
 const GATE2_N = 130          # two re-anchoring intervals of the default Recurrence(64)
 @info "computing the BigFloat gate-2 references"
@@ -57,6 +58,7 @@ gate2_refs = gate2_references()
         test_motion(CPU(); res = 24, N = 200, label = "CPU")
         test_motion_gradient(; res = 12, N = 120)
         test_pattern_vs_fluid(; res = 8, N = 80, iterations = 120)
+        test_fit(; res = 10, N = 80, iterations = (40, 40, 60))
     end
     if CUDA.functional()
         @info "CPU tests done; starting the CUDA tests"
