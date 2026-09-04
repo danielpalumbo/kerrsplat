@@ -264,5 +264,26 @@ function test_visibilities(; res = 8, N = 60)
             @test abs(g[i] - fd) / abs(fd) < 1e-5
         end
         @info "visibilities: zero-spacing $(round(real(V[1][1]), digits = 4)) Jy; χ² of the perturbed model $χ over 20 baselines"
+        # closure quantities: gain-independent (unchanged by station gains), zero χ² against the model's own,
+        # positive for the perturbed model, with a correct gradient
+        tri = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]; quad = [(1, 2, 3, 4), (5, 6, 7, 8)]
+        Vd = visibilities(img, Δα, L, D, u, v)
+        gains = [cis(0.3k) * (1 + 0.1 * sin(k)) for k in eachindex(u)]
+        # a closing triangle has baselines ij, jk, ki: gains cancel in the bispectrum only for such triangles, so
+        # emulate them by assigning stations: baseline k joins stations s1[k], s2[k]
+        s1 = [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 4, 4, 1, 2, 3, 4, 1, 2, 3, 4]; s2 = [2, 3, 1, 2, 3, 1, 2, 3, 1, 3, 2, 3, 4, 4, 4, 2, 3, 4, 1, 3]
+        gV = [Vd[k] .* (gains[s1[k]] * conj(gains[s2[k]])) for k in eachindex(u)]
+        @test maximum(abs.(rem.(closure_phases(gV, tri) .- closure_phases(Vd, tri), 2π, RoundNearest))) < 1e-12
+        cl = ClosureData(u, v, tri, closure_phases(Vd, tri), fill(0.05, 3), quad, log_closure_amplitudes(Vd, quad), fill(0.05, 2))
+        lossc(q) = (out = Vector{RadiativeState{Float64}}(undef, npixels(cache)); fill!(out, zero(RadiativeState{Float64}));
+                    polarized_image!(out, cache, q, 0.0, ν, L); chi2_closures(map(st -> observed_stokes(st, ν), to_screen(cache, out)), Δα, L, D, cl))
+        @test lossc(p) < 1e-18
+        χc = lossc(q0)
+        @test χc > 0
+        gc = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(lossc), q0)[1]
+        h = 1e-4; fc(x) = (q = copy(q0); q[1] = x; lossc(q)); x = q0[1]
+        fd = (-fc(x + 2h) + 8fc(x + h) - 8fc(x - h) + fc(x - 2h)) / (12h)
+        @test abs(gc[1] - fd) / abs(fd) < 1e-5
+        @info "closures: χ² of the perturbed model $χc over 3 closure phases and 2 log closure amplitudes"
     end
 end
