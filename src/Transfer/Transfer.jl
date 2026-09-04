@@ -35,6 +35,6 @@ export transfer_step, RadiativeState, advance, rotate_to_screen
 export LocalFrame, local_frame, boost_zamo_to_fluid, walker_penrose, screen_direction
 export UnpolarizedState, UnpolarizedTransport, unpolarized_coefficients, unpolarized_step, observed_intensity,
        gravitational_radius, pixel_solid_angle
-export RadiativeTransport, nelements, element, observed_stokes
+export RadiativeTransport, nelements, element, observed_stokes, CompositeModel
 
 end

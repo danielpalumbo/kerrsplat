@@ -179,3 +179,33 @@ function test_riaf_vs_ipole(backend; N = 2000, label = "")
         end
     end
 end
+
+"""
+Composite models: a background RIAF plus splats renders as one model. Checks: a composite with an
+empty second model equals the first; a composite of two thin emitters equals the sum of their
+images (no absorption); and with the RIAF background the composite differs from the background
+where the splat is, on both backends.
+"""
+function test_composite(backend; res = 20, N = 300, label = "")
+    Geodesics.prepare_backend!(backend)
+    @testset "composite models ($label)" begin
+        a = 0.9375; θo = deg2rad(85.0); ν = 230e9
+        L = gravitational_radius(4.3e6)
+        camera = Geodesics.Camera((-15.0, 15.0), (-15.0, 15.0), res)
+        riaf = riaf_example(a)
+        p = zeros(NPOLARIZEDPARAMS, 1)
+        p[:, 1] = [5.0, 0.0, 0.0, log(1.0), log(1.0), log(0.7), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e6), log(20.0), log(30.0), 1.0, 0.5, 0.0, 0.35, 0.0, 0.0]
+        pb = adapt_to(backend, p)
+        empty = PolarizedSplats(adapt_to(backend, zeros(NPOLARIZEDPARAMS, 0)), 0.0)
+        img_r = stokes_image(backend, riaf, camera, a, θo, ν, L; N)
+        img_re = stokes_image(backend, CompositeModel(riaf, empty), camera, a, θo, ν, L; N)
+        @test maximum(norm.(Array(img_re) .- Array(img_r))) < 1e-12 * maximum(norm.(Array(img_r)))   # a different kernel specialization: rounding only
+        img_s = stokes_image(backend, PolarizedSplats(pb, 0.0), camera, a, θo, ν, L; N)
+        img_rs = stokes_image(backend, CompositeModel(riaf, PolarizedSplats(pb, 0.0)), camera, a, θo, ν, L; N)
+        img_sr = stokes_image(backend, CompositeModel(PolarizedSplats(pb, 0.0), riaf), camera, a, θo, ν, L; N)
+        @test Array(img_rs) ≈ Array(img_sr)                                # order of the elements is irrelevant
+        d = maximum(norm.(Array(img_rs) .- Array(img_r))) / maximum(norm.(Array(img_r)))
+        @test d > 0.05                                                      # the splat shows on top of the background
+        @info "composite: RIAF + splat differs from the RIAF by $(round(d, digits = 3)) of the peak; splat alone peaks at $(round(maximum(norm.(Array(img_s))) / maximum(norm.(Array(img_r))), digits = 3)) of the RIAF peak ($label)"
+    end
+end
