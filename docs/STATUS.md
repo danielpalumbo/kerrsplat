@@ -58,8 +58,9 @@ and eight frequencies. Per-ray interval lists would remove the remaining per-spl
   east = −α (Krang's `evpa`), right-handed with the propagation direction. The opposite choice
   reverses the Faraday sense and fails against ipole at the 60% level.
 - Krang's analytic geodesics return NaN at a = 0; Schwarzschild models use a = 1e-3.
-- The full test suite prints progress to stderr and takes over two hours (several Enzyme
-  compilations of seven minutes each); run it through a pipe, `julia -t 8 --project=. test/runtests.jl 2>&1 | tee log`.
+- The full test suite prints progress to stderr and takes about an hour (4,882,286 checks in
+  66 minutes on 2026-09-04, several Enzyme compilations of seven minutes each); run it through
+  a pipe, `julia -t 8 --project=. test/runtests.jl 2>&1 | tee log`.
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   reach the first call together (`-t 8`); the in-kernel gradient test compiles on one work item
   first (this is what stalled two suite runs for hours).

@@ -56,4 +56,35 @@ data at a = 0.94, θo = 163°, M = 6.5e9 M⊙, D = 16.8 Mpc, on a 32² screen of
 pixels), with a Gaussian prior on the total flux (0.6 ± 0.06 Jy). Adam on Enzyme gradients,
 300 iterations, on the CPU backend with six threads.
 
-Results: pending (the run is in progress; this section is updated when it finishes).
+Run 1 (2026-09-04 00:31; the field and velocity started *vertical*, because the ordering of the
+velocity components was only established by the reflection gate afterwards, and the flux prior
+had σ = 0.06 Jy): 17 minutes for 300 iterations; the closure χ² per closure quantity fell from
+29 to 1.37 (phases alone 1.76), the total flux drifted to 1.03 Jy (closures do not constrain it
+and the prior was too weak against ~10⁴ closure quantities). The splats settled on a ring of
+radius 4.1–5.4 M with nₑ ≈ 2–3e5 cm⁻³, Θe ≈ 16–25, B ≈ 7–10 G; two of them acquired
+relativistic velocities (γβ ≈ 1.7) and show up as beamed streaks in the image, the rest form a
+ring of ≈ 40 μas diameter.
+
+The same image tested the Fourier sign convention end to end on real data: rotating the model by
+180° (equivalent to the opposite sign, i.e. conjugate visibilities) raises the closure χ²/N from
+1.37 to 21 and the closure-phase χ²/N from 1.76 to 33; the α- and β-mirrors give 8 and 12. The
+convention adopted in #43 is the one in which EHT closure phases are reproduced.
+
+Run 2 (toroidal field and toroidal velocity of 0.35 at the start, flux prior 0.6 ± 0.01 Jy, 400
+iterations, 19 minutes): closure χ²/N = 1.54 at a total flux of 0.61 Jy (the tighter prior costs
+0.17 in χ²/N against run 1's free flux). The six splats now form a coherent ring at r = 3.7–4.9 M
+within ±1.4 M of the equatorial plane, all rotating in the same sense with a toroidal ZAMO
+velocity γβ_φ ≈ 0.65–0.80 (0.55–0.6 c; the Keplerian value at 4.3 M is ≈ 0.5 c), an inflow
+component of 0.1–0.35 and a vertical one of 0.15–0.35, and almost uniform plasma: nₑ = 2.1–2.2e5
+cm⁻³, Θe = 20.6–21.7, B = 6.7–7.3 G, the canonical one-zone numbers for M87's ring. The image
+(`figures/m87_2017_run2.png`) is a ≈ 40 μas ring brightest in the south-west. Only Stokes I
+closures were fitted, so its polarization is a prediction of a thermal ring with a toroidal
+field at this inclination: a net linear fraction of 17% and a net circular fraction of −6%,
+both far above what the EHT's polarimetric papers report for M87, which says the field and
+Faraday structure of this six-splat model are not those of M87; a run that fits Q, U (and V)
+is the natural next step.
+
+What this run does not do yet: fit visibility amplitudes with station gains (the flux is set by
+the prior), use the coherently averaged (scan) data rather than the ten-second points (the
+closure quantities of adjacent points are strongly correlated, so χ²/N overstates the
+constraint), or vary the spin and inclination (both are available through `fit_spacetime`).

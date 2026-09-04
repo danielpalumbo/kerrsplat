@@ -2,13 +2,15 @@
 # amplitudes, Stokes I) through Fit.read_uvfits: the first real-data run of the pipeline.
 #
 #   julia -t 8 --project=../.. m87_fit.jl --data <file.uvfits> [--res 32] [--samples 60] [--iterations 300]
-#                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--seed 1]
+#                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--sigma-flux 0.01] [--seed 1]
 #
 # Geometry: M = 6.5e9 M⊙, D = 16.8 Mpc; the observer at inclination `inc` from the spin axis
 # (163° puts the jet toward us with the ring's southern side approaching). The splats start on a
 # ring of radius 4.5 M in the equatorial plane with a mildly sub-Keplerian toroidal velocity and a
 # toroidal field; every parameter but the temporal envelope and the pattern rate is free. The
-# loss is the closure χ² plus a Gaussian prior on the total flux (compact flux `flux` ± 10%).
+# loss is the closure χ² plus a Gaussian prior on the total flux (compact flux `flux` ± `sigma-flux`
+# Jy; closures do not constrain the flux, so the prior must be tight to matter against ~10⁴ closure
+# quantities).
 # Outputs in output/: the fitted image (ehtim-style FITS), the parameters and a summary.
 
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
@@ -18,7 +20,7 @@ getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default 
 getstr(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : ARGS[i+1])
 res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--iterations", 300)
 nsplat = getopt("--nsplat", 6); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
-flux = getopt("--flux", 0.6); seed = getopt("--seed", 1); η = getopt("--eta", 0.02)
+flux = getopt("--flux", 0.6); σflux = getopt("--sigma-flux", 0.01); seed = getopt("--seed", 1); η = getopt("--eta", 0.02)
 path = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_2017_101_lo_hops_netcal_StokesI.uvfits")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
@@ -49,8 +51,10 @@ p = zeros(NPOLARIZEDPARAMS, nsplat)
 for i in 1:nsplat
     φ = 2π * (i - 1) / nsplat + 0.05 * randn(rng)
     r0 = 4.5 + 0.2 * randn(rng)
+    # field and velocity components follow the axes (r̂, φ̂, −θ̂): B = Bmag (sin thB cos phB, sin thB sin phB, cos thB),
+    # so thB = phB = π/2 is the toroidal field and the toroidal ZAMO velocity is the second component
     p[:, i] = [r0 * cos(φ), r0 * sin(φ), 0.1 * randn(rng), log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0,
-               0.0, log(1e9), log(3e5), log(30.0), log(10.0), 0.0, 0.0, 0.0, 0.0, 0.35, 0.0]   # B = φ̂ (thB = 0); u = (0, 0, u_φ)
+               0.0, log(1e9), log(3e5), log(30.0), log(10.0), π / 2, π / 2, 0.0, 0.35, 0.0, 0.0]
 end
 free = trues(size(p)); free[11, :] .= false; free[12, :] .= false; free[21, :] .= false
 
@@ -62,7 +66,7 @@ end
 function loss(q)
     img = image_of(q)
     F = sum(getindex.(img, 1)) * psize^2 / Transfer.JY
-    return chi2_closures(img, Δα, L, D, data) + ((F - flux) / (0.1 * flux))^2
+    return chi2_closures(img, Δα, L, D, data) + ((F - flux) / σflux)^2
 end
 total_flux(q) = sum(getindex.(image_of(q), 1)) * psize^2 / Transfer.JY
 
