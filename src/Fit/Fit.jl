@@ -383,10 +383,45 @@ function penalty(params::AbstractMatrix{T}, prior::Prior) where {T}
     end
     return total
 end
-penalty(params, priors::AbstractVector{Prior}) = sum(penalty(params, pr) for pr in priors; init = zero(eltype(params)))
+penalty(params, priors::AbstractVector) = sum(penalty(params, pr) for pr in priors; init = zero(eltype(params)))
 penalty(params, ::Nothing) = zero(eltype(params))
 
-export Prior, penalty
+"""
+    PatternPrior(met, σ)
+
+Motion mode C of the addendum (§3) as a soft constraint: the pattern angular velocity of every
+splat (its last row) is pulled toward the azimuthal coordinate velocity dφ/dt of its own fluid,
+evaluated from the ZAMO 3-velocity (the three rows before the last) at the splat's centre in the
+spacetime `met`, with the penalty Σ_k ((ω_k − Ω_k)/σ)². σ → ∞ recovers mode B (free pattern
+motion); σ → 0 ties the pattern to the flow. Works for every splat layout that ends with the
+rows (u1, u2, u3, ω).
+"""
+struct PatternPrior{M,S}
+    met::M
+    σ::S
+end
+
+"Azimuthal coordinate velocity dφ/dt of the fluid of splat `i` at its centre."
+@inline function fluid_pattern_rate(params::AbstractMatrix, i, met)
+    nrow = size(params, 1)
+    @inbounds begin
+        r, θ, _ = Splats.boyer_lindquist(met, params[1, i], params[2, i], params[3, i])
+        ũ = SVector(params[nrow - 3, i], params[nrow - 2, i], params[nrow - 1, i])
+    end
+    return Splats.coordinate_velocity(met, r, θ, ũ)[3]
+end
+
+function penalty(params::AbstractMatrix{T}, prior::PatternPrior) where {T}
+    total = zero(T)
+    nrow = size(params, 1)
+    for i in 1:size(params, 2)
+        Ω = fluid_pattern_rate(params, i, prior.met)
+        total += ((params[nrow, i] - Ω) / prior.σ)^2
+    end
+    return total
+end
+
+export Prior, PatternPrior, fluid_pattern_rate, penalty
 
 include("fits.jl")
 include("spacetime.jl")

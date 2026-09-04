@@ -12,6 +12,7 @@ using KerrSplat.Geodesics
 using KerrSplat.Transfer
 using KerrSplat.Splats
 using KerrSplat.Fit
+using Krang
 
 function test_fit(; res = 10, N = 80, iterations = (40, 40, 60))
     rng = Random.MersenneTwister(3)
@@ -364,5 +365,47 @@ function test_gains(; res = 8, N = 60)
         fd = (-fp(y + 2h) + 8fp(y + h) - 8fp(y - h) + fp(y - 2h)) / (12h)
         @test abs(gp[1] - fd) / abs(fd) < 1e-5
         @info "gains: χ² at the true gains $χtrue (amplitude prior only), without gains $(chi2_visibilities(img, Δα, L, D, data, g0, s1, s2))"
+    end
+end
+
+"""
+    test_pattern_prior()
+
+Motion mode C as a soft constraint: `fluid_pattern_rate` returns the Keplerian angular velocity
+1/(r^{3/2} + a) for a splat whose ZAMO velocity is that of a circular equatorial orbit (round
+trip through the ZAMO tetrad), the `PatternPrior` penalty vanishes when the pattern rate equals
+it and grows as (Δω/σ)², and its Enzyme gradient matches a stencil.
+"""
+function test_pattern_prior()
+    a = 0.9
+    met = Krang.Kerr(a)
+    p = polarized_test_params()
+    @testset "pattern prior (mode C)" begin
+        for (i, r0) in enumerate((6.0, 9.0))
+            Ω = 1 / (r0^1.5 + a)
+            # BL 4-velocity of the circular orbit, normalized, then into the ZAMO frame: ũ = γβ⃗
+            g = Krang.metric_dd(met, r0, π / 2)
+            ut = 1 / sqrt(-(g[1, 1] + 2 * g[1, 4] * Ω + g[4, 4] * Ω^2))
+            u_bl = SVector(ut, 0.0, 0.0, ut * Ω)
+            u_zamo = Krang.jac_zamo_u_bl_d(met, r0, π / 2) * u_bl
+            @test abs(u_zamo[1] - sqrt(1 + u_zamo[2]^2 + u_zamo[3]^2 + u_zamo[4]^2)) < 1e-12
+            p[1, i] = r0 * cos(0.3i); p[2, i] = r0 * sin(0.3i); p[3, i] = 0.0
+            p[18:20, i] = u_zamo[2:4]
+            @test abs(Fit.fluid_pattern_rate(p, i, met) - Ω) < 1e-12
+            p[21, i] = Ω
+        end
+        pr = Fit.PatternPrior(met, 0.01)
+        @test Fit.penalty(p, pr) < 1e-20
+        q = copy(p); q[21, 1] += 0.02
+        @test abs(Fit.penalty(q, pr) - 4.0) < 1e-8
+        q[1, 2] += 0.5; q[19, 2] += 0.1
+        f(x) = Fit.penalty(x, pr)
+        grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), q)[1]
+        for (i, j) in ((21, 1), (1, 2), (19, 2), (20, 2), (3, 1))
+            h = 1e-4; x = q[i, j]
+            fd = (-(w = copy(q); w[i, j] = x + 2h; f(w)) + 8(w = copy(q); w[i, j] = x + h; f(w)) - 8(w = copy(q); w[i, j] = x - h; f(w)) + (w = copy(q); w[i, j] = x - 2h; f(w))) / (12h)
+            @test abs(grad[i, j] - fd) <= 1e-6 * max(abs(fd), 1e-3)
+        end
+        @info "pattern prior: Keplerian rates recovered through the ZAMO frame; penalty gradient vs stencil to 1e-6"
     end
 end
