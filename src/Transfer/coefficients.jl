@@ -50,10 +50,23 @@ end
 "The Planck function B_ν for the dimensionless temperature Θe."
 @inline planck(ν, Θe) = planck_invariant(ν, Θe) * ν^3
 
+# K₀ and K₁ with ForwardDiff duals (Bessels.jl accepts only Float32/Float64): K₀′ = −K₁, K₁′ = −K₀ − K₁/x.
+@inline besselk0(x::Real) = Bessels.besselk0(x)
+@inline besselk1(x::Real) = Bessels.besselk1(x)
+@inline function besselk0(d::ForwardDiff.Dual{Tg}) where {Tg}
+    x = ForwardDiff.value(d)
+    return ForwardDiff.Dual{Tg}(Bessels.besselk0(x), -Bessels.besselk1(x) * ForwardDiff.partials(d))
+end
+@inline function besselk1(d::ForwardDiff.Dual{Tg}) where {Tg}
+    x = ForwardDiff.value(d)
+    k0 = Bessels.besselk0(x); k1 = Bessels.besselk1(x)
+    return ForwardDiff.Dual{Tg}(k1, (-k0 - k1 / x) * ForwardDiff.partials(d))
+end
+
 "Modified Bessel functions K₀, K₁, K₂ at x (K₂ by the recurrence K₂ = K₀ + 2K₁/x)."
 @inline function besselk012(x)
-    k0 = Bessels.besselk0(x)
-    k1 = Bessels.besselk1(x)
+    k0 = besselk0(x)
+    k1 = besselk1(x)
     return k0, k1, k0 + 2 * k1 / x
 end
 

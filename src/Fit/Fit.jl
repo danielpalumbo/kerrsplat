@@ -192,4 +192,64 @@ end
 
 export prune, densify, merge
 
+# ---- Fisher audit (addendum §5.3) ---------------------------------------------------------------
+using ForwardDiff
+using LinearAlgebra
+
+"""
+    fisher(params, movie, cache, L; free = trues(size(params)), chunk = 8) -> (F, J, idx)
+
+Fisher information matrix F = Jᵀ Σ⁻¹ J of the polarized splat model for the free parameters
+(the Jacobian J of every masked data value with respect to them by ForwardDiff duals through
+the whole pipeline), with the noise of the movie. Returns F, J and the linear indices of the
+free parameters. The eigen-decomposition of F ranks the identifiable parameter combinations:
+small eigenvalues are the degeneracies of the data set (e.g. nₑ–B–Θe at one frequency).
+"""
+function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), chunk = 8) where {T}
+    idx = findall(vec(free))
+    function model(x::AbstractVector{S}) where {S}
+        q = S.(params)
+        for (k, i) in enumerate(idx)
+            q[i] = x[k]
+        end
+        out = Vector{RadiativeState{S}}(undef, npixels(cache))
+        vals = S[]
+        for l in eachindex(movie.νs), k in eachindex(movie.times)
+            ν = movie.νs[l]
+            fill!(out, zero(RadiativeState{S}))
+            polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L))
+            img = to_screen(cache, out)
+            for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
+                c = CartesianIndex(i, j, k, l)
+                movie.mask[c] || continue
+                st = observed_stokes(img[i, j], S(ν)) ./ noise(movie.σ, c)
+                append!(vals, st)
+            end
+        end
+        return vals
+    end
+    x0 = params[idx]
+    J = ForwardDiff.jacobian(model, x0, ForwardDiff.JacobianConfig(model, x0, ForwardDiff.Chunk{min(chunk, length(x0))}()))
+    return J' * J, J, idx
+end
+
+"""
+    audit(F, names; nshow = 5) -> (values, vectors)
+
+Eigenvalues of the Fisher matrix in ascending order with the best-constrained parameter
+combinations printed as `@info`: the relative uncertainty of a combination is 1/√λ, so the
+smallest eigenvalues name the degeneracies.
+"""
+function audit(F::AbstractMatrix, names; nshow = 5)
+    e = eigen(Symmetric(Matrix(F)))
+    for k in 1:min(nshow, length(e.values))
+        v = e.vectors[:, k]
+        top = sortperm(abs.(v); rev = true)[1:min(4, length(v))]
+        @info "Fisher eigenvalue $(k): λ = $(e.values[k]) (σ of the combination $(1 / sqrt(max(e.values[k], eps()))) ) dominated by " * join(("$(names[i]) ($(round(v[i], digits = 2)))" for i in top), ", ")
+    end
+    return e.values, e.vectors
+end
+
+export fisher, audit
+
 end

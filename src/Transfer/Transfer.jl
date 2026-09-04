@@ -16,6 +16,7 @@ module Transfer
 
 using Adapt
 using Bessels
+using ForwardDiff
 using Krang
 using StaticArrays
 using ..Geodesics: GeodesicSample

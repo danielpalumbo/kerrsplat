@@ -77,3 +77,40 @@ function test_hygiene(; res = 10, N = 80)
         @info "hygiene: prune kept $kept; merge → density $(exp(pm[13, 1])); densify children at $(round.(pd[1:3, 1], digits = 2)) and $(round.(pd[1:3, 2], digits = 2)); flux ratio after the split $(round(sum(getindex.(imgd, 1)) / sum(getindex.(img1, 1)), digits = 3))"
     end
 end
+
+"""
+Fisher audit (addendum §5.3): with one frequency the density, temperature and field strength of a
+splat are degenerate along one direction (nₑ up, B down); a second frequency raises the smallest
+Fisher eigenvalue and lifts the temperature-dominated second one by an order of magnitude.
+"""
+function test_fisher(; res = 8, N = 60)
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6)
+    p = zeros(NPOLARIZEDPARAMS, 1)
+    p[:, 1] = [6.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(20.0), log(30.0), 1.0, 0.5, 0.0, 0.35, 0.0, 0.0]
+    free = freeze(p, (:logne, :logTe, :logB, :thB, :u2))
+    names = [String(POLARIZED_SPLAT_PARAMS[i]) for i in findall(vec(free))]
+    @testset "Fisher audit: plasma degeneracies at one and two frequencies" begin
+        λ1 = Float64[]; λ2 = Float64[]; weakest = Vector{Float64}[]
+        for νs in ([230e9], [230e9, 345e9])
+            clean = polarized_cube(cache, p, [0.0], νs, L)
+            σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+            movie = StokesMovie(clean, [0.0], νs, σ)
+            F, J, idx = Fit.fisher(p, movie, cache, L; free)
+            vals, vecs = Fit.audit(F, names; nshow = 2)
+            @test all(vals .>= -1e-8 * maximum(vals))          # positive semidefinite
+            push!(λ1, vals[1]); push!(λ2, vals[2]); push!(weakest, abs.(vecs[:, 1]))
+            @info "Fisher at $(length(νs)) frequenc$(length(νs) == 1 ? "y" : "ies"): σ of the weakest combination $(round(1 / sqrt(vals[1]), digits = 3)), of the second $(round(1 / sqrt(vals[2]), digits = 3)); weakest combination $(join(("$(names[i]) $(round(vecs[i, 1], digits = 2))" for i in sortperm(abs.(vecs[:, 1]); rev = true)[1:3]), ", "))"
+        end
+        # at one frequency the weakest direction is the nₑ–B–Θe degeneracy (plan §7.7): its weight lies on those rows
+        plasma = [findfirst(==(n), names) for n in ("logne", "logTe", "logB")]
+        @test sum(weakest[1][plasma] .^ 2) > 0.95
+        # a second frequency raises the smallest eigenvalue and lifts the second (temperature-dominated) one by far
+        # more than the doubling of the data alone
+        @test λ1[2] > λ1[1]
+        @test λ2[2] > 4 * λ2[1]
+    end
+end
