@@ -50,8 +50,17 @@ each PR can be validated on its own.
    the unpolarized limit, ForwardDiff, and the kernel on CPU and CUDA. The observer-first sample
    order of the fused marcher composes the step operators front to back: `RadiativeState` keeps
    P = O₁…Oᵢ₋₁ and accumulates S += P Eᵢ, the polarized form of front-to-back compositing.
-3. **Frames**: photon momentum, fluid frame from a ZAMO velocity, redshift, pitch angle, and the
-   Walker–Penrose rotation angle χ per splat; tests against Krang's `synchrotronPolarization`.
+3. **Frames** (`transfer-frames`): `local_frame(met, r, θ, η, λ, νr, νθ, α, β, θo, ũ, B)` returns
+   the redshift g = 1/(−p·u), the pitch-angle cosine and the position angle χ of the local Q axis
+   on the screen, for a fluid element of ZAMO 3-velocity ũ = γβ⃗ (Krang's ZAMO axes r̂, φ̂, −θ̂)
+   and fluid-frame field B. Local basis: ipole's plasma tetrad, e₁ = k̂ × B̂ (Q axis, ⟂ projected
+   field), e₂ = k̂ × e₁, right-handed with the propagation direction. Screen basis: north = +β,
+   east = +α with the direction toward the observer completing a right-handed triad, so
+   χ = atan(e_α, e_β); whether +α is east on Krang's screen (Krang's `evpa` uses −e_α) is a global
+   sign of U to settle against ipole images in step 5. Gate: the boost against Krang's
+   `jac_fluid_u_zamo_d`, g and χ against Krang's `synchrotronPolarization` (1e-15 on 400 random
+   rays, samples, velocities and fields), the pitch angle against an explicit construction, and
+   the kernel on CPU and CUDA.
 4. **Gold et al. (2020) suite**: unpolarized analytic models through the fused marcher with the
    unit scaling (M, D, Jy); 2% on the published fluxes.
 5. **Polarized splats and images**: one-zone splats (n_e, Θe, B, direction, ZAMO velocity),
