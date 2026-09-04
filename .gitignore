@@ -14,3 +14,4 @@ viz/output/
 *.mp4
 *.gif
 validation/symphony/symphony_table
+validation/riaf_fit/output/

@@ -20,6 +20,14 @@
   second direction 7.4× (σ 0.25 → 0.09). Multi-frequency data constrain Θe far better than the
   nₑ–B trade-off, which needs the polarized and optically thick information (or priors) to close.
 
+Later the same day (PRs #25–#28): `fit!(params, movie, cache, L, stages)` with `Stage` (rows to
+free, iterations, cosine-annealed learning rate, minibatch, frequency subset) and `Hygiene`
+(prune, merge, densify every n iterations; a one-splat start densifies into the two splats of the
+target movie); `recovery_metrics` on a voxel grid (density PSNR, weighted Θe and B errors; the
+noise-floor fit gains 3.7 dB in density and recovers B to 1.5%); FITS movies in the ehtim layout
+(`read_stokes_movie`, `write_stokes_fits`); and `fit_spacetime`, Levenberg–Marquardt for (a, θo)
+on the dual Jacobian (inclination to 0.07°, spin to 0.04 on a coarse image, χ² at the noise floor).
+
 Open: GPU-side reverse gradients (Enzyme 0.13.199 is the newest release; the device-side failure
 of docs/notes/2026-09-04_phase1_thin_splats.md stands), motion mode C, power-law rotativities,
 the visibility-domain likelihood (Comrade), fits to ipole-rendered GRMHD movies (gate 7 ii).

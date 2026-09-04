@@ -25,6 +25,10 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Spacetime derivatives of polarized images | `Transfer`/`Splats` | finite differences | 3e-6 |
 | Fisher audit | `Fit` | (finding) nₑ–B–Θe degeneracy at one frequency | σ 0.58 → 0.45 with a second frequency |
 | Power-law rotativities (Jones & O'Dell) | `Transfer` | symphony's numerical susceptibility integration | signs everywhere, ρ_V 3%, ρ_Q 30% in the validity window |
+| Fit schedules with hygiene | `Fit` | one splat densifies into two on a two-splat movie | χ² ÷ 6 in 100 iterations, centres within a pixel |
+| Field-level recovery on a voxel grid | `Splats` | truth of the noise-floor fit | density PSNR +3.7 dB, Θe error 0.22 → 0.17, B to 1.5% |
+| FITS movies (ehtim layout) | `Fit` | write/read round trip | 1e-9 |
+| Spin and inclination fit (Levenberg–Marquardt on duals) | `Fit` | noisy image of two splats | θo to 0.07°, a to 0.04 at 2.25 M pixels, χ² at the noise floor |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
@@ -45,6 +49,9 @@ per-splat cost for many splats.
 - Krang's analytic geodesics return NaN at a = 0; Schwarzschild models use a = 1e-3.
 - The full test suite prints progress to stderr and takes over two hours (several Enzyme
   compilations of seven minutes each); run it through a pipe, `julia -t 8 --project=. test/runtests.jl 2>&1 | tee log`.
+- Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
+  reach the first call together (`-t 8`); the in-kernel gradient test compiles on one work item
+  first (this is what stalled two suite runs for hours).
 
 ## Open items
 
@@ -53,7 +60,8 @@ per-splat cost for many splats.
 - κ distributions (Marszewski+ 2021 have the κ rotativity fits; symphony's κ emissivities need
   the hypergeometric function on the GPU).
 - Interval culling of splats along rays (performance; accuracy first).
-- Fits to ipole-rendered GRMHD movies (gate 7 ii) and the visibility-domain likelihood.
+- Fits to ipole-rendered GRMHD movies (gate 7 ii; a fit to ipole's RIAF image is in
+  `validation/riaf_fit/`) and the visibility-domain likelihood.
 - Upstream issues for Krang and JacobiElliptic (`docs/notes/upstream_issues.md`, eleven items,
   Daniel's call).
 
@@ -62,4 +70,6 @@ per-splat cost for many splats.
 #7 integrates the earlier stack into `main`; #8–#12 are Phase 2 (coefficients, step, frames,
 Gold fluxes, polarized transport); #13 polarized splats; #14 slow light; #15 pattern rotation
 and cubes; #16 Fit; #17 spacetime duals and Fisher; #18 advection; #19 this page; #20
-power-law rotativities. Each is stacked on the previous one.
+power-law rotativities; all merged into `main` on 2026-09-03 together with #21 (Apache 2.0),
+#24 (in-kernel gradient warm-up), #25 (fit schedules), #26 (field recovery), #27 (FITS) and
+#28 (spacetime fit).
