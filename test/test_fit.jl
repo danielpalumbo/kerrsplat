@@ -31,6 +31,7 @@ function test_fit(; res = 10, N = 80, iterations = (40, 40, 60))
     movie = StokesMovie(data, times, νs, σ)
     p = copy(p_true)
     p[1, :] .+= 0.6; p[2, :] .-= 0.4; p[13, :] .-= 0.3; p[14, :] .+= 0.2; p[16, :] .+= 0.25; p[19, :] .-= 0.15; p[21, :] .*= 1.2
+    p_start = copy(p)
     ndata = 4 * length(data)
     @testset "fit of two polarized splats to a noisy 3-frame Stokes movie ($(res)² × $N)" begin
         χ0 = chi2(p, movie, cache, L)
@@ -46,6 +47,15 @@ function test_fit(; res = 10, N = 80, iterations = (40, 40, 60))
         @test maximum(abs.(p[1:2, :] .- p_true[1:2, :])) < 0.5
         @test maximum(abs.(p[21, :] ./ p_true[21, :] .- 1)) < 0.05
         @info "fit: χ² $χ0 → $(h1[end]) (geometry) → $(h2[end]) (plasma) → $χ1 (all, minibatched) for $ndata data points; position errors $(round.(vec(maximum(abs.(p[1:3, :] .- p_true[1:3, :]), dims = 1)), digits = 3)) M, pattern-rate errors $(round.(vec(p[21, :] ./ p_true[21, :] .- 1), digits = 4)), log-density errors $(round.(vec(abs.(p[13, :] .- p_true[13, :])), digits = 3))"
+        # field-level recovery on a voxel grid (plan §7.5 item 7 i): density PSNR and the density-weighted
+        # relative errors of temperature and field strength at the first frame
+        grid = range(-9.0, 9.0, length = 25)
+        m = recovery_metrics(p, p_true, times[1], grid, grid, range(-3.0, 3.0, length = 9))
+        m0 = recovery_metrics(p_start, p_true, times[1], grid, grid, range(-3.0, 3.0, length = 9))
+        @test m.psnr_density > m0.psnr_density + 3            # RMS density error down by at least √2 (measured: +3.7 dB; the
+                                                              # single-frequency nₑ–B–Θe degeneracy of the Fisher audit limits it)
+        @test m.temperature < 0.3 && m.field < 0.5
+        @info "field recovery on the voxel grid: density PSNR $(round(m0.psnr_density, digits = 1)) → $(round(m.psnr_density, digits = 1)) dB; density-weighted relative errors of Θe $(round(m0.temperature, digits = 3)) → $(round(m.temperature, digits = 3)), of B $(round(m0.field, digits = 3)) → $(round(m.field, digits = 3))"
     end
 end
 
