@@ -343,5 +343,6 @@ export Stage, Hygiene
 
 include("fits.jl")
 include("spacetime.jl")
+include("visibilities.jl")
 
 end
