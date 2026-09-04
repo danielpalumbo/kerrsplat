@@ -63,6 +63,7 @@ gate2_refs = gate2_references()
         test_pattern_vs_fluid(; res = 8, N = 80, iterations = 120)
         test_fit(; res = 10, N = 80, iterations = (40, 40, 60))
         test_hygiene(; res = 10, N = 80)
+        test_fit_schedule(; res = 8, N = 60)
         test_spacetime_duals(; res = 8, N = 60)
         test_fisher(; res = 8, N = 60)
     end

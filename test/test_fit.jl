@@ -114,3 +114,46 @@ function test_fisher(; res = 8, N = 60)
         @test λ2[2] > 4 * λ2[1]
     end
 end
+
+"""
+Schedule with hygiene: a single splat is fitted to the movie of two well-separated splats; the
+densification pass splits it where the position gradient is large, so the fit ends with two
+splats near the true ones and a χ² several times below what one splat reaches (measured:
+40585 → 6966, centres 3.0 and 2.8 M from the truth at 2.25 M per pixel after 100 iterations).
+Also exercises the frequency curriculum (the 345 GHz channel first, then both) and the annealed
+learning rate.
+"""
+function test_fit_schedule(; res = 8, N = 60)
+    rng = Random.MersenneTwister(5)
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6)
+    times = [0.0, 25.0]; νs = [230e9, 345e9]
+    p_true = zeros(NPOLARIZEDPARAMS, 2)
+    p_true[:, 1] = [5.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(20.0), log(30.0), 1.0, 0.5, 0.0, 0.35, 0.0, 5.0^(-1.5)]
+    p_true[:, 2] = [-3.5, 2.5, 0.2, log(1.0), log(1.0), log(1.0), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(25.0), log(20.0), 0.7, -0.3, 0.1, -0.3, 0.0, -0.05]
+    clean = polarized_cube(cache, p_true, times, νs, L)
+    σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+    data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
+    movie = StokesMovie(data, times, νs, σ)
+    # one splat between the two, elongated toward both
+    p = zeros(NPOLARIZEDPARAMS, 1)
+    p[:, 1] = [0.75, 1.25, 0.1, log(3.5), log(1.5), log(1.0), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(22.0), log(25.0), 0.9, 0.0, 0.0, 0.0, 0.0, 0.0]
+    stages = [Fit.Stage(free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations = 40, η = 0.08, η_end = 0.03, freqs = [2], label = "geometry, 345 GHz"),
+              Fit.Stage(iterations = 60, η = 0.03, η_end = 0.005, label = "everything, both frequencies")]
+    @testset "schedule with hygiene: one splat densifies into two" begin
+        χ0 = chi2(p, movie, cache, L)
+        q, history, events = Fit.fit!(copy(p), movie, cache, L, stages; hygiene = Fit.Hygiene(every = 20, densify_threshold = 0.0, max_splats = 2), rng = rng)
+        χ1 = chi2(q, movie, cache, L)
+        @test size(q, 2) == 2
+        @test !isempty(events)
+        @test χ1 < 0.3 * χ0
+        # each recovered splat sits within about a pixel (2.25 M here) of one of the true ones after this
+        # short schedule (100 iterations); the noise-floor fit of test_fit covers convergence itself
+        d = [minimum(norm(q[1:3, k] .- p_true[1:3, j]) for j in 1:2) for k in 1:size(q, 2)]
+        @test all(d .< 3.5)
+        @info "schedule: χ² $χ0 → $χ1 with $(size(q, 2)) splats after hygiene events $events; distances of the recovered centres to the nearest true ones $(round.(d, digits = 2)) M"
+    end
+end
