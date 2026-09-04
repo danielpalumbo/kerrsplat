@@ -84,7 +84,32 @@ both far above what the EHT's polarimetric papers report for M87, which says the
 Faraday structure of this six-splat model are not those of M87; a run that fits Q, U (and V)
 is the natural next step.
 
-What this run does not do yet: fit visibility amplitudes with station gains (the flux is set by
-the prior), use the coherently averaged (scan) data rather than the ten-second points (the
-closure quantities of adjacent points are strongly correlated, so χ²/N overstates the
-constraint), or vary the spin and inclination (both are available through `fit_spacetime`).
+What this run does not do yet: vary the spin and inclination (both are available through
+`fit_spacetime`), or model the extended emission.
+
+## Self-calibrated polarimetric fits (`--mode selfcal`, PR #50)
+
+The full-polarization file of the same night (`hops_3601_M87+netcal.uvfits`, all four
+correlation products, 216 scan-averaged rows over 22 scans, 170 with Q, U, V) fitted on the
+complex visibilities of all four Stokes parameters with one complex gain per station and scan
+(the same gain for every Stokes parameter; no R/L gain ratio, no leakage), Gaussian priors on
+the log-amplitudes, free phases, Adam on the splat parameters and the gains together:
+
+| run | start | data | iterations | χ²/N (visibilities) | closure χ²/N | flux (Jy) | gain log-amplitude rms |
+|---|---|---|---|---|---|---|---|
+| 1 | toroidal ring, σ_gain 0.1 | all baselines | 400 | 330 | 82 | 2.97 | 0.72 |
+| 2 | run 2 of the closure fit, σ_gain 0.05 | all baselines | 600 | 95 | 29 | 0.94 | 0.32 |
+| 3 | run 2 of the closure fit, σ_gain 0.05 | \|uv\| ≥ 0.1 Gλ | 600 | 15 | 38 | 0.34 | 0.11 |
+
+Two lessons. The intra-site baselines (JC–SM at 0.1 Mλ, AA–AP at 1.6 Mλ) measure 1.2 Jy while
+the baselines at 0.5–2 Gλ see 0.33 Jy: the jet contributes 0.6 Jy that a compact ring cannot
+produce, and with those points in the fit the gains absorb a factor 1.4 per station (run 2).
+Dropping them (run 3, the EHT practice of excluding intra-site data or adding a large-scale
+component) brings the gains to an 11% spread but the fit is far from converged after 600
+iterations (18 minutes): the visibility χ²/N is 15 and the closure χ²/N 38, worse than the
+closure-only fit, because the amplitudes and the polarized visibilities with their small
+errors now dominate and six thermal parcels with one field direction each cannot follow the
+data's polarization structure. The run continues (2000 more iterations from run 3's state);
+the structural next steps are a larger parcel set with densification, R/L gains and leakage
+terms, a smooth background component for the extended flux, and a noise model with a
+systematic floor, i.e. the ingredients of the EHT polarimetric analyses.
