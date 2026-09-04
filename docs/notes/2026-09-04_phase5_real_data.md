@@ -100,6 +100,9 @@ the log-amplitudes, free phases, Adam on the splat parameters and the gains toge
 | 1 | toroidal ring, σ_gain 0.1 | all baselines | 400 | 330 | 82 | 2.97 | 0.72 |
 | 2 | run 2 of the closure fit, σ_gain 0.05 | all baselines | 600 | 95 | 29 | 0.94 | 0.32 |
 | 3 | run 2 of the closure fit, σ_gain 0.05 | \|uv\| ≥ 0.1 Gλ | 600 | 15 | 38 | 0.34 | 0.11 |
+| 4 | run 3 continued (gains restarted), η_gain 0.03 | \|uv\| ≥ 0.1 Gλ | 2000 | 7.8 | 6.0 | 0.38 | 0.094 |
+| 5 | run 3 continued, `--densify 16` (alternating epochs, gains restarted) | \|uv\| ≥ 0.1 Gλ | 600 | 30 | 66 | 0.14 | 0.33 |
+| 6 | run 4 continued with its gains (`--init-gains`), η 0.01, η_gain 0.005 | \|uv\| ≥ 0.1 Gλ | 1000 | 7.0 | 4.6 | 0.38 | 0.096 |
 
 Two lessons. The intra-site baselines (JC–SM at 0.1 Mλ, AA–AP at 1.6 Mλ) measure 1.2 Jy while
 the baselines at 0.5–2 Gλ see 0.33 Jy: the jet contributes 0.6 Jy that a compact ring cannot
@@ -109,7 +112,20 @@ component) brings the gains to an 11% spread but the fit is far from converged a
 iterations (18 minutes): the visibility χ²/N is 15 and the closure χ²/N 38, worse than the
 closure-only fit, because the amplitudes and the polarized visibilities with their small
 errors now dominate and six thermal parcels with one field direction each cannot follow the
-data's polarization structure. The run continues (2000 more iterations from run 3's state);
-the structural next steps are a larger parcel set with densification, R/L gains and leakage
-terms, a smooth background component for the extended flux, and a noise model with a
-systematic floor, i.e. the ingredients of the EHT polarimetric analyses.
+data's polarization structure. Run 4 (2000 more iterations from run 3's parcels, 33 minutes)
+halves the visibility χ²/N to 7.8 and brings the closure χ²/N to 6.0 with the gains at a 9%
+spread; the loss still oscillates by ±10% between iterations at that gain step, and the image
+is a thin 40 μas ring with a few bright pixels, the sharpest structure six parcels can make.
+Run 5 tried densification
+through the generic `fit!` (#53) in alternating epochs of twenty splat iterations and twenty gain
+steps, with the gains restarted from zero: the model flux collapsed to 0.14 Jy with the gains
+compensating (a factor 1.4 per station) while the parcels split to 21, and the χ² stayed near 30,
+a failure of the alternating scheme rather than of the densification (the gains must be carried
+along, `--init-gains`, and stepped together with the parcels). Run 6 continues run 4 with its gains
+carried along and smaller steps: χ²/N 7.0, closure χ²/N 4.6, the gains at a 10% spread, the
+image (`figures/m87_2017_selfcal_run6.png`) a thin ring of 40 μas brightest in the south-east
+with a net linear polarization of 4% and −1.6% circular; the descent is slow (0.8 in χ²/N per
+thousand iterations), so six parcels are the limit of this run rather than the optimizer. The
+structural next steps are a larger parcel set with densification in the joint update, R/L gains
+and leakage terms, a smooth background component for the extended flux, and a noise model with
+a systematic floor, i.e. the ingredients of the EHT polarimetric analyses.
