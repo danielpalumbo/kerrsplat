@@ -25,9 +25,11 @@ before any performance work.
   `const` or pass them as arguments.
 
 ## Git workflow
-- `main` is merged only through pull requests. Work on a branch named `<topic>` (e.g.
+- `main` is changed through pull requests. Work on a branch named `<topic>` (e.g.
   `geodesics-skeleton`), commit in small steps with descriptive messages, push the branch and
-  open a PR with `gh pr create`; Daniel reviews and merges on GitHub.
+  open a PR with `gh pr create`. Claude may merge pull requests into `main` itself (Daniel,
+  2026-09-03); when merging a stacked PR, retarget the next PR to `main`
+  (`gh pr edit N --base main`) before deleting the merged branch, otherwise GitHub closes it.
 - Never force-push `main`. Never commit papers (`*.pdf`), logs, or credentials.
 - Run the relevant tests/smoke tests before opening a PR and state in the PR what was run.
 
