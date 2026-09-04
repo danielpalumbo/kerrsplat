@@ -150,3 +150,45 @@ function test_polarized_splat_fit(; res = 10, N = 100, iterations = 150)
         @info "polarized splat fit: loss $L0 → $Lmin; position error $(norm(p[1:3] - p_true[1:3])) M, log density error $(abs(p[13] - p_true[13])), field angle error $(abs(p[16] - p_true[16]))"
     end
 end
+
+"""
+Non-thermal splat sets: power-law and κ splats render finite, partially polarized images with the
+same geometry rows as the thermal set; in the optically thin limit the composite of the three
+populations equals the sum of their images (coefficients add) to 1e-6; CUDA matches the CPU
+backend.
+"""
+function test_populations(backend; res = 16, N = 200, label = "")
+    Geodesics.prepare_backend!(backend)
+    @testset "power-law and κ splats ($label)" begin
+        a = 0.9; θo = deg2rad(60.0); t_obs = 0.0
+        camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = false)
+        regenerate!(cache, a, θo; marcher = Fused(64))
+        geo = [4.0, 1.0, 0.0, 0.2, -0.1, -0.3, 1.0, 0.1, 0.0, 0.0, 0.0, log(1e6)]
+        tail = [log(30.0), 1.2, 0.7, 0.1, 0.45, 0.0, 0.03]                 # logB, thB, phB, u1, u2, u3, omega
+        pth = reshape(vcat(geo, [log(10.0), log(20.0)], tail), :, 1)     # thermal: logne, logTe (thin: τ ~ 1e-5)
+        ppl = reshape(vcat(geo, [log(10.0), 3.0, log(10.0)], tail), :, 1) # power law: logne, p, ln γmin
+        pκ = reshape(vcat(geo, [log(10.0), 4.0, log(10.0)], tail), :, 1)  # κ: logne, κ, ln w
+        @test size(pth, 1) == NPOLARIZEDPARAMS && size(ppl, 1) == NPOWERLAWPARAMS && size(pκ, 1) == NKAPPAPARAMS
+        mth = PolarizedSplats(adapt_to(backend, pth), t_obs)
+        mpl = PowerLawSplats(adapt_to(backend, ppl), t_obs)
+        mκ = KappaSplats(adapt_to(backend, pκ), t_obs)
+        L = gravitational_radius(4e6)
+        img(m) = Array(stokes_image(backend, m, camera, a, θo, POL_ν, L; N))
+        Ith, Ipl, Iκ = img(mth), img(mpl), img(mκ)
+        for I in (Ith, Ipl, Iκ)
+            @test all(x -> all(isfinite, x), I) && maximum(getindex.(I, 1)) > 0
+            @test 0 < maximum(hypot.(getindex.(I, 2), getindex.(I, 3)) ./ max.(getindex.(I, 1), 1e-300)) < 1
+        end
+        Iall = img(CompositeModel(CompositeModel(mth, mpl), mκ))
+        err = maximum(norm.(Iall .- (Ith .+ Ipl .+ Iκ))) / maximum(norm.(Iall))
+        @test err < 1e-4                                                 # thin: coefficients add, images add up to the optical depth
+        @info "populations ($label): peak I thermal $(maximum(getindex.(Ith, 1))), power law $(maximum(getindex.(Ipl, 1))), κ $(maximum(getindex.(Iκ, 1))); composite vs sum $err"
+        if !(backend isa CPU)
+            cc = GeodesicCache(CPU(), camera, Val(N); store_samples = false); regenerate!(cc, a, θo; marcher = Fused(64))
+            ref = Array(stokes_image(CPU(), CompositeModel(PowerLawSplats(ppl, t_obs), KappaSplats(pκ, t_obs)), camera, a, θo, POL_ν, L; N))
+            gpu = img(CompositeModel(mpl, mκ))
+            @test maximum(norm.(gpu .- ref)) < 1e-11 * maximum(norm.(ref))
+        end
+    end
+end

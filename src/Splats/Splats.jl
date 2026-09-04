@@ -36,6 +36,7 @@ export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRendere
 export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image, polarized_cube, flux_density
 export trajectory_knots, KnotSplats, boyer_lindquist, coordinate_velocity
 export fields, field_grid, recovery_metrics
+export POWERLAW_SPLAT_PARAMS, NPOWERLAWPARAMS, KAPPA_SPLAT_PARAMS, NKAPPAPARAMS, PowerLawSplats, KappaSplats
 
 """
     SPLAT_PARAMS
@@ -80,7 +81,7 @@ quasi-Cartesian position `(x, y, z)`.
 """
 @inline function splat_emissivity(p, i, t, x, y, z)
     @inbounds begin
-        u = pattern_offset(p, i, t, x, y, z, 14)
+        u = pattern_offset(p, i, t, x, y, z, size(p, 1))
         q2 = (u[1] * exp(-p[4, i]))^2 + (u[2] * exp(-p[5, i]))^2 + (u[3] * exp(-p[6, i]))^2
         τ2 = ((t - p[11, i]) * exp(-p[12, i]))^2
         return exp(p[13, i] - (q2 + τ2) / 2)
@@ -143,5 +144,6 @@ end
 
 include("polarized.jl")
 include("trajectories.jl")
+include("populations.jl")
 
 end
