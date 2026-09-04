@@ -2,7 +2,7 @@
 
 julia_version = "1.10.11"
 manifest_format = "2.0"
-project_hash = "05157be3bc02744107e0d56f94bd59e04b0cd46f"
+project_hash = "a8fc850f3af28ab8f27e8a24610ae90afa520a5c"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -131,6 +131,11 @@ uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 git-tree-sha1 = "8c290a1b223deaeea9aea44b235d24546da8eb98"
 uuid = "18cc8868-cbac-4acf-b575-c8ff214dc66f"
 version = "1.4.0"
+
+[[deps.Bessels]]
+git-tree-sha1 = "4435559dc39793d53a9e3d278e185e920b4619ef"
+uuid = "0e736298-9ec6-45e8-9647-e4fc86a2fe38"
+version = "0.2.8"
 
 [[deps.Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]

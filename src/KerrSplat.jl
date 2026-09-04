@@ -8,6 +8,8 @@ movies. The design lives in `docs/plans/`. Submodules:
   data (Krang's analytic geodesics evaluated inside KernelAbstractions kernels).
 - [`Splats`](@ref KerrSplat.Splats): Gaussian plasma splats and their optically-thin rendering
   through the fused marcher (Phase 1 of the roadmap).
+- [`Transfer`](@ref KerrSplat.Transfer): synchrotron transfer coefficients and (Phase 2)
+  polarized radiative transfer along the cached rays.
 """
 module KerrSplat
 
@@ -15,7 +17,9 @@ include("Geodesics/Geodesics.jl")
 using .Geodesics
 include("Splats/Splats.jl")
 using .Splats
+include("Transfer/Transfer.jl")
+using .Transfer
 
-export Geodesics, Splats
+export Geodesics, Splats, Transfer
 
 end
