@@ -123,3 +123,39 @@ function chi2_closures(image, Δα, L, D, data::ClosureData)
 end
 
 export closure_phases, log_closure_amplitudes, ClosureData, chi2_closures
+
+# ---- station gains ----------------------------------------------------------------------------------
+"""
+    apply_gains(vis, gains, s1, s2) -> Vector
+
+Visibilities corrupted by complex station gains: V′ₖ = g_{s1[k]} conj(g_{s2[k]}) Vₖ, with `gains`
+given as a matrix of size 2 × nstations holding log-amplitude and phase per station (a
+parameter block that a fit can carry as nuisance parameters), and `s1`, `s2` the station indices
+of baseline k.
+"""
+function apply_gains(vis::AbstractVector, gains::AbstractMatrix, s1::AbstractVector{<:Integer}, s2::AbstractVector{<:Integer})
+    return [vis[k] .* (exp(gains[1, s1[k]] + gains[1, s2[k]]) * cis(gains[2, s1[k]] - gains[2, s2[k]])) for k in eachindex(vis)]
+end
+
+"""
+    chi2_visibilities(image, Δα, L, D, data::VisibilityData, gains, s1, s2; σ_logamp = 0.1, σ_phase = Inf)
+
+χ² of a gained model against visibility data plus Gaussian priors on the gain log-amplitudes
+(spread `σ_logamp`, centred on zero) and phases (spread `σ_phase`; `Inf` leaves them free), the
+usual self-calibration likelihood; closure quantities need no gains.
+"""
+function chi2_visibilities(image, Δα, L, D, data::VisibilityData, gains::AbstractMatrix, s1, s2; σ_logamp = 0.1, σ_phase = Inf)
+    model = apply_gains(visibilities(image, Δα, L, D, data.u, data.v), gains, s1, s2)
+    total = zero(real(eltype(first(model))))
+    for k in eachindex(model)
+        r = (model[k] .- data.vis[k]) ./ noise(data.σ, k)
+        total += sum(abs2, r)
+    end
+    for j in 1:size(gains, 2)
+        total += (gains[1, j] / σ_logamp)^2
+        isfinite(σ_phase) && (total += (gains[2, j] / σ_phase)^2)
+    end
+    return total
+end
+
+export apply_gains

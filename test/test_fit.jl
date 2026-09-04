@@ -317,3 +317,51 @@ function test_priors(; res = 8, N = 60)
         @info "priors: fixed penalty $pen, shrinkage penalty $(Fit.penalty(p, sh)); gradient matches the analytic one"
     end
 end
+
+"""
+Station gains: gained model visibilities against data corrupted with the same gains give zero
+χ² (up to the gain priors), the gain priors act, and the Enzyme gradient of the self-calibration
+χ² with respect to a gain and to a splat parameter matches finite differences.
+"""
+function test_gains(; res = 8, N = 60)
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D_pc = 16.8e6; D = D_pc * Transfer.PC
+    L = gravitational_radius(M_solar); ν = 230e9
+    p = zeros(NPOLARIZEDPARAMS, 1)
+    p[:, 1] = [6.0, 0.0, 0.0, log(1.2), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(20.0), log(10.0), 1.0, 0.5, 0.0, 0.35, 0.0, 0.0]
+    img = polarized_image(cache, p, 0.0, ν, L)
+    rng = Random.MersenneTwister(4)
+    u = 4e9 .* randn(rng, 12); v = 4e9 .* randn(rng, 12)
+    s1 = [1, 1, 1, 2, 2, 3, 1, 2, 3, 4, 4, 2]; s2 = [2, 3, 4, 3, 4, 4, 2, 3, 4, 1, 3, 1]
+    gtrue = [0.05 -0.1 0.0 0.08; 0.3 -0.2 0.0 0.5]
+    V = visibilities(img, Δα, L, D, u, v)
+    data = VisibilityData(u, v, apply_gains(V, gtrue, s1, s2), SVector(0.01, 0.005, 0.005, 0.002) * abs(V[1][1]))
+    @testset "station gains" begin
+        g0 = zeros(2, 4)
+        χtrue = chi2_visibilities(img, Δα, L, D, data, gtrue, s1, s2; σ_logamp = 0.1)
+        @test χtrue ≈ sum((gtrue[1, :] ./ 0.1) .^ 2)           # data term zero, only the amplitude prior
+        @test chi2_visibilities(img, Δα, L, D, data, g0, s1, s2) > 10 * χtrue
+        # gradients through Enzyme: with respect to the gains at a fixed image, and with respect to the splat
+        # parameters at fixed gains (a fresh parameter matrix is the active argument in both, as in the fits)
+        lossg(g) = chi2_visibilities(img, Δα, L, D, data, g, s1, s2)
+        g1 = gtrue .+ [0.02 -0.03 0.01 0.04; 0.05 -0.02 0.03 -0.04]      # a uniform phase offset would be invisible
+        gg = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(lossg), g1)[1]
+        for i in (1, 2, 5)
+            h = 1e-4; f(y) = (g = copy(g1); g[i] = y; lossg(g)); y = g1[i]
+            fd = (-f(y + 2h) + 8f(y + h) - 8f(y - h) + f(y - 2h)) / (12h)
+            @test abs(gg[i] - fd) / abs(fd) < 1e-6
+        end
+        lossp(q) = (out = Vector{RadiativeState{Float64}}(undef, npixels(cache)); fill!(out, zero(RadiativeState{Float64}));
+                    polarized_image!(out, cache, q, 0.0, ν, L); chi2_visibilities(map(st -> observed_stokes(st, ν), to_screen(cache, out)), Δα, L, D, data, g1, s1, s2))
+        q0 = copy(p); q0[1] += 0.3
+        gp = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(lossp), q0)[1]
+        h = 1e-4; fp(y) = (q = copy(q0); q[1] = y; lossp(q)); y = q0[1]
+        fd = (-fp(y + 2h) + 8fp(y + h) - 8fp(y - h) + fp(y - 2h)) / (12h)
+        @test abs(gp[1] - fd) / abs(fd) < 1e-5
+        @info "gains: χ² at the true gains $χtrue (amplitude prior only), without gains $(chi2_visibilities(img, Δα, L, D, data, g0, s1, s2))"
+    end
+end
