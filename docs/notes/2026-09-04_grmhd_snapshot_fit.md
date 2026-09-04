@@ -32,5 +32,27 @@ single snapshot, static and at one frequency; the movie version needs dumps (or 
 and remains open, as does the comparison of the fitted fields with the simulation's, which the
 image files do not carry.
 
-The same script takes the time-averaged M87 library images in `~/Dropbox/aditya_projects`
-(ehtim-style FITS, 480² pixels of 0.33 μas) with `--spin`, `--inc`, `--msolar`, `--dpc`.
+## A time-averaged M87 library image
+
+The same script on `ma+0.94_r40_nall_tavg.fits` from the M87 GRMHD library in
+`~/Dropbox/aditya_projects` (MAD, a = +0.94, R_high = 40, time-averaged; ehtim-style FITS,
+480² pixels of 0.33 μas, 0.41 Jy), with the observer at 163° and the library's scaling assumed
+to be M = 6.2e9 M⊙ at 16.9 Mpc (`--res 40 --samples 200 --iterations 300`, 27 minutes):
+χ²/N = 1.3 at the same 2/1/1/0.5% noise, but the image is reproduced much less well than the
+Sgr A* snapshot (`figures/m87_library_tavg_fit.png`):
+
+| Stokes | relative L2 error (of the I norm) | data total (Jy) | model total (Jy) |
+|---|---|---|---|
+| I | 18% | 0.408 | 0.333 |
+| Q | 14% | −0.0001 | 0.0043 |
+| U | 13% | 0.0038 | −0.0004 |
+| V | 2.6% | 0.0007 | −0.0062 |
+
+The time average of a turbulent MAD flow has a thin, nearly uniform ring with a broad faint
+halo and a polarization pattern with almost no net Q, U (the average of a rotating EVPA
+pattern); 24 parcels starting from a 4 M ring capture the ring's shape and brightness
+asymmetry but not the halo (18% of the flux missing) nor the fine Q, U structure at 4 μas
+blocks, and the run started very far from the data (a 17 Jy ring against 0.41 Jy). This is the
+harder of the two targets and the one closer to the real M87; the remedies are the same as
+above (a smooth background component, a noise model with a floor, more iterations from a
+scaled start), plus the correct library scaling, which the FITS header does not carry.
