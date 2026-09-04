@@ -12,7 +12,7 @@ cache = GeodesicCache(backend, camera, Val(N); store_samples = false)
 regenerate!(cache, 0.94, deg2rad(60.0); marcher = Fused(64))
 L = gravitational_radius(4e6); ν = 230e9
 tosec(f) = (f(); KernelAbstractions.synchronize(backend); t = @elapsed (f(); KernelAbstractions.synchronize(backend)); t)
-for nsplat in (1, 4, 16)
+for nsplat in (1, 4, 16, 64)
     p = zeros(NPOLARIZEDPARAMS, nsplat)
     for i in 1:nsplat
         p[:, i] = [6.0 + 0.5i, 0.5i, 0.1i, log(1.5), log(1.5), log(1.0), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e6), log(20.0), log(30.0), 1.0, 0.5, 0.0, 0.3, 0.0, 0.0]

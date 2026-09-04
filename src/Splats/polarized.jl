@@ -46,14 +46,35 @@ PolarizedSplats(params::AbstractMatrix{T}, t_obs::Real) where {T} =
     PolarizedSplats(params, fill!(similar(params, 1), T(t_obs)))
 
 const WEIGHT_CUTOFF = 1e-12
+const SUPPORT_RADIUS2 = -2 * log(WEIGHT_CUTOFF)    # (7.43 σ)²: beyond it the weight is below the cutoff for any orientation
 
 Transfer.nelements(m::PolarizedSplats) = size(m.params, 2)
 
+"""
+    outside_support(p, i, t, x, y, z) -> Bool
+
+Cheap culling test: whether the point lies beyond the bounding sphere of splat `i` at time `t`
+(radius √(2 ln(1/WEIGHT_CUTOFF)) times the largest scale about the rotated centre), where the
+Gaussian weight is below `WEIGHT_CUTOFF` for every orientation. Costs one `sincos` and a few
+multiplications instead of the quaternion rotation and the exponential of `splat_weight`.
+"""
+@inline function outside_support(p, i, t, x, y, z)
+    @inbounds begin
+        φ = p[end, i] * (t - p[11, i])
+        sφ, cφ = sincos(φ)
+        cx = p[1, i] * cφ - p[2, i] * sφ
+        cy = p[1, i] * sφ + p[2, i] * cφ
+        d2 = (x - cx)^2 + (y - cy)^2 + (z - p[3, i])^2
+        smax = max(p[4, i], p[5, i], p[6, i])
+        return d2 > SUPPORT_RADIUS2 * exp(2 * smax)
+    end
+end
 @inline function Transfer.element(m::PolarizedSplats, i, pix, s::GeodesicSample{T}, ν_obs) where {T}
     p = m.params
     met = Krang.metric(pix)
     x, y, z = quasi_cartesian_kerr_schild(met, s.r, s.θ, s.ϕ)
     t = @inbounds(m.t_obs[1]) - s.t
+    outside_support(p, i, t, x, y, z) && return zero(StokesCoefficients{T}), LocalFrame(one(T), zero(T), zero(T))
     G = splat_weight(p, i, t, x, y, z)
     G > T(WEIGHT_CUTOFF) || return zero(StokesCoefficients{T}), LocalFrame(one(T), zero(T), zero(T))
     @inbounds begin
