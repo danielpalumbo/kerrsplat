@@ -287,3 +287,33 @@ function test_visibilities(; res = 8, N = 60)
         @info "closures: χ² of the perturbed model $χc over 3 closure phases and 2 log closure amplitudes"
     end
 end
+
+"""
+Priors: the penalty of a fixed prior and of hierarchical shrinkage, its Enzyme gradient against
+the analytic one, and χ² with priors equal to χ² plus the penalty.
+"""
+function test_priors(; res = 8, N = 60)
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6)
+    p = polarized_test_params()
+    clean = polarized_cube(cache, p, [0.0], [230e9], L)
+    movie = StokesMovie(clean, [0.0], [230e9], SVector(1.0, 1.0, 1.0, 1.0) * 1e-3 * maximum(norm.(clean)))
+    @testset "priors and shrinkage" begin
+        pr = Fit.Prior(rows = (:logTe, :logB), μ = (log(25.0), log(20.0)), σ = 0.5)
+        sh = Fit.Prior(rows = (:logne,), σ = 0.2, shrink = true)
+        pen = Fit.penalty(p, pr)
+        @test pen ≈ sum(((p[14, :] .- log(25.0)) ./ 0.5) .^ 2) + sum(((p[15, :] .- log(20.0)) ./ 0.5) .^ 2)
+        m = sum(p[13, :]) / 2
+        @test Fit.penalty(p, sh) ≈ sum(((p[13, :] .- m) ./ 0.2) .^ 2)
+        @test chi2(p, movie, cache, L; priors = [pr, sh]) ≈ chi2(p, movie, cache, L) + pen + Fit.penalty(p, sh)
+        g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(q -> Fit.penalty(q, [pr, sh])), p)[1]
+        ga = zeros(size(p))
+        ga[14, :] = 2 .* (p[14, :] .- log(25.0)) ./ 0.5^2; ga[15, :] = 2 .* (p[15, :] .- log(20.0)) ./ 0.5^2
+        ga[13, :] = 2 .* (p[13, :] .- m) ./ 0.2^2                  # the mean's own dependence cancels: Σ (p − m) = 0
+        @test g ≈ ga atol = 1e-10
+        @info "priors: fixed penalty $pen, shrinkage penalty $(Fit.penalty(p, sh)); gradient matches the analytic one"
+    end
+end

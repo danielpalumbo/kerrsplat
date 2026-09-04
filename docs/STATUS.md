@@ -32,6 +32,8 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Visibility-domain χ² (direct transform) | `Fit` | explicit transform from sky coordinates; Enzyme vs stencil | 1e-10; 1e-5 |
 | Closure phases and log closure amplitudes | `Fit` | invariance under station gains; Enzyme vs stencil | 1e-12; 1e-5 |
 | κ-distribution coefficients | `Transfer` | upstream symphony's fits (2160 rows); symphony numerics for j_V | 1e-15 (ρ_Q 2e-13); j_V fit 29% |
+| Composite models (background + splats) | `Transfer` | empty model, element order, RIAF + splat | rounding |
+| Cross-model fit to ipole's RIAF (1 and 2 frequencies) | `validation/riaf_fit` | ipole images; analytic RIAF fields | images to 0.6–3.6%; fields only up to the parcel degeneracy |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
