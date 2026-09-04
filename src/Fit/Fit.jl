@@ -299,19 +299,38 @@ Run the stages in order on a parameter matrix (returned, since hygiene can chang
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
               hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing) where {T}
+    function make_loss(st, it)
+        freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
+        frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
+        freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
+        return q -> chi2(q, movie, cache, L; frames, freqs, priors)
+    end
+    return _fit_loop!(params, make_loss, stages; hygiene, callback)
+end
+
+"""
+    fit!(params, loss, stages; hygiene = Hygiene(), callback = nothing)
+
+The same staged schedule, annealing and partition hygiene for an arbitrary differentiable loss
+`loss(params)` (a visibility or closure χ² with gains, a composite of several data sets, …):
+`Stage.batch` and `Stage.freqs` are ignored (the loss decides what it evaluates). Returns
+`(params, history, events)` like the movie form.
+"""
+function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hygiene::Hygiene = Hygiene(), callback = nothing) where {T}
+    return _fit_loop!(params, (st, it) -> loss, stages; hygiene, callback)
+end
+
+function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector{Stage}; hygiene::Hygiene, callback) where {T}
     history = T[]
     events = Tuple{Int,Int,Int,Int}[]
     for (si, st) in enumerate(stages)
         free = st.free === nothing ? trues(size(params)) : freeze(params, st.free)
         mask = T.(free)
         opt = Optimisers.setup(Optimisers.Adam(st.η), params)
-        freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
         for it in 1:st.iterations
             η = st.η_end + (st.η - st.η_end) * (1 + cos(π * (it - 1) / max(st.iterations - 1, 1))) / 2
             Optimisers.adjust!(opt, η)
-            frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
-            freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
-            f(q) = chi2(q, movie, cache, L; frames, freqs, priors)
+            f = make_loss(st, it)
             g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1]
             if hygiene.every > 0 && it % hygiene.every == 0
                 before = size(params, 2)

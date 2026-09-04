@@ -167,6 +167,14 @@ function test_fit_schedule(; res = 8, N = 60)
         @test all(d .< 3.5)
         @info "schedule: χ² $χ0 → $χ1 with $(size(q, 2)) splats after hygiene events $events; distances of the recovered centres to the nearest true ones $(round.(d, digits = 2)) M"
     end
+    @testset "generic loss form matches the movie form" begin
+        one = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 8, η = 0.05, η_end = 0.02)]
+        q1, h1, e1 = Fit.fit!(copy(p), movie, cache, L, one; hygiene = Fit.Hygiene(every = 0))
+        q2, h2, e2 = Fit.fit!(copy(p), q -> chi2(q, movie, cache, L), one; hygiene = Fit.Hygiene(every = 0))
+        @test length(h1) == length(h2) == 8 && isempty(e1) && isempty(e2)
+        @test maximum(abs.(h1 .- h2) ./ abs.(h1)) < 1e-12
+        @test maximum(abs.(q1 .- q2)) < 1e-12
+    end
 end
 
 """

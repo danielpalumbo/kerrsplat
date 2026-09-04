@@ -4,7 +4,7 @@
 #   julia -t 8 --project=../.. m87_fit.jl --data <file.uvfits> [--res 32] [--samples 60] [--iterations 300]
 #                                          [--nsplat 6] [--spin 0.94] [--inc 163] [--flux 0.6] [--sigma-flux 0.01] [--seed 1]
 #                                          [--mode closures|selfcal] [--scan-average] [--sigma-gain 0.1] [--eta-gain 0.01]
-#                                          [--init params.csv] [--uvmin 0.1] [--tag name]
+#                                          [--init params.csv] [--uvmin 0.1] [--densify 16] [--tag name]
 #
 # Mode `closures` (default) fits the Stokes I closure phases and log closure amplitudes with a
 # flux prior. Mode `selfcal` fits the complex visibilities of all four Stokes parameters with one
@@ -32,6 +32,7 @@ nsplat = getopt("--nsplat", 6); a = getopt("--spin", 0.94); inc = getopt("--inc"
 flux = getopt("--flux", 0.6); σflux = getopt("--sigma-flux", 0.01); seed = getopt("--seed", 1); η = getopt("--eta", 0.02)
 mode = getstr("--mode", "closures"); σgain = getopt("--sigma-gain", 0.1); tag = getstr("--tag", mode)
 init = getstr("--init", ""); ηgain = getopt("--eta-gain", 0.01); uvmin = getopt("--uvmin", 0.0)   # Gλ; drops shorter baselines
+maxsplats = getopt("--densify", 0)                    # > 0: selfcal runs through Fit.fit! with hygiene (densification up to this many splats)
 path = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_2017_101_lo_hops_netcal_StokesI.uvfits")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
@@ -107,7 +108,7 @@ end
 opt = Optimisers.setup(Optimisers.Adam(η), p)
 optg = Optimisers.setup(Optimisers.Adam(ηgain), gains)
 t0 = time()
-for it in 1:iterations
+for it in 1:(mode == "selfcal" && maxsplats > 0 ? 0 : iterations)
     if mode == "closures"
         g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p)[1]
     else
@@ -120,6 +121,22 @@ for it in 1:iterations
         χ = mode == "closures" ? loss(p) : selfcal_loss(p, gains)
         @info "iteration $it" loss = χ reduced = χ / (mode == "closures" ? nclosure : ndata_vis) flux_Jy = total_flux(p) elapsed_min = (time() - t0) / 60
     end
+end
+if mode == "selfcal" && maxsplats > 0
+    # alternating epochs: the splats through the staged fit with hygiene (densification), then the gains by Adam
+    epoch = 20
+    for ep in 1:(iterations ÷ epoch)
+        gfix = copy(gains)
+        global p, _, events = Fit.fit!(p, q -> selfcal_loss(q, gfix), [Fit.Stage(free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3), iterations = epoch, η = η, η_end = η)];
+                                        hygiene = Fit.Hygiene(every = epoch, densify_threshold = 0.0, max_splats = maxsplats, prune_fraction = 1e-3))
+        for _ in 1:epoch
+            gg = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g -> selfcal_loss(p, g)), gains)[1]
+            global optg, gains = Optimisers.update!(optg, gains, gg)
+        end
+        χ = selfcal_loss(p, gains)
+        @info "epoch $ep" loss = χ reduced = χ / ndata_vis nsplat = size(p, 2) events = events flux_Jy = total_flux(p) elapsed_min = (time() - t0) / 60
+    end
+    nsplat = size(p, 2)
 end
 img = image_of(p)
 χ = chi2_closures(img, Δα, L, D, data)
