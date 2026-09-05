@@ -18,3 +18,4 @@ validation/riaf_fit/output/
 validation/m87_fit/output/
 validation/grmhd_fit/output/
 validation/grmhd_fit/*.fits
+validation/winding/output/
