@@ -132,22 +132,72 @@ end
 
 @inline function transfer_sample(c::RadiativeTransport, acc::RadiativeState{T}, s::GeodesicSample, Δτ, pix) where {T}
     met = Krang.metric(pix)
-    j4 = zero(SVector{4,T}); α4 = zero(SVector{4,T}); ρ3 = zero(SVector{3,T})
-    active = false
-    for i in 1:nelements(c.model)
-        cf, fr = element(c.model, i, pix, s, c.ν_obs)
-        (cf.jI > 0 || cf.αI > 0 || cf.ρQ != 0 || cf.ρV != 0) || continue
-        cinv = invariants(cap_polarization(cf), c.ν_obs / fr.g)
-        jj, aa, rr = rotate_to_screen(cinv, fr.χ)
-        j4 += jj; α4 += aa; ρ3 += rr
-        active = true
-    end
+    j4, α4, ρ3, active = accumulate_elements(c, s, pix, static_elements(c.model))
     active || return acc
     Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
     Δ = c.L / c.ν_obs * Σ * Δτ
     O, E = transfer_step(j4, α4, ρ3, Δ)
     return advance(acc, O, E)
 end
+
+"One element's screen-basis coefficients at a sample (zero when it does not emit or absorb there)."
+@inline function element_coefficients(c::RadiativeTransport, i, s::GeodesicSample, pix)
+    T = typeof(c.ν_obs)
+    cf, fr = element(c.model, i, pix, s, c.ν_obs)
+    (cf.jI > 0 || cf.αI > 0 || cf.ρQ != 0 || cf.ρV != 0) || return zero(SVector{4,T}), zero(SVector{4,T}), zero(SVector{3,T}), false
+    cinv = invariants(cap_polarization(cf), c.ν_obs / fr.g)
+    jj, aa, rr = rotate_to_screen(cinv, fr.χ)
+    return jj, aa, rr, true
+end
+
+"""
+    static_elements(model) -> nothing | Val{N}
+
+Models whose element count is known at compile time return `Val(N)`, and the sum over elements
+in `transfer_sample` is then unrolled; the default is a loop. A loop inside a function Enzyme
+differentiates on the GPU keeps its per-iteration cache in device malloc, which is thirty times
+slower than the stack, so the adjoint kernels wrap their model in [`StaticCount`](@ref).
+"""
+static_elements(model) = nothing
+
+@inline function accumulate_elements(c::RadiativeTransport, s::GeodesicSample, pix, ::Nothing)
+    T = typeof(c.ν_obs)
+    j4 = zero(SVector{4,T}); α4 = zero(SVector{4,T}); ρ3 = zero(SVector{3,T})
+    active = false
+    for i in 1:nelements(c.model)
+        jj, aa, rr, on = element_coefficients(c, i, s, pix)
+        j4 += jj; α4 += aa; ρ3 += rr
+        active |= on
+    end
+    return j4, α4, ρ3, active
+end
+
+@inline function accumulate_elements(c::RadiativeTransport, s::GeodesicSample, pix, ::Val{NS}) where {NS}
+    # ntuple with a Val length and the tuple reductions are unrolled by the compiler into straight-line
+    # code with concrete types (a recursion on the index is not inferable, a loop is cached in device
+    # malloc, and a captured Type in the closure is a dynamic dispatch on the device)
+    terms = ntuple(i -> element_coefficients(c, i, s, pix), Val(NS))
+    j4 = mapreduce(t -> t[1], +, terms)
+    α4 = mapreduce(t -> t[2], +, terms)
+    ρ3 = mapreduce(t -> t[3], +, terms)
+    active = mapreduce(t -> t[4], |, terms)
+    return j4, α4, ρ3, active
+end
+
+"""
+    StaticCount(model, Val(N))
+
+`model` with its element count fixed at compile time (see [`static_elements`](@ref)); the
+adjoint kernels use it so that the sum over splats is unrolled.
+"""
+struct StaticCount{NS,M}
+    model::M
+    StaticCount(model::M, ::Val{NS}) where {NS,M} = new{NS,M}(model)
+end
+Adapt.adapt_structure(to, m::StaticCount{NS}) where {NS} = StaticCount(Adapt.adapt(to, m.model), Val(NS))
+nelements(::StaticCount{NS}) where {NS} = NS
+static_elements(::StaticCount{NS}) where {NS} = Val(NS)
+@inline element(m::StaticCount, i, pix, s, ν_obs) = element(m.model, i, pix, s, ν_obs)
 
 "Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
 observed_stokes(st::RadiativeState, ν_obs) = st.S * ν_obs^3
