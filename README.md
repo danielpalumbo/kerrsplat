@@ -24,7 +24,8 @@ inference layer fits them to Stokes movies in the image or visibility domain (χ
 station gains, priors, staged and minibatched schedules with densification and pruning, a Fisher
 audit, spin and inclination by forward-mode duals) and reads and writes ehtim-style FITS movies;
 a cross-model fit reproduces ipole's RIAF images with twelve splats. `docs/STATUS.md` maps every
-layer to the gate that validates it.
+layer to the gate that validates it; `docs/HANDOFF.md` is the guide for continuing the work on
+another machine.
 
 ## Package layout
 

@@ -21,6 +21,10 @@ before any performance work.
 - Enzyme reverse mode inside KernelAbstractions kernels requires compile-time trip counts
   (`Val(N)`); runtime loop bounds crash with an illegal memory access.
 - Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
+- Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
+  1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
+  Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
+  tile, gradients summed).
 - Enzyme with non-`const` globals captured in closures hits an internal error; make them
   `const` or pass them as arguments.
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
