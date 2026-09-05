@@ -45,6 +45,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
 | Reflection parity (observers beyond 90°, negative spin, U and V handedness) | `Splats` | equatorial and azimuthal mirror images of the mirrored source (axial field) | 1e-11 |
 | GPU gradients: Enzyme inside the CUDA kernel over stored samples (`thin_gradient!`; the polarized consumer over ≤ 8 samples) | `Splats` | host Enzyme gradient | 6e-13 (thin, 64² × 300 in 1.2 s); 2e-15 (polarized chunk) |
+| Full polarized rays on the GPU: the chunked reverse sweep (`polarized_gradient!`), the movie χ² gradient (`Fit.chi2_gradient!`) and any image loss through a host seed (`Fit.image_loss_gradient!`) | `Splats`, `Fit` | host Enzyme gradient of the same loss; Enzyme's CPU gradient of `chi2` | 5e-13 (32² × 300, CUDA); 6e-13 (χ² gradient, CUDA); exact but 4× slower than the 8-thread CPU at 32² |
 | Half-orbit decomposition (`WindingState`, rays truncated after the n-th midplane passage) | `Transfer`, `Splats`, `Fit` | Krang's `Gθ` crossing times and `emission_radius` sub-image geometry; identity without truncation; Enzyme vs stencil; CUDA | 2e-7 in Mino time; 1e-13; 1e-5 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,

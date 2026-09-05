@@ -26,7 +26,14 @@ before any performance work.
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use
   `Geodesics.sincos_pair`), no `evalpoly`/`@horner` tables of nine or more coefficients (they
   are outlined into calls Enzyme cannot cache; use `Transfer.@muladd_chain`), no mutually
-  recursive helpers. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
+  recursive helpers, and no loops in the differentiated device function (Enzyme keeps a loop's
+  per-iteration cache in device malloc; unroll with `ntuple(f, Val(N))` and tuple reductions,
+  as `Transfer.accumulate_elements` does for a `StaticCount` model — a recursion on the index
+  is not inferable, a `@generated` unroll hit a JIT error on the CPU backend, a closure that
+  captures a `Type` is a dynamic dispatch on the device, and ptxas runs out of memory on more
+  than two unrolled polarized samples). Enzyme's device reverse pass of the polarized transfer
+  step is ~50× its forward cost (3–5× on the CPU): the GPU sweep is exact but not faster than
+  the CPU on this card. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
   kernel); longer tapes spill to device malloc, so `prepare_backend!` raises the malloc heap to
   1 GB at the first gradient kernel (CUDA refuses to change it after a kernel has used malloc). Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
   is worse, not better.

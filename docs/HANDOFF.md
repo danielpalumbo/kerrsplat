@@ -65,8 +65,12 @@ Fisher audit, spin and inclination by duals); visibilities, closures, per-scan g
 uvfits reader and scan averaging validated against ehtim on real data (EHT Fourier sign
 convention); reflection parity for observers below the equator and negative spins; the
 half-orbit (sub-image) decomposition validated against Krang; Enzyme reverse mode inside the
-CUDA kernel over stored samples (thin rays exact to 6e-13; the polarized consumer over eight
-samples per kernel). Full suite: 4,882,390 checks, 81 minutes, 2026-09-05. Real-data results: M87 closure
+CUDA kernel over stored samples: thin rays exact to 6e-13, and full polarized rays through the
+chunked reverse sweep (`Splats.polarized_gradient!`, `Fit.chi2_gradient!`,
+`Fit.image_loss_gradient!`; exact to 5e-13 on CUDA, but slower than the 8-thread CPU on this
+card, see `docs/notes/2026-09-04_phase1_thin_splats.md`). Full suite: 4,882,390 checks,
+81 minutes, 2026-09-05 (before the chunked sweep, whose gates ran standalone on CPU and CUDA and
+in the CPU subset). Real-data results: M87 closure
 fit χ²/N 1.5; self-calibrated polarimetric fit χ²/N 7 with six parcels; GRMHD snapshot fit to
 5% of the Stokes I norm.
 
@@ -74,8 +78,12 @@ Open, roughly in order of value: the time-resolved visibility likelihood (one sl
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
 noise floor; spin and inclination fits on real data; per-ray interval lists for hundreds of
-splats; the chunked reverse sweep that turns the GPU in-kernel gradients (thin rays and
-polarized chunks work, 2026-09-05) into full polarized-ray gradients; the Comrade.jl route; GRMHD movie fits
+splats; a fast GPU gradient: the chunked reverse sweep (`Fit.chi2_gradient!`,
+`Fit.image_loss_gradient!`, 2026-09-05) is exact and memory-bounded but Enzyme's device reverse
+pass of the transfer step is ~50× its forward cost, so it is slower than the 8-thread CPU at
+32² (7.8 vs 2.1 s per frame); a hand-written adjoint of the transfer step, or forward-mode
+duals for the per-sample coefficient Jacobians with a hand-written reverse over the
+compositing, is the route; the same sweep for the winding-truncated loss; the Comrade.jl route; GRMHD movie fits
 (need dumps); the upstream reports in `docs/notes/upstream_issues.md` (Daniel's call).
 
 ## Conventions that bit us

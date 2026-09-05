@@ -241,3 +241,147 @@ end
                              Enzyme.Duplicated(out, dout), Enzyme.Duplicated(params, dparams), Enzyme.Duplicated(tvec, dtvec),
                              Enzyme.Const(S), Enzyme.Const(pc), Enzyme.Const(j), Enzyme.Const(met), Enzyme.Const(θo), Enzyme.Const(Val(N)))
 end
+
+# ---- the polarized gradient inside the GPU kernel: a chunked reverse sweep -------------------------
+"""
+    chunk_size(N; kmax = 1) -> Int
+
+Samples per chunk of the polarized reverse sweep: the largest divisor of `N` not above `kmax`.
+One sample per chunk is the fastest on the GPU (the reverse pass of one polarized sample costs
+about 26 ms of thread time on the 2080 SUPER, two samples per chunk 94 ms, and four or more no
+longer compile: ptxas runs out of memory on the unrolled code), so `kmax = 1` is the default;
+the per-thread stack holds the tape of up to eight.
+"""
+function chunk_size(N::Integer; kmax::Integer = 1)
+    for k in min(kmax, 8, N):-1:1
+        N % k == 0 && return k
+    end
+    return 1
+end
+
+@inline function _stored_sample(S, j, k)
+    @inbounds f = S.flags[j, k]
+    ok = (f & 0x01) != 0x00; νr = (f & 0x02) != 0x00; νθ = (f & 0x04) != 0x00
+    @inbounds return GeodesicSample(S.t[j, k], S.r[j, k], S.θ[j, k], S.ϕ[j, k], νr, νθ, ok)
+end
+
+# forward pass over stored samples: the radiative state at every chunk boundary (states[j, c + 1] after chunk c)
+@kernel function polarized_chunks_forward!(states, params, tvec, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}, ::Val{K}) where {N,K}
+    j = @index(Global, Linear)
+    pix = build_pixel(pc, j, met, θo)
+    Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
+    c = RadiativeTransport(PolarizedSplats(params, tvec), ν, L)
+    acc = zero(eltype(states))
+    @inbounds states[j, 1] = acc
+    for k in 1:N
+        acc = c(acc, j, k, _stored_sample(S, j, k), Δτ, pix)
+        k % K == 0 && (@inbounds states[j, k ÷ K + 1] = acc)
+    end
+end
+
+# one chunk of K samples starting after sample (c − 1)K, from `states[j, c]` to `states[j, c + 1]`: one
+# straight-line method per chunk size (a loop in the differentiated device function keeps Enzyme's
+# per-iteration cache in device malloc, and the differentiated kernel then runs thirty times slower)
+for K in 1:8
+    body = [:(acc = tr(acc, j, k0 + $i, _stored_sample(S, j, k0 + $i), Δτ, pix)) for i in 1:K]
+    @eval @inline function _fold_chunk(acc, tr, S, j, k0, Δτ, pix, ::Val{$K})
+        $(body...)
+        return acc
+    end
+end
+
+@inline function _polarized_chunk!(states, params, tvec, S, pc, j, met, θo, ν, L, c, ::Val{N}, ::Val{K}, ::Val{NS}) where {N,K,NS}
+    pix = build_pixel(pc, j, met, θo)
+    Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
+    tr = RadiativeTransport(StaticCount(PolarizedSplats(params, tvec), Val(NS)), ν, L)
+    @inbounds acc = states[j, c]
+    acc = _fold_chunk(acc, tr, S, j, (c - 1) * K, Δτ, pix, Val(K))
+    @inbounds states[j, c + 1] = acc
+    return nothing
+end
+
+@kernel function polarized_chunk_adjoint!(states, dstates, params, dparams, tvec, dtvec, S, pc, met::Krang.Kerr, θo, ν, L, c, ::Val{N}, ::Val{K}, ::Val{NS}) where {N,K,NS}
+    j = @index(Global, Linear)
+    Enzyme.autodiff_deferred(Enzyme.Reverse, Enzyme.Const(_polarized_chunk!), Enzyme.Const,
+                             Enzyme.Duplicated(states, dstates), Enzyme.Duplicated(params, dparams), Enzyme.Duplicated(tvec, dtvec),
+                             Enzyme.Const(S), Enzyme.Const(pc), Enzyme.Const(j), Enzyme.Const(met), Enzyme.Const(θo),
+                             Enzyme.Const(ν), Enzyme.Const(L), Enzyme.Const(c), Enzyme.Const(Val(N)), Enzyme.Const(Val(K)), Enzyme.Const(Val(NS)))
+end
+
+"The zero of the adjoint space of a radiative state (`zero(RadiativeState)` is the compositing identity, P = 1, not a zero adjoint)."
+@inline zero_adjoint(::Type{RadiativeState{T}}) where {T} = RadiativeState(zero(SMatrix{4,4,T}), zero(SVector{4,T}))
+
+"""
+    polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, ::Val{K}) -> states
+
+The forward pass of the chunked sweep over the samples stored in `cache`: the radiative state
+of every ray at each chunk boundary (`states[j, c + 1]` after chunk `c`; `states[j, 1]` is the
+compositing identity), `K` samples per chunk. `states` is `npix × (N ÷ K + 1)` on the backend.
+"""
+function polarized_forward_states!(states, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L, ::Val{K}) where {T,N,K}
+    backend = cache.backend
+    nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
+    N % K == 0 || throw(ArgumentError("the chunk size must divide the sample count"))
+    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    polarized_chunks_forward!(backend, 64)(states, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N), Val(K); ndrange = npixels(cache))
+    KA.synchronize(backend)
+    return states
+end
+
+"""
+    polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, ::Val{K}) -> dparams
+
+The reverse sweep: with the boundary `states` of the forward pass and `dstokes` the adjoint of
+the observed Stokes vectors (sorted pixel order, ∂loss/∂(I, Q, U, V) in cgs), differentiate
+the chunks from the last to the first, carrying the adjoint of the incoming state along, and
+accumulate ∂loss/∂params into `dparams`.
+"""
+function polarized_reverse_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}, states, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L, ::Val{K}) where {T,N,K}
+    backend = cache.backend
+    prepare_backend!(backend; stack_bytes = ENZYME_STACK_BYTES, heap_bytes = ENZYME_HEAP_BYTES)
+    C = N ÷ K
+    npix = npixels(cache)
+    met = Krang.Kerr(cache.spin)
+    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    dtvec = KA.allocate(backend, T, 1); fill!(dtvec, zero(T))
+    ν = T(ν_obs); Lc = T(L)
+    # the shadow of the boundary states: column c + 1 holds the adjoint of the state after chunk c (the seed of
+    # chunk c, consumed by its reverse pass, which accumulates the adjoint of its incoming state into column c)
+    dstates = similar(states)
+    fill!(dstates, zero_adjoint(RadiativeState{T}))
+    copyto!(view(dstates, :, C + 1), map(d -> RadiativeState(zero(SMatrix{4,4,T}), d .* ν^3), dstokes))
+    NSv = Val(size(params, 2))                          # the splat count is a compile-time constant of the adjoint kernel (one compile per count)
+    if backend isa CPU   # compile on one work item first (concurrent Enzyme compilation on several tasks deadlocks)
+        dp = similar(dparams); fill!(dp, zero(T)); dt = similar(dtvec); fill!(dt, zero(T)); ds = copy(dstates); st = copy(states)
+        polarized_chunk_adjoint!(backend, 1)(st, ds, params, dp, tvec, dt, cache.samples, cache.consts, met, cache.θo, ν, Lc, C, Val(N), Val(K), NSv; ndrange = 1)
+        KA.synchronize(backend)
+    end
+    for c in C:-1:1
+        polarized_chunk_adjoint!(backend, 64)(states, dstates, params, dparams, tvec, dtvec, cache.samples, cache.consts, met, cache.θo, ν, Lc, c, Val(N), Val(K), NSv; ndrange = npix)
+    end
+    KA.synchronize(backend)
+    return dparams
+end
+
+"""
+    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; kmax = 1) -> (dparams, image)
+
+Gradient of Σⱼ dstokes[j] · observed_stokes(ray j) with respect to the polarized splat parameters,
+by Enzyme reverse mode inside the kernel over the samples stored in `cache`, one ray per thread,
+as a chunked reverse sweep: a forward kernel folds every ray over all `N` samples and keeps the
+radiative state at each chunk boundary (`chunk_size(N; kmax)` samples per chunk, at most the
+eight a 64 KB per-thread stack can tape), then the chunks are differentiated from the last to
+the first with the adjoint of the incoming state carried along (the seed of chunk c is the
+adjoint of its outgoing state, which the reverse pass consumes). `dstokes` is a vector of
+`SVector{4}` in sorted pixel order (∂loss/∂(I, Q, U, V) in cgs); the accumulated `dparams` and
+the image (observed Stokes vectors, sorted order) are returned. Gate: `test_polarized_gradient`
+(host Enzyme gradient of the same loss, CPU and CUDA).
+"""
+function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; kmax::Integer = 1) where {T,N}
+    K = chunk_size(N; kmax)
+    states = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache), N ÷ K + 1)
+    polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))
+    image = map(st -> observed_stokes(st, T(ν_obs)), states[:, end])
+    polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, Val(K))
+    return dparams, image
+end

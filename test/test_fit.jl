@@ -433,3 +433,83 @@ function test_pattern_prior()
         @info "pattern prior: Keplerian rates recovered through the ZAMO frame; penalty gradient vs stencil to 1e-6"
     end
 end
+
+"""
+    test_chi2_gradient(backend; res = 8, N = 40, tol = 1e-9, label = "CPU backend")
+
+The movie χ² gradient by the chunked reverse sweep on `backend` (`chi2_gradient!`, stored
+samples) against the host Enzyme gradient of `chi2` through the fused march, on a two-frame,
+one-frequency movie with a mask; the χ² values agree too.
+"""
+function test_chi2_gradient(backend; res = 8, N = 40, tol = 1e-9, label = "CPU backend")
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6); times = [0.0, 20.0]; νs = [230e9]
+    p_true = polarized_test_params()
+    clean = polarized_cube(cpu, p_true, times, νs, L)
+    rng = Random.MersenneTwister(11)
+    σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+    data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
+    mask = trues(size(data)); mask[1:2, :, 1, 1] .= false                         # a few masked pixels
+    movie = StokesMovie(data, times, νs, σ; mask)
+    p = p_true .+ 0.05 .* randn(rng, size(p_true))
+    χ_host = chi2(p, movie, cpu, L)
+    g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(q -> chi2(q, movie, cpu, L)), p)[1]
+    @testset "$label movie χ² gradient by the chunked sweep, $(res)² × $N" begin
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = adapt_to(backend, p); dparams = adapt_to(backend, zeros(size(p)))
+        t0 = time()
+        χ = chi2_gradient!(dparams, params, movie, cache, L)
+        t1 = time() - t0
+        g = Array(dparams)
+        @test abs(χ - χ_host) <= 1e-10 * χ_host
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @test all(isfinite, g)
+        @test e <= tol
+        @info "$label chi2_gradient! vs host Enzyme chi2 gradient: max |Δ|/max = $e; χ² $χ vs $χ_host ($(round(t1; digits = 1)) s including compilation)"
+    end
+end
+
+"""
+    test_image_loss_gradient(backend; res = 8, N = 40, tol = 1e-9, label = "CPU backend")
+
+`image_loss_gradient!` (host Enzyme seed on the image, chunked sweep on the backend) for the
+closure χ² of one frame against the host Enzyme gradient of the same closure χ² through the
+fused march.
+"""
+function test_image_loss_gradient(backend; res = 8, N = 40, tol = 1e-9, label = "CPU backend")
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar); ν = 230e9
+    p = polarized_test_params()
+    img = polarized_image(cpu, p, 0.0, ν, L)
+    rng = Random.MersenneTwister(5)
+    u = 4e9 .* randn(rng, 9); v = 4e9 .* randn(rng, 9)
+    tri = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]; quad = [(1, 2, 3, 4), (5, 6, 7, 8)]
+    V = visibilities(img, Δα, L, D, u, v)
+    data = ClosureData(u, v, tri, closure_phases(V, tri) .+ 0.1, fill(0.05, 3), quad, log_closure_amplitudes(V, quad) .+ 0.05, fill(0.05, 2))
+    loss_image(im) = chi2_closures(im, Δα, L, D, data)
+    q = p .+ 0.05 .* randn(rng, size(p))
+    host(x) = (out = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out, zero(RadiativeState{Float64}));
+               polarized_image!(out, cpu, x, 0.0, ν, L); loss_image(map(st -> observed_stokes(st, ν), to_screen(cpu, out))))
+    value_host = host(q)
+    g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), q)[1]
+    @testset "$label closure χ² gradient by the image seed and the chunked sweep" begin
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = adapt_to(backend, q); dparams = adapt_to(backend, zeros(size(q)))
+        value = image_loss_gradient!(dparams, loss_image, cache, params, 0.0, ν, L)
+        g = Array(dparams)
+        @test abs(value - value_host) <= 1e-10 * value_host
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @test all(isfinite, g)
+        @test e <= tol
+        @info "$label image_loss_gradient! (closure χ²) vs host Enzyme: max |Δ|/max = $e"
+    end
+end

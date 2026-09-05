@@ -68,9 +68,35 @@ GC-frame and safepoint calls on top of the same failures):
 
 Limits: the per-thread stack cannot exceed 64 KB on this card (the driver allocates it for
 every resident thread), which holds the tape of a thin ray of 300 samples or of eight
-polarized samples. A full polarized ray therefore needs a chunked reverse sweep (states saved
-at chunk boundaries in the forward pass, chunks differentiated from the last to the first with
-the adjoint of the incoming state carried along), which is the next step; `Bessels.gamma` on
-the power-law and κ paths and `thermal_synchrotron_pandya` (an Enzyme assertion) are untested.
+polarized samples. A full polarized ray therefore runs as a chunked reverse sweep
+(`Splats.polarized_gradient!`, 2026-09-05): a forward kernel folds every ray over all samples
+and keeps the radiative state at each chunk boundary (`chunk_size(N)` samples per chunk, the
+largest divisor of N not above eight), then the chunks are differentiated from the last to the
+first, each launch seeded with the adjoint of its outgoing state and returning the adjoint of
+its incoming one (`polarized_reverse_sweep!`). One trap: the adjoint buffers must start from a
+true zero, not `zero(RadiativeState)`, which is the compositing identity P = 1 (a spurious
+identity seed made the gradient wrong by factors of thousands). `Fit.chi2_gradient!` builds the
+movie χ² and its gradient on the backend from this, and `Fit.image_loss_gradient!` seeds the
+sweep with a host Enzyme gradient of any function of the image (closure χ², self-calibration)
+(gates `test_polarized_gradient`, `test_chi2_gradient`, `test_image_loss_gradient`). Making the sweep fast turned
+up more device rules: the series of the moment integrals in the transfer step is now a set of
+Horner chains rather than a loop, the adjoint kernels wrap the splat set in
+`Transfer.StaticCount` so that the sum over splats is unrolled with `ntuple` (one compile per
+splat count on the GPU), and the chunk fold is one straight-line method per chunk size; loops
+inside the differentiated device function keep Enzyme's per-iteration cache in device malloc
+(a two-sample loop cost 30× a one-sample chunk), a recursion on the index is not inferable, a
+closure capturing a `Type` dispatches dynamically, and ptxas runs out of memory on the unrolled
+code beyond two samples per chunk. Cost on the 2080 SUPER (6 parcels, 32² × 300): the forward
+pass 0.13 s, the reverse sweep 26 ms per launch of 1024 rays with one sample per chunk (80 ms per
+launch of 4096 rays at 64², 283 ms per launch of 16384 rays at 128²), 7.8 s per frame at 32²,
+24 s at 64² and 85 s at 128², against 2.1 s per frame at 32² for Enzyme on the CPU backend
+with eight threads (the throughput improves with the ray count but never overtakes the CPU). The device
+reverse pass of one polarized sample is about fifty times its forward cost (three to five on
+the CPU): Enzyme's device code generation spills the transfer step's tape to local memory. So
+the GPU sweep is exact and bounded in memory (no whole-screen tape) but not faster than the CPU
+on this card; the way to a fast GPU gradient is a hand-written adjoint of the transfer step
+(analytic derivatives of the 4×4 exponential) or forward-mode duals for the per-sample
+coefficient Jacobians with a hand-written reverse over the compositing. `Bessels.gamma` on the power-law and κ paths and
+`thermal_synchrotron_pandya` (an Enzyme assertion) remain untested on the device.
 Probes for the bisection live in the scratch directory of the 2026-09-05 session; the rules
 are in `CLAUDE.md`.

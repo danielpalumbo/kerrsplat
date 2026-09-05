@@ -319,14 +319,89 @@ end
 
 The same staged schedule, annealing and partition hygiene for an arbitrary differentiable loss
 `loss(params)` (a visibility or closure χ² with gains, a composite of several data sets, …):
-`Stage.batch` and `Stage.freqs` are ignored (the loss decides what it evaluates). Returns
-`(params, history, events)` like the movie form.
+`Stage.batch` and `Stage.freqs` are ignored (the loss decides what it evaluates); `gradient`, if
+given, is called as `gradient(params)` in place of Enzyme (e.g. the GPU `chi2_gradient!`).
+Returns `(params, history, events)` like the movie form.
 """
-function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hygiene::Hygiene = Hygiene(), callback = nothing) where {T}
-    return _fit_loop!(params, (st, it) -> loss, stages; hygiene, callback)
+function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hygiene::Hygiene = Hygiene(), callback = nothing, gradient = nothing) where {T}
+    return _fit_loop!(params, (st, it) -> loss, stages; hygiene, callback, gradient)
 end
 
-function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector{Stage}; hygiene::Hygiene, callback) where {T}
+"""
+    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, kmax = 1) -> χ²
+
+The movie χ² and its gradient with respect to the splat parameters, evaluated on the backend of
+`cache` (a cache with stored samples) by the chunked reverse sweep inside the kernel: for every
+frame and frequency the forward pass gives the model image, the residual seeds the sweep, and
+∂χ²/∂params accumulates into `dparams` (on the backend). Priors are not included. The CPU
+backend and CUDA give the gradient of `chi2` (gate `test_chi2_gradient`).
+"""
+function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), kmax = 1) where {T,N}
+    K = Splats.chunk_size(N; kmax)
+    npix = npixels(cache)
+    states = KernelAbstractions.allocate(cache.backend, RadiativeState{T}, npix, N ÷ K + 1)
+    dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix)
+    seed = Vector{SVector{4,T}}(undef, npix)
+    perm = cache.perm_host                                  # screen index of every sorted pixel
+    nα = size(movie.data, 1)
+    total = zero(T)
+    for l in freqs, k in frames
+        ν = movie.νs[l]
+        Splats.polarized_forward_states!(states, cache, params, movie.times[k], ν, L, Val(K))
+        image = Array(map(st -> observed_stokes(st, ν), states[:, end]))
+        for j in 1:npix
+            i = perm[j]
+            idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
+            if movie.mask[idx]
+                σ = noise(movie.σ, idx)
+                r = (image[j] - movie.data[idx]) ./ σ
+                total += sum(abs2, r)
+                seed[j] = 2 .* r ./ σ
+            else
+                seed[j] = zero(SVector{4,T})
+            end
+        end
+        copyto!(dstokes, seed)
+        Splats.polarized_reverse_sweep!(dparams, dstokes, states, cache, params, movie.times[k], ν, L, Val(K))
+    end
+    return total
+end
+
+"""
+    image_loss_gradient!(dparams, loss, cache, params, t_obs, ν_obs, L; kmax = 1) -> value
+
+Gradient of an arbitrary differentiable function of one model image with respect to the splat
+parameters, on the backend of `cache` (stored samples): the forward states give the image
+(screen-shaped matrix of Stokes vectors in cgs, on the host), Enzyme on the host differentiates
+`loss(image)` with respect to the image (a small problem: four numbers per pixel), and the
+chunked reverse sweep on the backend turns that seed into ∂loss/∂params, accumulated into
+`dparams`. This is how the visibility, closure and self-calibration χ² of a frame get a GPU
+gradient without differentiating the Fourier transform on the device. Returns the loss value.
+"""
+function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; kmax = 1) where {T,N}
+    K = Splats.chunk_size(N; kmax)
+    npix = npixels(cache)
+    states = KernelAbstractions.allocate(cache.backend, RadiativeState{T}, npix, N ÷ K + 1)
+    Splats.polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))
+    sorted = Array(map(st -> observed_stokes(st, T(ν_obs)), states[:, end]))
+    perm = cache.perm_host
+    nα, nβ = cache.screen_size
+    screen = Matrix{T}(undef, 4, nα * nβ)                   # the image as plain numbers for Enzyme, screen order
+    for j in 1:npix, s in 1:4
+        screen[s, perm[j]] = sorted[j][s]
+    end
+    g(x) = loss(reshape([SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ], nα, nβ))
+    value = g(screen)
+    dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
+    seed = [SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]]) for j in 1:npix]
+    dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix); copyto!(dstokes, seed)
+    Splats.polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, Val(K))
+    return value
+end
+
+export chi2_gradient!, image_loss_gradient!
+
+function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector{Stage}; hygiene::Hygiene, callback, gradient = nothing) where {T}
     history = T[]
     events = Tuple{Int,Int,Int,Int}[]
     for (si, st) in enumerate(stages)
@@ -337,7 +412,7 @@ function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector
             η = st.η_end + (st.η - st.η_end) * (1 + cos(π * (it - 1) / max(st.iterations - 1, 1))) / 2
             Optimisers.adjust!(opt, η)
             f = make_loss(st, it)
-            g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1]
+            g = gradient === nothing ? Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1] : gradient(params)
             if hygiene.every > 0 && it % hygiene.every == 0
                 before = size(params, 2)
                 q, kept = prune(params; fraction = hygiene.prune_fraction)
