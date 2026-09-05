@@ -55,7 +55,7 @@ function test_winding(backend; res = 24, N = 300, label = "CPU")
         same = Array(polarized_image(cache, pd, 0.0, ν, L; nmax = 100, slab = 0.5))
         @test maximum(norm.(same .- plain)) <= 1e-13 * maximum(norm.(plain))
         # 2. crossing Mino times vs Krang's n-th image times
-        rec = KA.allocate(backend, SVector{5,Float64}, npixels(cache))
+        rec = KernelAbstractions.allocate(backend, SVector{5,Float64}, npixels(cache))
         fill!(rec, SVector(NaN, 0.0, 0.0, 0.0, 0.0))
         fused_march!(CrossingRecorder(), rec, cache)
         recs = Array(to_screen(cache, rec))

@@ -7,14 +7,15 @@
 # information of the spin and inclination at the truth (joint with the free parcel parameters,
 # by ForwardDiff duals through the whole pipeline) quantifies what each order adds.
 #
-#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 120] [--seed 1] [--frames 2]
+#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2]
 #
 # Writes output/case_n/ (untracked): data and model images, fitted parameters, a summary.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
 using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Enzyme, Optimisers, Krang, ForwardDiff, Statistics
 
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
-const CASE = getopt("--case", 0); const ITER = getopt("--iterations", 120); const SEED = getopt("--seed", 1); const NFRAMES = getopt("--frames", 2)
+const CASE = getopt("--case", 0); const ITER = getopt("--iterations", 300); const SEED = getopt("--seed", 1); const NFRAMES = getopt("--frames", 2)
+const ETA = getopt("--eta", 0.005)                           # Adam step in parameter units: the pattern rates are ~0.05 rad/M
 const a = 0.94; const θo = deg2rad(17.0); const ν = 230e9
 const M_solar = 6.5e9; const L = gravitational_radius(M_solar)
 const SLAB = 0.6                                              # ≥ 4σ_z of the parcels
@@ -65,6 +66,11 @@ function screen(n)
     return Geodesics.Camera(α, β), res * res
 end
 
+const TILE = 400                                              # pixels per tile: Enzyme's reverse pass over the CPU kernel needs ~1 GB per 8e4 pixel-samples
+
+"Slice of a movie cube for the pixels `rng` of a screen stored as (npix, 1, nt, nν)."
+tile_movie(movie, rng) = StokesMovie(movie.data[rng, :, :, :], movie.times, movie.νs, movie.σ)
+
 function run_case(n)
     N = (80, 160, 240)[n + 1]
     camera, nuni = screen(n)
@@ -77,25 +83,49 @@ function run_case(n)
     rng = MersenneTwister(SEED)
     data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
     movie = StokesMovie(data, times, [ν], σ)
-    # the sub-image content of the data (fluxes of the orders present, on the uniform part of the screen)
     fluxes = [sum(getindex.(polarized_cube(cache, truth, times[1:1], [ν], L; nmax = m, slab = SLAB)[1:nuni, 1, 1, 1], 1)) for m in 0:n]
     @info "sub-image fluxes on the uniform grid (arbitrary units)" cumulative = fluxes
+    # tiles: a cache and a movie slice per tile, so that the reverse pass runs tile by tile
+    ntiles = cld(npixels(camera), TILE)
+    tls = Geodesics.tiles(camera, ntiles)
+    caches = [(c = GeodesicCache(CPU(), cam, Val(N); store_samples = false); regenerate!(c, a, θo; marcher = Fused(64)); c) for (cam, _) in tls]
+    movies = [tile_movie(movie, r) for (_, r) in tls]
+    @info "tiles" count = length(tls) pixels_per_tile = TILE
+    loss(q) = sum(chi2(q, movies[t], caches[t], L; nmax = n, slab = SLAB) for t in eachindex(tls))
+    function gradient(q)
+        g = zero(q)
+        for t in eachindex(tls)
+            g .+= Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2(x, movies[t], caches[t], L; nmax = n, slab = SLAB)), q)[1]
+        end
+        return g
+    end
     # perturbed start
     p0 = copy(truth)
     for i in 1:4
         p0[1, i] += 0.3 * randn(rng); p0[2, i] += 0.3 * randn(rng); p0[3, i] += 0.05 * randn(rng)
         p0[4:6, i] .+= 0.15 .* randn(rng, 3)
         p0[13, i] += 0.2 * randn(rng); p0[14, i] += 0.1 * randn(rng); p0[15, i] += 0.15 * randn(rng)
-        p0[19, i] += 0.05 * randn(rng); p0[21, i] *= 1 + 0.1 * randn(rng)
+        p0[19, i] += 0.05 * randn(rng); p0[21, i] *= 1 + 0.02 * randn(rng)
     end
-    χ0 = chi2(p0, movie, cache, L; nmax = n, slab = SLAB)
+    χ0 = loss(p0)
     ndata = 4 * length(data)
     @info "start" chi2 = χ0 reduced = χ0 / ndata
     t0 = time()
-    stages = [Fit.Stage(free = Tuple(POLARIZED_SPLAT_PARAMS[freerows]), iterations = ITER, η = 0.03, η_end = 0.003)]
-    q, history, _ = Fit.fit!(copy(p0), movie, cache, L, stages; hygiene = Fit.Hygiene(every = 0), nmax = n, slab = SLAB,
-                             callback = (si, it, q, χ) -> (it % 20 == 0 && @info "iteration $it" chi2 = χ reduced = χ / ndata minutes = (time() - t0) / 60))
-    χ1 = chi2(q, movie, cache, L; nmax = n, slab = SLAB)
+    q = copy(p0); mask = Float64.(free)
+    opt = Optimisers.setup(Optimisers.Adam(ETA), q)
+    best = (χ0, copy(q))
+    for it in 1:ITER
+        η = ETA / 10 + (ETA - ETA / 10) * (1 + cos(π * (it - 1) / max(ITER - 1, 1))) / 2
+        Optimisers.adjust!(opt, η)
+        g = gradient(q) .* mask
+        opt, q = Optimisers.update!(opt, q, g)
+        if it % 20 == 0 || it == ITER
+            χ = loss(q)
+            χ < best[1] && (best = (χ, copy(q)))
+            @info "iteration $it" chi2 = χ reduced = χ / ndata minutes = (time() - t0) / 60
+        end
+    end
+    χ1, q = best
     # recovery metrics
     pos_err = [hypot(q[1, i] - truth[1, i], q[2, i] - truth[2, i], q[3, i] - truth[3, i]) for i in 1:4]
     pos0 = [hypot(p0[1, i] - truth[1, i], p0[2, i] - truth[2, i], p0[3, i] - truth[3, i]) for i in 1:4]
@@ -103,17 +133,20 @@ function run_case(n)
     ωerr = [abs(q[21, i] / truth[21, i] - 1) for i in 1:4]
     uerr = [abs(q[19, i] - truth[19, i]) for i in 1:4]
     @info "recovery (n ≤ $n)" chi2 = χ1 reduced = χ1 / ndata position_M = round.(pos_err; sigdigits = 2) position_start_M = round.(pos0; sigdigits = 2) ne = round.(rel(13); sigdigits = 2) Te = round.(rel(14); sigdigits = 2) B = round.(rel(15); sigdigits = 2) pattern_rate = round.(ωerr; sigdigits = 2) u_phi = round.(uerr; sigdigits = 2) minutes = (time() - t0) / 60
-    # joint Fisher information at the truth: spin, inclination and the free parcel parameters
+    # joint Fisher information at the truth (spin, inclination, free parcel parameters), tile by tile
     nfree = count(free)
-    function residuals(x)
-        params = similar(x, size(truth)); params .= truth
-        params[free] .= x[3:end]
-        return spacetime_residuals(x[1:2], params, movie, camera, L; N, nmax = n, slab = SLAB)
-    end
     x0 = vcat([a, θo], truth[free])
     tF = time()
-    J = ForwardDiff.jacobian(residuals, x0, ForwardDiff.JacobianConfig(residuals, x0, ForwardDiff.Chunk{12}()))
-    F = J' * J
+    F = zeros(length(x0), length(x0))
+    for (cam, r) in tls
+        function residuals(x)
+            params = similar(x, size(truth)); params .= truth
+            params[free] .= x[3:end]
+            return spacetime_residuals(x[1:2], params, movies[findfirst(t -> t[2] == r, tls)], cam, L; N, nmax = n, slab = SLAB)
+        end
+        J = ForwardDiff.jacobian(residuals, x0, ForwardDiff.JacobianConfig(residuals, x0, ForwardDiff.Chunk{12}()))
+        F .+= J' * J
+    end
     Finv = inv(F + 1e-12 * I)
     σa_joint = sqrt(Finv[1, 1]); σθ_joint = sqrt(Finv[2, 2])
     σa_alone = 1 / sqrt(F[1, 1]); σθ_alone = 1 / sqrt(F[2, 2])
@@ -128,7 +161,7 @@ function run_case(n)
     writedlm(joinpath(outdir, "model_I.csv"), getindex.(reshape(model[1:nuni, 1, 1, 1], 48, 48), 1), ',')
     writedlm(joinpath(outdir, "camera.csv"), hcat(camera.αs, camera.βs), ',')
     open(joinpath(outdir, "summary.txt"), "w") do io
-        println(io, "case n ≤ $n: $(npixels(camera)) pixels ($nuni uniform), $N samples, $NFRAMES frames, $ITER iterations")
+        println(io, "case n ≤ $n: $(npixels(camera)) pixels ($nuni uniform), $N samples, $NFRAMES frames, $ITER iterations, eta $ETA")
         println(io, "chi2 start $χ0 end $χ1 (reduced $(χ1 / ndata)) over $ndata data values")
         println(io, "position errors (M): start $pos0 end $pos_err")
         println(io, "relative errors: ne $(rel(13)) Te $(rel(14)) B $(rel(15)) pattern rate $ωerr; u_phi absolute $uerr")
