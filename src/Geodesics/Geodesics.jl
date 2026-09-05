@@ -40,7 +40,7 @@ const KA = KernelAbstractions
 
 export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache
 export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mino_times
-export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel, sincos_pair
+export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel, sincos_pair, ENZYME_STACK_BYTES, ENZYME_HEAP_BYTES
 export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH
 export Direct, Recurrence, Fused, JacobiState, jacobi_state, jacobi_step, jacobi_step_constants
 export march_ray, fused_march!, has_samples, tiles

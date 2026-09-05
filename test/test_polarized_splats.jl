@@ -288,6 +288,7 @@ function test_polarized_kernel_gradient(backend; K::Int = 8, label = "CPU")
     end
     gh = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), p)[1]
     @testset "polarized consumer differentiated in a kernel ($label, $K samples)" begin
+        Geodesics.prepare_backend!(backend; stack_bytes = Geodesics.ENZYME_STACK_BYTES, heap_bytes = Geodesics.ENZYME_HEAP_BYTES)
         params = adapt_to(backend, p); dparams = adapt_to(backend, zeros(size(p)))
         out = adapt_to(backend, zeros(n)); dout = adapt_to(backend, ones(n))
         tvec = adapt_to(backend, [20.0]); dtvec = adapt_to(backend, [0.0])
