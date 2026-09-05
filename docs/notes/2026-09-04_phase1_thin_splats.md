@@ -39,29 +39,38 @@ dependence, absorption. Units: geometric (GM/c², GM/c³), addendum §4.2.
   host renderer built on `march_ray` (a plain Julia loop) is what Enzyme reverse-mode
   differentiates in the tests (gate 6 of §7.5); the GPU path is the same consumer in a kernel.
 
-## Gradients on the GPU: status
+## Gradients on the GPU: status (rewritten 2026-09-05)
 
-* Host path (`thin_image_march`, a plain loop over `march_ray`): Enzyme reverse mode works and
-  matches central finite differences to 1.9e-7 (the FD floor) at 3.6× the forward cost. Two
-  idioms are needed and are recorded in the tests: the loss is passed as `Const` with
-  `set_runtime_activity` (JacobiElliptic's amplitude routine and a captured constant target
-  array trip Enzyme's static analysis), and loops over root cases must be type-stable (a loop
-  over a heterogeneous tuple dispatches dynamically, which Enzyme rejects).
-* KernelAbstractions CPU backend: both routes work and agree with the host gradient to 3e-15:
-  (a) Enzyme through the kernel launch via KernelAbstractions' Enzyme rules (`autodiff` of a
-  wrapper that calls `kernel(args...; ndrange)`), 160 s of compilation; (b) `autodiff_deferred`
-  inside the kernel, one ray per thread, the ray writing its value into a `Duplicated` output
-  whose shadow carries the seed and all consumer arrays `Duplicated`, 16 s of compilation.
-  Route (b) is what `test_kernel_gradient` keeps.
-* CUDA (Enzyme 0.13.199): route (a) is refused by the extension ("Active kernel arguments not
-  supported on GPU"; it classifies a scalar kernel argument as active — removing the scalar
-  accumulator argument from the fused kernel was not enough). Route (b) compiles once no value
-  is actively returned and no constant pointer is stored into the active consumer (otherwise
-  Enzyme's runtime-activity error paths pull string formatting into the kernel), but the
-  kernel then throws a device-side exception whose type cannot be printed, also for a consumer
-  over *stored* samples (so the marcher's tape is not the cause; the consumer's momentum
-  Jacobians and exponential are enough to trigger it), with a 64 KB stack and a 1 GB malloc
-  heap. To be revisited with a newer Enzyme (the one that the environment could not download
-  today) and, if it persists, with Enzyme's own CUDA.jl examples as a bisection baseline.
-  Until then, gradients at scale run through the KernelAbstractions CPU backend (threaded) or
-  the host loop.
+Enzyme reverse mode runs inside the CUDA kernel, one ray per thread, and matches the host
+gradient (`Splats.thin_gradient!`, gate `test_stored_gradient`: 1e-12 at 12² × 120 and
+6e-13 at 64² × 300, the latter in 1.2 s; the polarized consumer over eight samples:
+1.6e-15, gate `test_polarized_kernel_gradient`). Four things stood in the way, none of them the
+version of Enzyme (0.13.200 with CUDA.jl 6.3.1 is strictly worse: hundreds of unsupported
+GC-frame and safepoint calls on top of the same failures):
+
+1. `sincos` lowers to libdevice's `__nv_sincos`, for which Enzyme has no reverse rule; the
+   kernel throws "No augmented forward pass found for __nv_sincos" at run time. The hot path
+   uses `Geodesics.sincos_pair` (sine and cosine separately) and `jacobi_state` takes the
+   amplitude's sine and cosine itself rather than through JacobiElliptic's `ellipj`.
+2. Inside the differentiated region Enzyme compiles the geodesic march's special functions
+   (Jacobi amplitude, `atanh`, `asin`, `^`, …) through their checked host implementations,
+   which reference `DomainError` and cannot run on the device. The march is constant for
+   splat gradients, so the kernel differentiates the consumer over *stored* samples
+   (`store_samples = true`, `Direct` or `Recurrence` marcher); the march itself is never
+   differentiated.
+3. Polynomial tables: `evalpoly` (also behind `Base.Math.@horner`) is outlined into a call
+   taking the coefficient tuple by reference once the tuple has nine or more entries, and
+   Enzyme cannot cache that call on the device ("caching call: julia_evalpoly"; ptxas then
+   reports an unresolved `jl_nothing`). Bessels.jl's K₀, K₁ are vendored into
+   `Transfer/bessel.jl` (bit-identical, MIT) with an explicit `@muladd_chain`.
+4. Mutually recursive helpers (the transfer step's trigonometric integrals called each other
+   for their opposite regimes) cannot be taped on the device; each regime is now spelled out.
+
+Limits: the per-thread stack cannot exceed 64 KB on this card (the driver allocates it for
+every resident thread), which holds the tape of a thin ray of 300 samples or of eight
+polarized samples. A full polarized ray therefore needs a chunked reverse sweep (states saved
+at chunk boundaries in the forward pass, chunks differentiated from the last to the first with
+the adjoint of the incoming state carried along), which is the next step; `Bessels.gamma` on
+the power-law and κ paths and `thermal_synchrotron_pandya` (an Enzyme assertion) are untested.
+Probes for the bisection live in the scratch directory of the 2026-09-05 session; the rules
+are in `CLAUDE.md`.

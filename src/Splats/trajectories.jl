@@ -126,7 +126,7 @@ end
         ne = exp(p[13, i]) * G
         Θe = exp(p[14, i])
         Bmag = exp(p[15, i])
-        sθ, cθ = sincos(p[16, i]); sϕ, cϕ = sincos(p[17, i])
+        sθ, cθ = sincos_pair(p[16, i]); sϕ, cϕ = sincos_pair(p[17, i])
         B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
         ũ = SVector(p[18, i], p[19, i], p[20, i])
     end

@@ -238,3 +238,69 @@ function test_reflection(; res = 24, N = 60)
         @info "reflection: θo = 163° vs the mirrored source at 17°, and spin −0.94 vs +0.94, agree to $(maximum(rel(reverse(S(D, k); dims = 2) .* (k >= 3 ? -1 : 1), S(A, k)) for k in 1:4)) and $(maximum(rel(reverse(S(E, k); dims = 1) .* (k >= 3 ? -1 : 1), S(B, k)) for k in 1:4)); |V|/I = $(round(sqrt(sum(S(A, 4) .^ 2) / sum(S(A, 1) .^ 2)); sigdigits = 2))"
     end
 end
+
+# ---- the polarized consumer differentiated inside a GPU kernel ------------------------------------
+@inline function _polarized_chunk_value!(out, params, tvec, i, pix, ν, L, ::Val{K}) where {K}
+    c = RadiativeTransport(PolarizedSplats(params, tvec), ν, L)
+    acc = zero(RadiativeState{Float64})
+    for k in 1:K
+        s = Geodesics.GeodesicSample(1.0 + 0.1k, 8.0 - 0.3k + 0.01i, 1.3 + 0.02k, 0.7 + 0.05k, true, k % 2 == 0, true)
+        acc = c(acc, i, k, s, 0.01, pix)
+    end
+    st = observed_stokes(acc, ν)
+    @inbounds out[i] = st[1] + 0.5 * st[2] - 0.3 * st[3] + 2 * st[4]
+    return nothing
+end
+@kernel function _polarized_chunk_adjoint!(out, dout, params, dparams, tvec, dtvec, pix, ν, L, ::Val{K}) where {K}
+    i = @index(Global, Linear)
+    Enzyme.autodiff_deferred(Enzyme.Reverse, Enzyme.Const(_polarized_chunk_value!), Enzyme.Const, Enzyme.Duplicated(out, dout), Enzyme.Duplicated(params, dparams), Enzyme.Duplicated(tvec, dtvec),
+                             Enzyme.Const(i), Enzyme.Const(pix), Enzyme.Const(ν), Enzyme.Const(L), Enzyme.Const(Val(K)))
+end
+
+"""
+    test_polarized_kernel_gradient(backend; K = 8)
+
+The full polarized consumer (thermal synchrotron with the inline Bessel functions, the local
+frame, the exact transfer step, compositing) folded over `K` synthetic samples and differentiated
+by Enzyme inside a kernel on `backend`, against the host Enzyme gradient of the same fold. On
+CUDA the per-thread stack (64 KB, the most the card can give every resident thread) holds the
+tape of up to eight polarized samples; longer rays need the chunked reverse sweep.
+"""
+function test_polarized_kernel_gradient(backend; K::Int = 8, label = "CPU")
+    met = Krang.Kerr(0.94); θo = deg2rad(60.0)
+    pix = Krang.SlowLightIntensityPixel(met, 3.0, 1.0, θo)
+    p = zeros(NPOLARIZEDPARAMS, 2)
+    p[:, 1] = [5.0, 2.0, 0.5, log(1.5), log(1.5), log(1.0), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e5), log(30.0), log(8.0), 1.0, 0.5, 0.3, 0.3, 0.1, 0.0]
+    p[:, 2] = [-3.0, 4.0, -0.5, log(1.0), log(1.2), log(0.8), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(20.0), log(15.0), 2.0, -1.0, -0.2, 0.4, -0.1, 0.0]
+    n = 96; L = gravitational_radius(6.5e9); ν = 230e9
+    function host(q)
+        c = RadiativeTransport(PolarizedSplats(q, [20.0]), ν, L); total = 0.0
+        for i in 1:n
+            acc = zero(RadiativeState{Float64})
+            for k in 1:K
+                s = Geodesics.GeodesicSample(1.0 + 0.1k, 8.0 - 0.3k + 0.01i, 1.3 + 0.02k, 0.7 + 0.05k, true, k % 2 == 0, true)
+                acc = c(acc, i, k, s, 0.01, pix)
+            end
+            st = observed_stokes(acc, ν)
+            total += st[1] + 0.5 * st[2] - 0.3 * st[3] + 2 * st[4]
+        end
+        return total
+    end
+    gh = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), p)[1]
+    @testset "polarized consumer differentiated in a kernel ($label, $K samples)" begin
+        params = adapt_to(backend, p); dparams = adapt_to(backend, zeros(size(p)))
+        out = adapt_to(backend, zeros(n)); dout = adapt_to(backend, ones(n))
+        tvec = adapt_to(backend, [20.0]); dtvec = adapt_to(backend, [0.0])
+        if backend isa CPU
+            dp = adapt_to(backend, zeros(size(p))); dw = adapt_to(backend, ones(n)); dt = adapt_to(backend, [0.0])
+            _polarized_chunk_adjoint!(backend, 1)(out, dw, params, dp, tvec, dt, pix, ν, L, Val(K); ndrange = 1); KernelAbstractions.synchronize(backend)
+        end
+        _polarized_chunk_adjoint!(backend, 64)(out, dout, params, dparams, tvec, dtvec, pix, ν, L, Val(K); ndrange = n)
+        KernelAbstractions.synchronize(backend)
+        g = Array(dparams)
+        e = maximum(abs.(g .- gh)) / maximum(abs.(gh))
+        @test all(isfinite, g)
+        @test e < 1e-10
+        @info "polarized consumer in a kernel ($label, $K samples): max |Δ|/max vs host Enzyme $e"
+    end
+end

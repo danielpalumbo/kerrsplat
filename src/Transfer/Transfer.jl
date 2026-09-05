@@ -19,9 +19,10 @@ using Bessels
 using ForwardDiff
 using Krang
 using StaticArrays
-using ..Geodesics: GeodesicSample
+using ..Geodesics: GeodesicSample, sincos_pair
 
 include("constants.jl")
+include("bessel.jl")
 include("coefficients.jl")
 include("kappa.jl")
 include("step.jl")

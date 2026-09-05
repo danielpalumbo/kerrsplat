@@ -74,7 +74,7 @@ Transfer.nelements(m::KappaSplats) = size(m.params, 2)
     G > T(WEIGHT_CUTOFF) || return zero(T), zero(SVector{3,T}), zero(SVector{3,T}), zero(T)
     @inbounds begin
         Bmag = exp(p[16, i])
-        sθ, cθ = sincos(p[17, i]); sϕ, cϕ = sincos(p[18, i])
+        sθ, cθ = sincos_pair(p[17, i]); sϕ, cϕ = sincos_pair(p[18, i])
         B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
         ũ = SVector(p[19, i], p[20, i], p[21, i])
     end

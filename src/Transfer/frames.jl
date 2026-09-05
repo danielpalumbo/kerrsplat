@@ -61,7 +61,7 @@ vector `f_u` (both contravariant, (t, r, θ, ϕ) order), Krang's form of eq. 6 o
 """
 @inline function walker_penrose(met::Krang.Kerr{T}, r, θ, p_u::SVector{4}, f_u::SVector{4}) where {T}
     a = met.spin
-    sθ, cθ = sincos(θ)
+    sθ, cθ = sincos_pair(θ)
     pt, pr, pθ, pϕ = p_u
     ft, fr, fθ, fϕ = f_u
     A = pt * fr - pr * ft + a * sθ * sθ * (pr * fϕ - pϕ * fr)

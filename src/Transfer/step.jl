@@ -32,7 +32,7 @@ the step is `O * S + E`.
     a = αI * Δ
     if (α2 + ρ2) * Δ^2 < T(1e-200)         # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
         e = exp(-a)                        # density tails): the unpolarized operator with the full emission vector
-        return SMatrix{4,4,T}(e * I4), (Δ * phi(a)) * j
+        return e * identity4(T), (Δ * phi(a)) * j
     end
     K1 = @SMatrix [zero(T) αQ αU αV; αQ zero(T) ρV -ρU; αU -ρV zero(T) ρQ; αV ρU -ρQ zero(T)]
     K2 = K1 * K1
@@ -56,7 +56,7 @@ the step is `O * S + E`.
     # ΘΔ²(1 + |K'Δ|²) when Θ is merely tiny, which also covers Θ underflowing while K' does not.
     if Θ * Δ^2 * (1 + (α2 + ρ2) * Δ^2) < T(1e-17)
         e = exp(-a)
-        O = e * (SMatrix{4,4,T}(I4) - Δ * K1 + (Δ^2 / 2) * K2 - (Δ^3 / 6) * K3)
+        O = e * (identity4(T) - Δ * K1 + (Δ^2 / 2) * K2 - (Δ^3 / 6) * K3)
         M = moments(a)
         E = Δ * (M[1] * j - Δ * M[2] * (K1 * j) + Δ^2 * M[3] / 2 * (K2 * j) - Δ^3 * M[4] / 6 * (K3 * j))
         return O, E
@@ -72,7 +72,7 @@ the step is `O * S + E`.
     e = exp(-a)
     c0 = (Λ2sq * ecosh + Λ1sq * e * cos(b2)) / Θ
     c2 = (ecoshm1 + e * versin(b2)) / Θ
-    O = c0 * SMatrix{4,4,T}(I4) + c2 * K2 - (Δ * esinh_b) * M3 - (Δ * e * sinc(b2)) * M2
+    O = c0 * identity4(T) + c2 * K2 - (Δ * esinh_b) * M3 - (Δ * e * sinc(b2)) * M2
     # ---- E = [C0 1 + C2 K'² − Ish M3 − Is M2] j: the same combinations of the integrals -----------
     # Ich = ∫₀^Δ e^{−αIu} cosh Λ1u du = Δ ∫₀¹ e^{−at} cosh b1t dt, Ish = ∫ e^{−αIu} sinh(Λ1u)/Λ1 du, etc.
     Ich = Δ * (phi(a) + int_coshm1(a, b1))
@@ -85,7 +85,8 @@ the step is `O * S + E`.
     return O, E
 end
 
-const I4 = SMatrix{4,4,Float64}(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+"The 4×4 identity built in place: a global constant matrix referenced from a CUDA kernel is materialized as a constant table, which Enzyme's device reverse pass cannot handle."
+@inline identity4(::Type{T}) where {T} = SMatrix{4,4,T}(one(T), zero(T), zero(T), zero(T), zero(T), one(T), zero(T), zero(T), zero(T), zero(T), one(T), zero(T), zero(T), zero(T), zero(T), one(T))
 
 # ---- scalar building blocks -------------------------------------------------------------------
 "φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt."
@@ -184,46 +185,43 @@ end
 end
 
 "∫₀¹ e^{−at}(1 − cos(bt)) dt."
-@inline function int_versin(a, b)
-    if b < 0.1
-        M = moments(a)
-        b2 = b * b
-        return b2 * (M[3] / 2 - b2 * (M[5] / 24 - b2 * (M[7] / 720 - b2 * M[9] / 40320)))
-    else
-        return phi(a) - int_cos(a, b)
-    end
+# The four trigonometric integrals below are written without calling one another (each regime of
+# each function is spelled out): mutually recursive helpers cannot be differentiated by Enzyme
+# inside a CUDA kernel, where the reverse pass of a recursive call needs a dynamic tape.
+"Series of ∫₀¹ e^{−at}(1 − cos bt) dt for small b."
+@inline function _int_versin_series(a, b)
+    M = moments(a)
+    b2 = b * b
+    return b2 * (M[3] / 2 - b2 * (M[5] / 24 - b2 * (M[7] / 720 - b2 * M[9] / 40320)))
 end
+"Closed form of ∫₀¹ e^{−at} cos(bt) dt for b not small."
+@inline function _int_cos_closed(a, b)
+    s, c = sincos_pair(b)
+    return (a - exp(-a) * (a * c - b * s)) / (a * a + b * b)
+end
+"Series of ∫₀¹ e^{−at}(t − sin(bt)/b) dt for small b."
+@inline function _int_sinc_deficit_series(a, b)
+    M = moments(a)
+    b2 = b * b
+    return b2 * (M[4] / 6 - b2 * (M[6] / 120 - b2 * (M[8] / 5040 - b2 * M[10] / 362880)))
+end
+"Closed form of ∫₀¹ e^{−at} sin(bt)/b dt for b not small."
+@inline function _int_sinc_closed(a, b)
+    s, c = sincos_pair(b)
+    return (1 - exp(-a) * (a * s / b + c)) / (a * a + b * b)
+end
+
+"∫₀¹ e^{−at}(1 − cos bt) dt."
+@inline int_versin(a, b) = b < 0.1 ? _int_versin_series(a, b) : phi(a) - _int_cos_closed(a, b)
 
 "∫₀¹ e^{−at} cos(bt) dt."
-@inline function int_cos(a, b)
-    if b < 0.1
-        return phi(a) - int_versin(a, b)
-    else
-        s, c = sincos(b)
-        return (a - exp(-a) * (a * c - b * s)) / (a * a + b * b)
-    end
-end
+@inline int_cos(a, b) = b < 0.1 ? phi(a) - _int_versin_series(a, b) : _int_cos_closed(a, b)
 
 "∫₀¹ e^{−at} sin(bt)/b dt."
-@inline function int_sinc(a, b)
-    if b < 0.1
-        return moment1(a) - int_sinc_deficit(a, b)
-    else
-        s, c = sincos(b)
-        return (1 - exp(-a) * (a * s / b + c)) / (a * a + b * b)
-    end
-end
+@inline int_sinc(a, b) = b < 0.1 ? moment1(a) - _int_sinc_deficit_series(a, b) : _int_sinc_closed(a, b)
 
 "∫₀¹ e^{−at}(t − sin(bt)/b) dt."
-@inline function int_sinc_deficit(a, b)
-    if b < 0.1
-        M = moments(a)
-        b2 = b * b
-        return b2 * (M[4] / 6 - b2 * (M[6] / 120 - b2 * (M[8] / 5040 - b2 * M[10] / 362880)))
-    else
-        return moment1(a) - int_sinc(a, b)
-    end
-end
+@inline int_sinc_deficit(a, b) = b < 0.1 ? _int_sinc_deficit_series(a, b) : moment1(a) - _int_sinc_closed(a, b)
 
 "∫₀¹ e^{−at}(sinh(bt)/b − t) dt."
 @inline function int_sinhc_excess(a, b)
@@ -249,7 +247,7 @@ struct RadiativeState{T}
     P::SMatrix{4,4,T,16}
     S::SVector{4,T}
 end
-Base.zero(::Type{RadiativeState{T}}) where {T} = RadiativeState(SMatrix{4,4,T}(I4), zero(SVector{4,T}))
+Base.zero(::Type{RadiativeState{T}}) where {T} = RadiativeState(identity4(T), zero(SVector{4,T}))
 @inline advance(st::RadiativeState, O, E) = RadiativeState(st.P * O, st.S + st.P * E)
 
 """
@@ -311,7 +309,7 @@ basis: (Q, U) rotate by 2χ, I and V are unchanged. Returns the 4-vectors j, α 
 expected by `transfer_step`.
 """
 @inline function rotate_to_screen(c::StokesCoefficients{T}, χ) where {T}
-    s2, c2 = sincos(2χ)
+    s2, c2 = sincos_pair(2χ)
     j = SVector(c.jI, c.jQ * c2, c.jQ * s2, c.jV)
     α = SVector(c.αI, c.αQ * c2, c.αQ * s2, c.αV)
     ρ = SVector(c.ρQ * c2, c.ρQ * s2, c.ρV)

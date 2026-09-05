@@ -29,10 +29,11 @@ using Adapt
 using Krang
 using StaticArrays
 using KernelAbstractions
+using Enzyme
 
 const KA = KernelAbstractions
 
-export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRenderer, thin_image!, thin_image
+export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRenderer, thin_image!, thin_image, thin_gradient!
 export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image, polarized_cube, flux_density, accumulator_type
 export trajectory_knots, KnotSplats, boyer_lindquist, coordinate_velocity
 export fields, field_grid, recovery_metrics
@@ -54,7 +55,7 @@ const NSPLATPARAMS = length(SPLAT_PARAMS)
 @inline function pattern_offset(p, i, t, x, y, z, iω)
     @inbounds begin
         φ = p[iω, i] * (t - p[11, i])
-        sφ, cφ = sincos(φ)
+        sφ, cφ = sincos_pair(φ)
         cx = p[1, i] * cφ - p[2, i] * sφ                # centre rotated about the spin axis
         cy = p[1, i] * sφ + p[2, i] * cφ
         d = SVector(x - cx, y - cy, z - p[3, i])

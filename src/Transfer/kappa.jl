@@ -24,7 +24,7 @@ Coefficients of a relativistic κ distribution of index `κ` and width `w` (Θe-
 """
 @inline function kappa_synchrotron(ne, κ, w, B, ν, θ, hyp)
     T = typeof(float(ne * κ * w * B * ν * θ))
-    sinθ, cosθ = sincos(θ)
+    sinθ, cosθ = sincos_pair(θ)
     νc = EE * B / (2 * T(π) * ME * CL)
     νw = (w * κ)^2 * νc * sinθ
     X = ν / νw
@@ -102,7 +102,7 @@ interpolated linearly in κ between the fitted values 3.5, 4, 4.5, 5 (clamped ou
 """
 @inline function kappa_rotativities(ne, κ, w, B, ν, θ)
     T = typeof(float(ne * κ * w * B * ν * θ))
-    sinθ, cosθ = sincos(θ)
+    sinθ, cosθ = sincos_pair(θ)
     νc = EE * B / (2 * T(π) * ME * CL)
     X = ν / ((w * κ)^2 * νc * sinθ)
     κc = clamp(κ, T(3.5), T(5))

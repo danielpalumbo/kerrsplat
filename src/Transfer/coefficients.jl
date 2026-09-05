@@ -51,15 +51,15 @@ end
 @inline planck(ν, Θe) = planck_invariant(ν, Θe) * ν^3
 
 # K₀ and K₁ with ForwardDiff duals (Bessels.jl accepts only Float32/Float64): K₀′ = −K₁, K₁′ = −K₀ − K₁/x.
-@inline besselk0(x::Real) = Bessels.besselk0(x)
-@inline besselk1(x::Real) = Bessels.besselk1(x)
+@inline besselk0(x::Real) = besselk0_inline(x)
+@inline besselk1(x::Real) = besselk1_inline(x)
 @inline function besselk0(d::ForwardDiff.Dual{Tg}) where {Tg}
     x = ForwardDiff.value(d)
-    return ForwardDiff.Dual{Tg}(Bessels.besselk0(x), -Bessels.besselk1(x) * ForwardDiff.partials(d))
+    return ForwardDiff.Dual{Tg}(besselk0_inline(x), -besselk1_inline(x) * ForwardDiff.partials(d))
 end
 @inline function besselk1(d::ForwardDiff.Dual{Tg}) where {Tg}
     x = ForwardDiff.value(d)
-    k0 = Bessels.besselk0(x); k1 = Bessels.besselk1(x)
+    k0 = besselk0_inline(x); k1 = besselk1_inline(x)
     return ForwardDiff.Dual{Tg}(k1, (-k0 - k1 / x) * ForwardDiff.partials(d))
 end
 
@@ -87,7 +87,7 @@ with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
 """
 @inline function thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV::Bool = false, pandya::Bool = false)
     T = typeof(float(ne * Θe * B * ν * θ))
-    sinθ, cosθ = sincos(θ)
+    sinθ, cosθ = sincos_pair(θ)
     # rotativities (Dexter 2016 appendix B; ipole maxwell_juettner_rho_Q / rho_V)
     ω0 = EE * B / (ME * CL)
     ωp2 = 4 * T(π) * ne * EE^2 / ME
@@ -186,7 +186,7 @@ should keep power-law parcels within the window (`powerlaw_rotativities_valid`).
 """
 @inline function powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ)
     T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
-    sinθ, cosθ = sincos(θ)
+    sinθ, cosθ = sincos_pair(θ)
     νB = EE * B * sinθ / (2 * T(π) * ME * CL)
     ρperp = ne * EE^2 * (p - 1) / (ME * CL * νB * (γmin^(1 - p) - γmax^(1 - p)))
     νmin = γmin^2 * νB
@@ -211,7 +211,7 @@ Jones & O'Dell rotativities of [`powerlaw_rotativities`](@ref) (symphony's fits 
 """
 @inline function powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ; rotativities::Bool = true)
     T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
-    sinθ, cosθ = sincos(θ)
+    sinθ, cosθ = sincos_pair(θ)
     νc = EE * B / (2 * T(π) * ME * CL)
     gspan = γmin^(1 - p) - γmax^(1 - p)
     # emissivities

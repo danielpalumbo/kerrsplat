@@ -66,7 +66,8 @@ Open, roughly in order of value: the time-resolved visibility likelihood (one sl
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
 noise floor; spin and inclination fits on real data; per-ray interval lists for hundreds of
-splats; GPU-side Enzyme gradients (blocked upstream); the Comrade.jl route; GRMHD movie fits
+splats; the chunked reverse sweep that turns the GPU in-kernel gradients (thin rays and
+polarized chunks work, 2026-09-05) into full polarized-ray gradients; the Comrade.jl route; GRMHD movie fits
 (need dumps); the upstream reports in `docs/notes/upstream_issues.md` (Daniel's call).
 
 ## Conventions that bit us
@@ -77,3 +78,7 @@ splats; GPU-side Enzyme gradients (blocked upstream); the Comrade.jl route; GRMH
   trailing digits.
 - Enzyme reverse passes over the CPU kernel tape the whole screen (≈ 1 GB per 8e4
   pixel-samples): tile large screens.
+- Code that Enzyme must differentiate inside a CUDA kernel: no `sincos` (use `sincos_pair`),
+  no polynomial tables of nine or more coefficients through `evalpoly`/`@horner` (use
+  `@muladd_chain`), no mutually recursive helpers, and keep the geodesic march outside the
+  differentiated region (stored samples). Details in `docs/notes/2026-09-04_phase1_thin_splats.md`.
