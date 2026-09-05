@@ -50,7 +50,7 @@ Scripts take these by path or flag; they were on the original workstation only.
   time-averaged M87 GRMHD library (`tavgs_fits_480/*.fits`): `validation/grmhd_fit`.
 - No GRMHD fluid dumps: movie fits against GRMHD remain open for that reason.
 
-## State on 2026-09-04
+## State on 2026-09-05
 
 Merged and validated: analytic geodesics on CPU and CUDA; full polarized transfer (thermal,
 power-law, κ) against symphony and ipole; Gaussian plasma splats with slow light, pattern
@@ -58,7 +58,9 @@ rotation and advection; the inference layer (movie χ², staged fits with hygien
 Fisher audit, spin and inclination by duals); visibilities, closures, per-scan gains, a
 uvfits reader and scan averaging validated against ehtim on real data (EHT Fourier sign
 convention); reflection parity for observers below the equator and negative spins; the
-half-orbit (sub-image) decomposition validated against Krang. Real-data results: M87 closure
+half-orbit (sub-image) decomposition validated against Krang; Enzyme reverse mode inside the
+CUDA kernel over stored samples (thin rays exact to 6e-13; the polarized consumer over eight
+samples per kernel). Full suite: 4,882,390 checks, 81 minutes, 2026-09-05. Real-data results: M87 closure
 fit χ²/N 1.5; self-calibrated polarimetric fit χ²/N 7 with six parcels; GRMHD snapshot fit to
 5% of the Stokes I norm.
 
