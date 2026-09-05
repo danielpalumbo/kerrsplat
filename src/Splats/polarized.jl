@@ -205,6 +205,7 @@ CUDA (gate: `test_stored_gradient`, host Enzyme gradient to 1e-12).
 function thin_gradient!(dparams, dout, cache::GeodesicCache{T,N}, params, t_obs) where {T,N}
     backend = cache.backend
     nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
+    prepare_backend!(backend; stack_bytes = ENZYME_STACK_BYTES, heap_bytes = ENZYME_HEAP_BYTES)   # the reverse tape: per-thread stack, then device malloc
     tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
     dtvec = KA.allocate(backend, T, 1); fill!(dtvec, zero(T))
     out = KA.allocate(backend, T, npixels(cache))

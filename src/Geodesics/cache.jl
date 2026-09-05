@@ -10,6 +10,8 @@ which shows up as an illegal memory access (plan §2, item 3). No-op elsewhere.
 prepare_backend!(::KA.Backend; kwargs...) = nothing
 
 const CUDA_STACK_BYTES = 4096
+"Per-thread stack for Enzyme's reverse tape inside a kernel (a thin ray of 300 samples or eight polarized samples); the most this card grants every resident thread."
+const ENZYME_STACK_BYTES = 65536
 
 """
     cuda_stack_bytes(T)
@@ -20,9 +22,21 @@ scaled up for wider duals.
 """
 cuda_stack_bytes(::Type{T}) where {T} = sizeof(T) <= 8 ? CUDA_STACK_BYTES : 16384 * cld(sizeof(T), 24)
 
-function prepare_backend!(::CUDA.CUDABackend; stack_bytes::Integer = CUDA_STACK_BYTES)
+"Device malloc heap for Enzyme's tapes inside kernels (spilled there once they exceed the stack)."
+const ENZYME_HEAP_BYTES = 1 << 30
+
+function prepare_backend!(::CUDA.CUDABackend; stack_bytes::Integer = CUDA_STACK_BYTES, heap_bytes::Integer = 0)
     if CUDA.limit(CUDA.LIMIT_STACK_SIZE) < stack_bytes
         CUDA.limit!(CUDA.LIMIT_STACK_SIZE, stack_bytes)
+    end
+    if heap_bytes > 0 && CUDA.limit(CUDA.LIMIT_MALLOC_HEAP_SIZE) < heap_bytes
+        # CUDA refuses to change the heap once a kernel that used device malloc has run: the first
+        # in-kernel gradient of a session must therefore come through here before any other
+        try
+            CUDA.limit!(CUDA.LIMIT_MALLOC_HEAP_SIZE, heap_bytes)
+        catch e
+            throw(ArgumentError("the device malloc heap ($(CUDA.limit(CUDA.LIMIT_MALLOC_HEAP_SIZE)) bytes) could not be raised to $heap_bytes after a kernel used it; set CUDA.limit!(CUDA.LIMIT_MALLOC_HEAP_SIZE, $heap_bytes) before the first in-kernel gradient ($(sprint(showerror, e)))"))
+        end
     end
     return nothing
 end

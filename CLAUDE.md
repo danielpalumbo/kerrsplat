@@ -26,8 +26,9 @@ before any performance work.
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use
   `Geodesics.sincos_pair`), no `evalpoly`/`@horner` tables of nine or more coefficients (they
   are outlined into calls Enzyme cannot cache; use `Transfer.@muladd_chain`), no mutually
-  recursive helpers. The per-thread stack tops out at 64 KB on this card: a thin ray of 300
-  samples or eight polarized samples per kernel. Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
+  recursive helpers. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
+  kernel); longer tapes spill to device malloc, so `prepare_backend!` raises the malloc heap to
+  1 GB at the first gradient kernel (CUDA refuses to change it after a kernel has used malloc). Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
   is worse, not better.
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
