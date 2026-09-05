@@ -253,6 +253,57 @@ Base.zero(::Type{RadiativeState{T}}) where {T} = RadiativeState(SMatrix{4,4,T}(I
 @inline advance(st::RadiativeState, O, E) = RadiativeState(st.P * O, st.S + st.P * E)
 
 """
+    WindingState{T}
+
+A [`RadiativeState`](@ref) together with the half-orbit count of the ray: `n` is the number of
+completed passages of the ray through the slab |z| < h about the midplane, each containing an
+equatorial crossing (for h = 0 the number of equatorial crossings), counted from the observer
+inward, so that emission at the current sample belongs to the sub-image of order `n`
+(Johnson et al. 2020: n = 0 direct, n = 1 the first lensed ring, …); `zprev`, `inside` and
+`crossed` are the counter's memory (`zprev` is NaN before the first sample). A consumer with
+`nmax ≥ 0` truncates the ray once `n > nmax`, so that the sub-image of order n is the
+difference of the images truncated at n and n − 1 (exactly: the segments in front are the
+same, so their transmission is the same).
+"""
+struct WindingState{T}
+    state::RadiativeState{T}
+    zprev::T
+    n::Int32
+    inside::Bool
+    crossed::Bool
+end
+Base.zero(::Type{WindingState{T}}) where {T} = WindingState(zero(RadiativeState{T}), T(NaN), Int32(0), false, false)
+
+"""
+    wind(w::WindingState, z, h) -> WindingState
+
+Advance the passage counter of `w` to a sample at height `z` (the slab half-thickness `h`): a
+passage is entered when |z| drops below h, marked as crossed when z changes sign inside it, and
+counted when the ray leaves the slab after a crossing; a crossing that skips the slab in one
+step (or any crossing when h = 0) is counted at once. The radiative state is unchanged.
+"""
+@inline function wind(w::WindingState{T}, z, h) where {T}
+    zp = w.zprev
+    isnan(zp) && return WindingState(w.state, T(z), w.n, abs(z) < h, false)
+    inside_now = abs(z) < h
+    crossing = zp * z < 0
+    n = w.n; inside = w.inside; crossed = w.crossed
+    if inside || inside_now
+        crossed |= crossing
+        if inside && !inside_now                     # leaving the slab
+            crossed && (n += Int32(1))
+            crossed = false
+        elseif !inside && inside_now
+            crossed = crossing                       # entering (a crossing on the entering step counts for this passage)
+        end
+        inside = inside_now
+    elseif crossing
+        n += Int32(1)                                # skipped through the slab (or h = 0)
+    end
+    return WindingState(w.state, T(z), n, inside, crossed)
+end
+
+"""
     rotate_to_screen(c::StokesCoefficients, χ) -> (j, α, ρ)
 
 Coefficients of the field-aligned basis rotated by the angle `χ` into a common (screen) Stokes

@@ -48,14 +48,20 @@ StokesMovie(data::AbstractArray{SVector{4,T},4}, times, νs, σ; mask = trues(si
 the polarized splat model rendered through `cache` (already regenerated) and the length unit `L`.
 Written as a plain function of `params` so that Enzyme can differentiate it.
 """
-function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), priors = nothing) where {T}
-    out = Vector{RadiativeState{T}}(undef, npixels(cache))
+function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), priors = nothing, nmax = -1, slab = 0) where {T}
+    # the accumulator type is chosen in a branch so that each path is type-stable for Enzyme
+    total = nmax >= 0 ? _chi2_frames(Vector{WindingState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab) :
+                        _chi2_frames(Vector{RadiativeState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab)
+    return total + penalty(params, priors)
+end
+
+function _chi2_frames(out::AbstractVector, params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, frames, freqs, nmax, slab) where {T}
     nα, nβ = size(movie.data, 1), size(movie.data, 2)
     total = zero(T)
     for l in freqs, k in frames
         ν = movie.νs[l]
-        fill!(out, zero(RadiativeState{T}))
-        polarized_image!(out, cache, params, movie.times[k], ν, L)
+        fill!(out, zero(eltype(out)))
+        polarized_image!(out, cache, params, movie.times[k], ν, L; nmax, slab)
         img = to_screen(cache, out)
         for j in 1:nβ, i in 1:nα
             idx = CartesianIndex(i, j, k, l)
@@ -64,7 +70,7 @@ function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames 
             total += r[1] * r[1] + r[2] * r[2] + r[3] * r[3] + r[4] * r[4]
         end
     end
-    return total + penalty(params, priors)
+    return total
 end
 
 "Boolean mask over a parameter matrix that frees the given rows (by index or name) of all splats."
@@ -205,19 +211,19 @@ the whole pipeline), with the noise of the movie. Returns F, J and the linear in
 free parameters. The eigen-decomposition of F ranks the identifiable parameter combinations:
 small eigenvalues are the degeneracies of the data set (e.g. nₑ–B–Θe at one frequency).
 """
-function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), chunk = 8) where {T}
+function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), chunk = 8, nmax = -1, slab = 0) where {T}
     idx = findall(vec(free))
     function model(x::AbstractVector{S}) where {S}
         q = S.(params)
         for (k, i) in enumerate(idx)
             q[i] = x[k]
         end
-        out = Vector{RadiativeState{S}}(undef, npixels(cache))
+        out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
         vals = S[]
         for l in eachindex(movie.νs), k in eachindex(movie.times)
             ν = movie.νs[l]
-            fill!(out, zero(RadiativeState{S}))
-            polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L))
+            fill!(out, zero(eltype(out)))
+            polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L); nmax, slab)
             img = to_screen(cache, out)
             for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
                 c = CartesianIndex(i, j, k, l)
@@ -298,12 +304,12 @@ Run the stages in order on a parameter matrix (returned, since hygiene can chang
 `events` the hygiene passes as `(stage, iteration, nsplats_before, nsplats_after)`.
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
-              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing) where {T}
+              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing, nmax = -1, slab = 0) where {T}
     function make_loss(st, it)
         freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
         frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
         freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
-        return q -> chi2(q, movie, cache, L; frames, freqs, priors)
+        return q -> chi2(q, movie, cache, L; frames, freqs, priors, nmax, slab)
     end
     return _fit_loop!(params, make_loss, stages; hygiene, callback)
 end

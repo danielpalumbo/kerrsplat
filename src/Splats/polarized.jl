@@ -100,15 +100,24 @@ at observation time `t_obs` (M units) and frequency `ν_obs` [Hz], with the leng
 (see `Transfer.gravitational_radius`). `out` is a vector of `RadiativeState` in sorted pixel
 order; `observed_stokes.(out, ν_obs)` gives (I, Q, U, V) in cgs. Returns `out`.
 """
-function polarized_image!(out, cache::GeodesicCache, params, t_obs, ν_obs, L)
-    fused_march!(RadiativeTransport(PolarizedSplats(params, t_obs), ν_obs, L), out, cache)
+function polarized_image!(out, cache::GeodesicCache, params, t_obs, ν_obs, L; nmax = -1, slab = 0)
+    fused_march!(RadiativeTransport(PolarizedSplats(params, t_obs), ν_obs, L; nmax, slab), out, cache)
     return out
 end
 
-"Screen-shaped array of Stokes 4-vectors (allocating)."
-function polarized_image(cache::GeodesicCache{T}, params, t_obs, ν_obs, L) where {T}
-    out = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache))
-    polarized_image!(out, cache, params, t_obs, ν_obs, L)
+"Accumulator type for the polarized transport: `WindingState` when the ray is truncated by its half-orbit count, `RadiativeState` otherwise."
+accumulator_type(::Type{T}, nmax) where {T} = nmax >= 0 ? WindingState{T} : RadiativeState{T}
+
+"""
+Screen-shaped array of Stokes 4-vectors (allocating). With `nmax ≥ 0` the rays are truncated
+after their `nmax`-th passage through the slab |z| < `slab` (see `Transfer.WindingState`), so
+the image holds the sub-images of order 0…nmax; the order-n sub-image alone is the difference of
+the images with `nmax = n` and `nmax = n − 1`.
+"""
+function polarized_image(cache::GeodesicCache{T}, params, t_obs, ν_obs, L; nmax = -1, slab = 0) where {T}
+    out = KA.allocate(cache.backend, accumulator_type(T, nmax), npixels(cache))
+    fill!(out, zero(eltype(out)))
+    polarized_image!(out, cache, params, t_obs, ν_obs, L; nmax, slab)
     return map(st -> observed_stokes(st, ν_obs), to_screen(cache, out))
 end
 
@@ -118,9 +127,9 @@ end
 Stokes movie cube over observation times and frequencies sharing one geodesic cache: an array of
 Stokes 4-vectors of size (nα, nβ, length(times), length(νs)) on the host.
 """
-function polarized_cube(cache::GeodesicCache{T}, params, times, νs, L) where {T}
-    out = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache))
-    frame(t, ν) = (polarized_image!(out, cache, params, t, ν, L); Array(map(st -> observed_stokes(st, ν), to_screen(cache, out))))
+function polarized_cube(cache::GeodesicCache{T}, params, times, νs, L; nmax = -1, slab = 0) where {T}
+    out = KA.allocate(cache.backend, accumulator_type(T, nmax), npixels(cache))
+    frame(t, ν) = (fill!(out, zero(eltype(out))); polarized_image!(out, cache, params, t, ν, L; nmax, slab); Array(map(st -> observed_stokes(st, ν), to_screen(cache, out))))
     first = frame(times[1], νs[1])
     cube = Array{SVector{4,T}}(undef, size(first)..., length(times), length(νs))
     cube[:, :, 1, 1] = first

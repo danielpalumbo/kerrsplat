@@ -97,8 +97,14 @@ struct RadiativeTransport{M,T}
     model::M
     ν_obs::T
     L::T
+    nmax::Int32
+    slab::T
 end
 Adapt.@adapt_structure RadiativeTransport
+function RadiativeTransport(model, ν_obs::Real, L::Real; nmax::Integer = -1, slab::Real = 0)
+    T = promote_type(typeof(ν_obs), typeof(L))
+    return RadiativeTransport(model, T(ν_obs), T(L), Int32(nmax), T(slab))
+end
 
 "Number of fluid elements of a model; see `RadiativeTransport`."
 function nelements end
@@ -108,6 +114,24 @@ function element end
 @inline function (c::RadiativeTransport)(acc::RadiativeState{T}, j, k, s::GeodesicSample, Δτ, pix) where {T}
     met = Krang.metric(pix)
     (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
+    return transfer_sample(c, acc, s, Δτ, pix)
+end
+
+"""
+Fused-march consumer with the half-orbit counter (accumulators of type [`WindingState`](@ref)):
+the counter advances at every valid sample and, when the transport has `nmax ≥ 0`, samples
+beyond the `nmax`-th passage contribute neither emission nor absorption (the ray is truncated).
+"""
+@inline function (c::RadiativeTransport)(acc::WindingState{T}, j, k, s::GeodesicSample, Δτ, pix) where {T}
+    met = Krang.metric(pix)
+    (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
+    w = wind(acc, s.r * cos(s.θ), c.slab)
+    (c.nmax >= 0 && w.n > c.nmax) && return w
+    return WindingState(transfer_sample(c, w.state, s, Δτ, pix), w.zprev, w.n, w.inside, w.crossed)
+end
+
+@inline function transfer_sample(c::RadiativeTransport, acc::RadiativeState{T}, s::GeodesicSample, Δτ, pix) where {T}
+    met = Krang.metric(pix)
     j4 = zero(SVector{4,T}); α4 = zero(SVector{4,T}); ρ3 = zero(SVector{3,T})
     active = false
     for i in 1:nelements(c.model)
@@ -127,6 +151,7 @@ end
 
 "Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
 observed_stokes(st::RadiativeState, ν_obs) = st.S * ν_obs^3
+observed_stokes(w::WindingState, ν_obs) = observed_stokes(w.state, ν_obs)
 
 # ---- composite models ------------------------------------------------------------------------------
 """

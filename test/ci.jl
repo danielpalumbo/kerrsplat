@@ -24,6 +24,7 @@ include("test_polarized.jl")
 include("riaf_model.jl")
 include("test_uvfits.jl")
 include("test_polarized_splats.jl")
+include("test_winding.jl")
 
 @testset "KerrSplat CI subset" begin
     test_geodesics(CPU(); res = 24, N = 16, tol = 1e-12, label = "CPU")
@@ -37,4 +38,5 @@ include("test_polarized_splats.jl")
     test_uvfits()
     test_scan_average()
     test_reflection()
+    test_winding(CPU(); res = 16, N = 200, label = "CPU")
 end

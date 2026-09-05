@@ -44,6 +44,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Station gains (self-calibration χ², per station or per station and scan) | `Fit` | gained data at the true gains; Enzyme vs stencil | prior only; 1e-5 |
 | Power-law and κ splat sets | `Splats` | thin-limit additivity of the three populations; CUDA vs CPU | 2e-6; 1e-11 |
 | Reflection parity (observers beyond 90°, negative spin, U and V handedness) | `Splats` | equatorial and azimuthal mirror images of the mirrored source (axial field) | 1e-11 |
+| Half-orbit decomposition (`WindingState`, rays truncated after the n-th midplane passage) | `Transfer`, `Splats`, `Fit` | Krang's `Gθ` crossing times and `emission_radius` sub-image geometry; identity without truncation; Enzyme vs stencil; CUDA | 2e-7 in Mino time; 1e-13; 1e-5 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
 r/θ recurrence 1.9 ns, full quadrature 10 ns (0.67 s per regeneration), fused thin splats 15 ns
