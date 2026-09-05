@@ -39,4 +39,5 @@ include("test_winding.jl")
     test_scan_average()
     test_reflection()
     test_winding(CPU(); res = 16, N = 200, label = "CPU")
+    test_polarized_kernel_gradient(CPU(); K = 4, label = "CPU")
 end

@@ -265,3 +265,40 @@ function test_kernel_gradient(backend; res::Int, N::Int, tol::Float64, label::St
         @test e <= tol
     end
 end
+
+"""
+    test_stored_gradient(backend; res, N, tol, label)
+
+Enzyme reverse mode inside the fused kernel over *stored* samples (`thin_gradient!`) against the
+host gradient of the same loss; this is the route that runs on CUDA (the march stays outside the
+differentiated region).
+"""
+function test_stored_gradient(backend; res::Int, N::Int, tol::Float64, label::String)
+    a, θo = 0.94, deg2rad(60.0)
+    t_obs = 20.0
+    camera = Camera((-10.0, 10.0), (-10.0, 10.0), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    p = test_splat_params()
+    target = thin_image_march(p, cpu, t_obs)
+    p1 = p .+ 0.05 .* randn(MersenneTwister(1), size(p))
+    loss(q) = sum(abs2, thin_image_march(q, cpu, t_obs) .- target)
+    g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(loss), p1)[1]
+    @testset "$label Enzyme in the kernel over stored samples, $(res)² × $N" begin
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = KernelAbstractions.allocate(backend, Float64, size(p1)...); copyto!(params, p1)
+        dparams = KernelAbstractions.allocate(backend, Float64, size(p1)...); fill!(dparams, 0.0)
+        out = KernelAbstractions.allocate(backend, Float64, npixels(cache)); thin_image!(out, cache, params, t_obs)
+        tgt = KernelAbstractions.allocate(backend, Float64, npixels(cache)); copyto!(tgt, target)
+        dout = 2 .* (out .- tgt)
+        t0 = time()
+        thin_gradient!(dparams, dout, cache, params, t_obs)
+        t1 = time() - t0
+        g = Array(dparams)
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @info "$label stored-sample in-kernel gradient vs host gradient: max |Δ|/max = $e ($(round(t1, digits = 1)) s including compilation)"
+        @test all(isfinite, g)
+        @test e <= tol
+    end
+end

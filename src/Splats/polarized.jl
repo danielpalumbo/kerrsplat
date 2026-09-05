@@ -62,7 +62,7 @@ multiplications instead of the quaternion rotation and the exponential of `splat
 @inline function outside_support(p, i, t, x, y, z)
     @inbounds begin
         φ = p[end, i] * (t - p[11, i])
-        sφ, cφ = sincos(φ)
+        sφ, cφ = sincos_pair(φ)
         cx = p[1, i] * cφ - p[2, i] * sφ
         cy = p[1, i] * sφ + p[2, i] * cφ
         d2 = (x - cx)^2 + (y - cy)^2 + (z - p[3, i])^2
@@ -82,7 +82,7 @@ end
         ne = exp(p[13, i]) * G
         Θe = exp(p[14, i])
         Bmag = exp(p[15, i])
-        sθ, cθ = sincos(p[16, i]); sϕ, cϕ = sincos(p[17, i])
+        sθ, cθ = sincos_pair(p[16, i]); sϕ, cϕ = sincos_pair(p[17, i])
         B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
         ũ = SVector(p[18, i], p[19, i], p[20, i])
     end
@@ -187,4 +187,56 @@ function recovery_metrics(p_fit, p_true, t, xs, ys, zs)
     w = nt ./ sum(nt)
     return (psnr_density = psnr, rel_density = sqrt(mse) / maximum(nt),
             temperature = sum(w .* abs.(Θf .- Θt) ./ max.(Θt, eps())), field = sum(w .* abs.(Bf .- Bt) ./ max.(Bt, eps())))
+end
+
+# ---- gradients inside the GPU kernel over stored samples ---------------------------------------
+"""
+    thin_gradient!(dparams, dout, cache, params, t_obs) -> dparams
+
+∂(dout · image)/∂params for the thin splats by Enzyme reverse mode *inside* the fused kernel, one
+ray per thread, over the samples stored in `cache` (a cache built with `store_samples = true` and
+regenerated with the `Direct` or `Recurrence` marcher). The geodesic march stays outside the
+differentiated region: Enzyme compiles the march's special functions (Jacobi elliptic
+amplitudes, inverse trigonometric functions) through their checked host implementations when it
+differentiates a CUDA kernel, which the device cannot run, while the consumer's own arithmetic
+differentiates exactly. The adjoint seed `dout` is consumed. Works on the CPU backend and on
+CUDA (gate: `test_stored_gradient`, host Enzyme gradient to 1e-12).
+"""
+function thin_gradient!(dparams, dout, cache::GeodesicCache{T,N}, params, t_obs) where {T,N}
+    backend = cache.backend
+    nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
+    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    dtvec = KA.allocate(backend, T, 1); fill!(dtvec, zero(T))
+    out = KA.allocate(backend, T, npixels(cache))
+    met = Krang.Kerr(cache.spin)
+    if backend isa CPU   # compile on one work item first (concurrent Enzyme compilation on several tasks deadlocks)
+        dp = similar(dparams); fill!(dp, zero(T)); dt = similar(dtvec); fill!(dt, zero(T)); dw = copy(dout)
+        stored_adjoint_kernel!(backend, 1)(out, dw, dp, params, tvec, dt, cache.samples, cache.consts, met, cache.θo, Val(N); ndrange = 1)
+        KA.synchronize(backend)
+    end
+    stored_adjoint_kernel!(backend, 64)(out, dout, dparams, params, tvec, dtvec, cache.samples, cache.consts, met, cache.θo, Val(N); ndrange = npixels(cache))
+    KA.synchronize(backend)
+    return dparams
+end
+
+@inline function stored_thin_value!(out, params, tvec, S, pc, j, met, θo, ::Val{N}) where {N}
+    pix = build_pixel(pc, j, met, θo)
+    Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
+    c = ThinRenderer(params, tvec)
+    acc = zero(eltype(out))
+    for k in 1:N
+        @inbounds f = S.flags[j, k]
+        ok = (f & 0x01) != 0x00; νr = (f & 0x02) != 0x00; νθ = (f & 0x04) != 0x00
+        @inbounds s = GeodesicSample(S.t[j, k], S.r[j, k], S.θ[j, k], S.ϕ[j, k], νr, νθ, ok)
+        acc = c(acc, j, k, s, Δτ, pix)
+    end
+    @inbounds out[j] = acc
+    return nothing
+end
+
+@kernel function stored_adjoint_kernel!(out, dout, dparams, params, tvec, dtvec, S, pc, met::Krang.Kerr, θo, ::Val{N}) where {N}
+    j = @index(Global, Linear)
+    Enzyme.autodiff_deferred(Enzyme.Reverse, Enzyme.Const(stored_thin_value!), Enzyme.Const,
+                             Enzyme.Duplicated(out, dout), Enzyme.Duplicated(params, dparams), Enzyme.Duplicated(tvec, dtvec),
+                             Enzyme.Const(S), Enzyme.Const(pc), Enzyme.Const(j), Enzyme.Const(met), Enzyme.Const(θo), Enzyme.Const(Val(N)))
 end

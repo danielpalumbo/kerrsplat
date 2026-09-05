@@ -14,11 +14,14 @@ end
 """
     jacobi_state(u, μ) -> JacobiState
 
-Direct evaluation of (sn, cn, dn)(u | μ) through JacobiElliptic (one amplitude computation).
+Direct evaluation of (sn, cn, dn)(u | μ) through JacobiElliptic's amplitude (one amplitude
+computation; the sine and cosine are taken separately rather than through `sincos`, whose CUDA
+intrinsic Enzyme cannot differentiate inside a kernel).
 """
 @inline function jacobi_state(u, μ)
-    s, c, d = JacobiElliptic.CarlsonAlg.ellipj(u, μ)
-    return JacobiState(s, c, d)
+    φ = JacobiElliptic.CarlsonAlg.am(u, μ)
+    s = sin(φ); c = cos(φ)
+    return JacobiState(s, c, sqrt(muladd(-μ, s * s, one(s))))
 end
 
 """

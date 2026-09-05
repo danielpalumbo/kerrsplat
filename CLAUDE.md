@@ -21,6 +21,14 @@ before any performance work.
 - Enzyme reverse mode inside KernelAbstractions kernels requires compile-time trip counts
   (`Val(N)`); runtime loop bounds crash with an illegal memory access.
 - Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
+- Enzyme inside a CUDA kernel (reverse mode, one ray per thread) works only over stored
+  samples (the march's special functions get compiled through checked host code otherwise) and
+  with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use
+  `Geodesics.sincos_pair`), no `evalpoly`/`@horner` tables of nine or more coefficients (they
+  are outlined into calls Enzyme cannot cache; use `Transfer.@muladd_chain`), no mutually
+  recursive helpers. The per-thread stack tops out at 64 KB on this card: a thin ray of 300
+  samples or eight polarized samples per kernel. Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
+  is worse, not better.
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
