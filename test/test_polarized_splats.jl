@@ -307,13 +307,14 @@ function test_polarized_kernel_gradient(backend; K::Int = 8, label = "CPU")
 end
 
 """
-    test_polarized_gradient(backend; res, N, tol, label)
+    test_polarized_gradient(backend; res, N, tol, label, methods = (:dual, :enzyme))
 
-The chunked reverse sweep (`polarized_gradient!`) against the host Enzyme gradient of the same
-loss, Σⱼ wⱼ · observed_stokes(ray j) for a fixed set of per-pixel weights, through the fused
-march on the CPU: the stored samples and the fused samples are the same Mino grid.
+The in-kernel polarized gradients (`polarized_gradient!`: the dual sweep and the chunked Enzyme
+reverse sweep) against the host Enzyme gradient of the same loss, Σⱼ wⱼ · observed_stokes(ray j)
+for a fixed set of per-pixel weights, through the fused march on the CPU: the stored samples
+and the fused samples are the same Mino grid.
 """
-function test_polarized_gradient(backend; res::Int, N::Int, tol::Float64, label::String)
+function test_polarized_gradient(backend; res::Int, N::Int, tol::Float64, label::String, methods = (:dual, :enzyme))
     a, θo = 0.94, deg2rad(60.0); t_obs = 12.0; ν = 230e9; L = gravitational_radius(4e6)
     camera = Geodesics.Camera((-10.0, 10.0), (-10.0, 10.0), res)
     p = zeros(NPOLARIZEDPARAMS, 2)
@@ -333,21 +334,27 @@ function test_polarized_gradient(backend; res::Int, N::Int, tol::Float64, label:
         return total
     end
     gh = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), p)[1]
-    @testset "$label polarized gradient by the chunked reverse sweep, $(res)² × $N" begin
-        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
-        regenerate!(cache, a, θo; marcher = Recurrence(64))
-        params = adapt_to(backend, p); dparams = adapt_to(backend, zeros(size(p)))
-        dstokes = adapt_to(backend, w)
-        t0 = time()
-        _, image = polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν, L)
-        t1 = time() - t0
-        g = Array(dparams)
-        e = maximum(abs.(g .- gh)) / maximum(abs.(gh))
-        @test all(isfinite, g)
-        @test e <= tol
-        # the forward pass of the sweep is the image itself
-        out = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out, zero(RadiativeState{Float64})); polarized_image!(out, cpu, p, t_obs, ν, L)
-        @test maximum(norm.(Array(image) .- [observed_stokes(st, ν) for st in out])) <= 1e-12 * maximum(norm.([observed_stokes(st, ν) for st in out]))
-        @info "$label polarized chunked-sweep gradient vs host Enzyme: max |Δ|/max = $e ($(chunk_size(N)) samples per chunk, $(round(t1; digits = 1)) s including compilation)"
+    out = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out, zero(RadiativeState{Float64})); polarized_image!(out, cpu, p, t_obs, ν, L)
+    reference = [observed_stokes(st, ν) for st in out]
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    params = adapt_to(backend, p)
+    dstokes = adapt_to(backend, w)
+    for method in methods
+        @testset "$label polarized gradient by the $method sweep, $(res)² × $N" begin
+            dparams = adapt_to(backend, zeros(size(p)))
+            t0 = time()
+            _, image = polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν, L; method)
+            t1 = time() - t0
+            fill!(dparams, 0.0)
+            t2 = @elapsed polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν, L; method)
+            g = Array(dparams)
+            e = maximum(abs.(g .- gh)) / maximum(abs.(gh))
+            @test all(isfinite, g)
+            @test e <= tol
+            # the forward pass of the sweep is the image itself
+            @test maximum(norm.(Array(image) .- reference)) <= 1e-12 * maximum(norm.(reference))
+            @info "$label polarized $method-sweep gradient vs host Enzyme: max |Δ|/max = $e ($(round(t1; digits = 1)) s including compilation, $(round(t2; digits = 3)) s warm)"
+        end
     end
 end

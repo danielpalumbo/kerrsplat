@@ -78,12 +78,14 @@ Open, roughly in order of value: the time-resolved visibility likelihood (one sl
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
 noise floor; spin and inclination fits on real data; per-ray interval lists for hundreds of
-splats; a fast GPU gradient: the chunked reverse sweep (`Fit.chi2_gradient!`,
-`Fit.image_loss_gradient!`, 2026-09-05) is exact and memory-bounded but Enzyme's device reverse
-pass of the transfer step is ~50× its forward cost, so it is slower than the 8-thread CPU at
-32² (7.8 vs 2.1 s per frame); a hand-written adjoint of the transfer step, or forward-mode
-duals for the per-sample coefficient Jacobians with a hand-written reverse over the
-compositing, is the route; the same sweep for the winding-truncated loss; the Comrade.jl route; GRMHD movie fits
+splats; the dual sweep (`Splats.polarized_gradient!`, the default of `Fit.chi2_gradient!` and
+`Fit.image_loss_gradient!` since 2026-09-06: the adjoint over the compositing from 4-vectors,
+per-sample derivatives by forward-mode duals; 1.2 s per 128² × 300 gradient on the 2080 SUPER,
+`docs/notes/2026-09-06_dual_sweep.md`) for `KnotSplats`, the power-law and κ populations and
+the winding-truncated loss (each needs an `element_adjoint!`; the Enzyme sweep,
+`method = :enzyme`, remains the slow reference for any model); movie fits (`fit!` on a
+`StokesMovie`) still take Enzyme's host gradient on the CPU backend and could call
+`chi2_gradient!` instead; the Comrade.jl route; GRMHD movie fits
 (need dumps); the upstream reports in `docs/notes/upstream_issues.md` (Daniel's call).
 
 ## Conventions that bit us

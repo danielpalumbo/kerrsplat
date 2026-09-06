@@ -10,7 +10,7 @@ using StaticArrays
 using ForwardDiff
 using KerrSplat.Geodesics
 using KerrSplat.Transfer
-using KerrSplat.Transfer: transfer_step, RadiativeState, advance, rotate_to_screen
+using KerrSplat.Transfer: transfer_step, step_operator, sample_adjoint, RadiativeState, advance, rotate_to_screen
 
 function bigK(α, ρ)
     αI, αQ, αU, αV = big.(α)
@@ -178,5 +178,56 @@ function test_transfer_step(backend; tol = 1e-13, label = "")
         end
         @test worstk < 1e-12
         @info "transfer_step in a kernel on $label vs host: worst relative error $worstk"
+    end
+end
+
+"Sixth-order central-difference gradient of `f` at `x` with the step `h` in every component (the step's coefficients vary on the scale 1/Δ)."
+function _central_gradient(f, x, h)
+    g = similar(x)
+    for i in eachindex(x)
+        fk(k) = (y = copy(x); y[i] += k * h; f(y))
+        g[i] = (-fk(3) + 9fk(2) - 45fk(1) + 45fk(-1) - 9fk(-2) + fk(-3)) / (-60h)
+    end
+    return g
+end
+
+"""
+    test_step_adjoint(; tol = 1e-6)
+
+`sample_adjoint` (the step and the adjoints of its coefficients by forward-mode duals through
+`step_operator`) against the transfer step itself (to the step's own accuracy, ~eps per radian
+of rotation) and against central finite differences of wᵀ(O R + E) in α⃗ and ρ⃗ over the step
+cases (the unpolarized branch of the step keeps the first-order term in K′, so that its
+derivative is continuous through the denormal cases). The exactly nilpotent case is excluded
+from the finite-difference check: there the step takes its cubic branch, whose value is exact
+but whose derivative misses the quartic terms (see `step_operator`).
+"""
+function test_step_adjoint(; tol = 1e-6)
+    @testset "sample adjoint vs the step and finite differences" begin
+        rng = Random.MersenneTwister(11)
+        worst = 0.0; worstj = 0.0; worstO = 0.0
+        for (j, α, ρ, Δ) in step_cases(rng)
+            w = SVector{4}(randn(rng, 4)); R = SVector{4}(randn(rng, 4))
+            O, E, j̄, ᾱ, ρ̄ = sample_adjoint(j, α, ρ, Δ, w, R)
+            Oref, Eref = transfer_step(j, α, ρ, Δ)
+            φ = 1 + (norm(α) + norm(ρ)) * Δ
+            worstO = max(worstO, relnorm(Matrix(O), Matrix(Oref)) / φ, relnorm(Vector(E), Vector(Eref)) / φ)
+            # j̄ = Ejᵀ w against the linearity of the step in j
+            Ej = step_operator(α, ρ, Δ)[2]
+            ej = maximum(abs.(j̄ .- Ej' * w)) / max(maximum(abs.(Ej' * w)), 1e-300)
+            worstj = max(worstj, ej / φ)
+            α2 = sum(abs2, α[2:4]); ρ2 = sum(abs2, ρ); αρ = dot(α[2:4], ρ)
+            Θ = 2 * sqrt(((α2 - ρ2) / 2)^2 + αρ^2)
+            (Θ * Δ^2 * (1 + (α2 + ρ2) * Δ^2) < 1e-17 && (α2 + ρ2) * Δ^2 > 1e-6) && continue      # exactly nilpotent
+            f(v) = (t = transfer_step(j, SVector(v[1], v[2], v[3], v[4]), SVector(v[5], v[6], v[7]), Δ); dot(w, t[1] * R + t[2]))
+            g = _central_gradient(f, [α..., ρ...], 1e-3 / Δ)
+            d = [ᾱ..., ρ̄...]
+            scale = max(maximum(abs, g), maximum(abs, d), 1e-8)
+            worst = max(worst, maximum(abs.(d .- g)) / scale)
+        end
+        @test worstO <= 1e-14
+        @test worstj <= 1e-14
+        @test worst <= tol
+        @info "sample adjoint: step vs transfer_step $worstO per radian, j̄ $worstj per radian, (ᾱ, ρ̄) vs finite differences $worst"
     end
 end

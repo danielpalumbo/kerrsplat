@@ -98,11 +98,11 @@ there, and ρ_V acts the same in every basis).
     g = inv(p_f[1])
     k = SVector(p_f[2], p_f[3], p_f[4]) * g              # unit propagation direction in the fluid frame
     Bn = sqrt(B[1] * B[1] + B[2] * B[2] + B[3] * B[3])
-    Bhat = Bn > 0 ? B / Bn : SVector(zero(T), zero(T), one(T))
+    Bhat = Bn > 0 ? B / Bn : SVector(zero(Bn), zero(Bn), one(Bn))      # typed by B (duals in ũ, B with a Float64 metric)
     cosθB = k[1] * Bhat[1] + k[2] * Bhat[2] + k[3] * Bhat[3]
     f = SVector(k[2] * Bhat[3] - k[3] * Bhat[2], k[3] * Bhat[1] - k[1] * Bhat[3], k[1] * Bhat[2] - k[2] * Bhat[1])
     fn = sqrt(f[1] * f[1] + f[2] * f[2] + f[3] * f[3])
-    fn > 0 || return LocalFrame(g, cosθB, zero(T))
+    fn > 0 || return LocalFrame(g, cosθB, zero(g))
     f_fluid = SVector(zero(T), f[1] / fn, f[2] / fn, f[3] / fn)
     f_zamo = boost_zamo_to_fluid(-ũ) * f_fluid
     f_bl = Krang.jac_bl_u_zamo_d(met, r, θ) * f_zamo

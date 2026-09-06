@@ -123,15 +123,6 @@ end
         τ2 = ((t - p[11, i]) * exp(-p[12, i]))^2
         G = exp(-(q2 + τ2) / 2)
         G > T(WEIGHT_CUTOFF) || return zero(StokesCoefficients{T}), LocalFrame(one(T), zero(T), zero(T))
-        ne = exp(p[13, i]) * G
-        Θe = exp(p[14, i])
-        Bmag = exp(p[15, i])
-        sθ, cθ = sincos_pair(p[16, i]); sϕ, cϕ = sincos_pair(p[17, i])
-        B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
-        ũ = SVector(p[18, i], p[19, i], p[20, i])
+        return splat_coefficients(pix, s, ν_obs, exp(p[13, i]) * G, p[14, i], p[15, i], p[16, i], p[17, i], p[18, i], p[19, i], p[20, i])
     end
-    fr = local_frame(pix, s, ũ, B)
-    νf = ν_obs / fr.g
-    θB = acos(clamp(fr.cosθB, -one(T), one(T)))
-    return thermal_synchrotron(ne, Θe, Bmag, νf, θB), fr
 end

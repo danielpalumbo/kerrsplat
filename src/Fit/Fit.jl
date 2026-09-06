@@ -328,18 +328,46 @@ function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hy
 end
 
 """
-    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, kmax = 1) -> χ²
+    sweep_passes(dparams, cache, params, L; method = :dual, kmax = 1) -> (forward, reverse!)
+
+The two passes of an in-kernel polarized gradient as closures over their work arrays:
+`forward(t, ν)` returns the model image (observed Stokes vectors, sorted pixel order, on the
+host) and leaves the state the reverse pass needs; `reverse!(dstokes, t, ν)` accumulates
+∂(dstokes · image)/∂params into `dparams`. `method = :dual` is the dual sweep
+(`Splats.polarized_tails!` and `Splats.polarized_dual_sweep!`), `:enzyme` the chunked Enzyme
+reverse sweep (`kmax` samples per chunk).
+"""
+function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Symbol = :dual, kmax = 1) where {T,N}
+    npix = npixels(cache)
+    if method == :dual
+        tails = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, N + 1)
+        forward = (t, ν) -> (Splats.polarized_tails!(tails, cache, params, t, ν, L); Array(Splats.tail_image(tails, T(ν))))
+        reverse! = (dstokes, t, ν) -> Splats.polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t, ν, L)
+        return forward, reverse!
+    elseif method == :enzyme
+        K = Splats.chunk_size(N; kmax)
+        states = KernelAbstractions.allocate(cache.backend, RadiativeState{T}, npix, N ÷ K + 1)
+        forward = (t, ν) -> (Splats.polarized_forward_states!(states, cache, params, t, ν, L, Val(K)); Array(map(st -> observed_stokes(st, T(ν)), states[:, end])))
+        reverse! = (dstokes, t, ν) -> Splats.polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t, ν, L, Val(K))
+        return forward, reverse!
+    else
+        throw(ArgumentError("method must be :dual or :enzyme, got $method"))
+    end
+end
+
+"""
+    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, method = :dual, kmax = 1) -> χ²
 
 The movie χ² and its gradient with respect to the splat parameters, evaluated on the backend of
-`cache` (a cache with stored samples) by the chunked reverse sweep inside the kernel: for every
-frame and frequency the forward pass gives the model image, the residual seeds the sweep, and
-∂χ²/∂params accumulates into `dparams` (on the backend). Priors are not included. The CPU
-backend and CUDA give the gradient of `chi2` (gate `test_chi2_gradient`).
+`cache` (a cache with stored samples) inside the kernel (the dual sweep by default, or the
+chunked Enzyme reverse sweep with `method = :enzyme`, see `Splats.polarized_gradient!`): for
+every frame and frequency the forward pass gives the model image, the residual seeds the
+reverse pass, and ∂χ²/∂params accumulates into `dparams` (on the backend). Priors are not
+included. The CPU backend and CUDA give the gradient of `chi2` (gate `test_chi2_gradient`).
 """
-function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), kmax = 1) where {T,N}
-    K = Splats.chunk_size(N; kmax)
+function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1) where {T,N}
+    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax)
     npix = npixels(cache)
-    states = KernelAbstractions.allocate(cache.backend, RadiativeState{T}, npix, N ÷ K + 1)
     dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix)
     seed = Vector{SVector{4,T}}(undef, npix)
     perm = cache.perm_host                                  # screen index of every sorted pixel
@@ -347,8 +375,7 @@ function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicC
     total = zero(T)
     for l in freqs, k in frames
         ν = movie.νs[l]
-        Splats.polarized_forward_states!(states, cache, params, movie.times[k], ν, L, Val(K))
-        image = Array(map(st -> observed_stokes(st, ν), states[:, end]))
+        image = forward(movie.times[k], ν)
         for j in 1:npix
             i = perm[j]
             idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
@@ -362,28 +389,27 @@ function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicC
             end
         end
         copyto!(dstokes, seed)
-        Splats.polarized_reverse_sweep!(dparams, dstokes, states, cache, params, movie.times[k], ν, L, Val(K))
+        reverse!(dstokes, movie.times[k], ν)
     end
     return total
 end
 
 """
-    image_loss_gradient!(dparams, loss, cache, params, t_obs, ν_obs, L; kmax = 1) -> value
+    image_loss_gradient!(dparams, loss, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1) -> value
 
 Gradient of an arbitrary differentiable function of one model image with respect to the splat
-parameters, on the backend of `cache` (stored samples): the forward states give the image
+parameters, on the backend of `cache` (stored samples): the forward pass gives the image
 (screen-shaped matrix of Stokes vectors in cgs, on the host), Enzyme on the host differentiates
 `loss(image)` with respect to the image (a small problem: four numbers per pixel), and the
-chunked reverse sweep on the backend turns that seed into ∂loss/∂params, accumulated into
-`dparams`. This is how the visibility, closure and self-calibration χ² of a frame get a GPU
-gradient without differentiating the Fourier transform on the device. Returns the loss value.
+reverse pass on the backend (the dual sweep, or the chunked Enzyme sweep with
+`method = :enzyme`) turns that seed into ∂loss/∂params, accumulated into `dparams`. This is
+how the visibility, closure and self-calibration χ² of a frame get a GPU gradient without
+differentiating the Fourier transform on the device. Returns the loss value.
 """
-function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; kmax = 1) where {T,N}
-    K = Splats.chunk_size(N; kmax)
+function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1) where {T,N}
+    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax)
     npix = npixels(cache)
-    states = KernelAbstractions.allocate(cache.backend, RadiativeState{T}, npix, N ÷ K + 1)
-    Splats.polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))
-    sorted = Array(map(st -> observed_stokes(st, T(ν_obs)), states[:, end]))
+    sorted = forward(t_obs, ν_obs)
     perm = cache.perm_host
     nα, nβ = cache.screen_size
     screen = Matrix{T}(undef, 4, nα * nβ)                   # the image as plain numbers for Enzyme, screen order
@@ -395,11 +421,11 @@ function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, 
     dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
     seed = [SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]]) for j in 1:npix]
     dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix); copyto!(dstokes, seed)
-    Splats.polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, Val(K))
+    reverse!(dstokes, t_obs, ν_obs)
     return value
 end
 
-export chi2_gradient!, image_loss_gradient!
+export chi2_gradient!, image_loss_gradient!, sweep_passes
 
 function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector{Stage}; hygiene::Hygiene, callback, gradient = nothing) where {T}
     history = T[]

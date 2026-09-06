@@ -78,17 +78,26 @@ end
     outside_support(p, i, t, x, y, z) && return zero(StokesCoefficients{T}), LocalFrame(one(T), zero(T), zero(T))
     G = splat_weight(p, i, t, x, y, z)
     G > T(WEIGHT_CUTOFF) || return zero(StokesCoefficients{T}), LocalFrame(one(T), zero(T), zero(T))
-    @inbounds begin
-        ne = exp(p[13, i]) * G
-        Θe = exp(p[14, i])
-        Bmag = exp(p[15, i])
-        sθ, cθ = sincos_pair(p[16, i]); sϕ, cϕ = sincos_pair(p[17, i])
-        B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
-        ũ = SVector(p[18, i], p[19, i], p[20, i])
-    end
+    @inbounds return splat_coefficients(pix, s, ν_obs, exp(p[13, i]) * G, p[14, i], p[15, i], p[16, i], p[17, i], p[18, i], p[19, i], p[20, i])
+end
+
+"""
+    splat_coefficients(pix, s, ν_obs, ne, logTe, logB, thB, phB, u1, u2, u3) -> (c, frame)
+
+Fluid-frame thermal synchrotron coefficients and local frame of a splat at a sample, from its
+electron density there and its seven fluid rows (`POLARIZED_SPLAT_PARAMS` 14–20); shared by
+the elements of `PolarizedSplats` and `KnotSplats` and by the dual sweep, which passes the
+fluid rows as forward-mode duals.
+"""
+@inline function splat_coefficients(pix, s::GeodesicSample, ν_obs, ne, logTe, logB, thB, phB, u1, u2, u3)
+    Θe = exp(logTe)
+    Bmag = exp(logB)
+    sθ, cθ = sincos_pair(thB); sϕ, cϕ = sincos_pair(phB)
+    B = SVector(Bmag * sθ * cϕ, Bmag * sθ * sϕ, Bmag * cθ)
+    ũ = SVector(u1, u2, u3)
     fr = local_frame(pix, s, ũ, B)
     νf = ν_obs / fr.g
-    θB = acos(clamp(fr.cosθB, -one(T), one(T)))
+    θB = acos(clamp(fr.cosθB, -1, 1))
     return thermal_synchrotron(ne, Θe, Bmag, νf, θB), fr
 end
 
@@ -364,24 +373,39 @@ function polarized_reverse_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}
 end
 
 """
-    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; kmax = 1) -> (dparams, image)
+    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1) -> (dparams, image)
 
 Gradient of Σⱼ dstokes[j] · observed_stokes(ray j) with respect to the polarized splat parameters,
-by Enzyme reverse mode inside the kernel over the samples stored in `cache`, one ray per thread,
-as a chunked reverse sweep: a forward kernel folds every ray over all `N` samples and keeps the
-radiative state at each chunk boundary (`chunk_size(N; kmax)` samples per chunk, at most the
-eight a 64 KB per-thread stack can tape), then the chunks are differentiated from the last to
-the first with the adjoint of the incoming state carried along (the seed of chunk c is the
-adjoint of its outgoing state, which the reverse pass consumes). `dstokes` is a vector of
-`SVector{4}` in sorted pixel order (∂loss/∂(I, Q, U, V) in cgs); the accumulated `dparams` and
-the image (observed Stokes vectors, sorted order) are returned. Gate: `test_polarized_gradient`
-(host Enzyme gradient of the same loss, CPU and CUDA).
+inside the kernel over the samples stored in `cache`, one ray per thread. `dstokes` is a vector
+of `SVector{4}` in sorted pixel order (∂loss/∂(I, Q, U, V) in cgs); the accumulated `dparams`
+and the image (observed Stokes vectors, sorted order) are returned. Gate:
+`test_polarized_gradient` (host Enzyme gradient of the same loss, CPU and CUDA).
+
+`method = :dual` (the default) is the dual sweep: a backward pass stores the Stokes vector
+arriving from behind every sample ([`polarized_tails!`](@ref)), and a forward pass carries the
+adjoint of the Stokes vector in front of each sample and differentiates each sample locally by
+forward-mode duals ([`polarized_dual_sweep!`](@ref)). `method = :enzyme` is the chunked reverse
+sweep by Enzyme reverse mode inside the kernel: a forward kernel keeps the radiative state at
+each chunk boundary (`chunk_size(N; kmax)` samples per chunk, at most the eight a 64 KB
+per-thread stack can tape), then the chunks are differentiated from the last to the first with
+the adjoint of the incoming state carried along; exact but about fifty times the forward cost
+per sample on the device.
 """
-function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; kmax::Integer = 1) where {T,N}
-    K = chunk_size(N; kmax)
-    states = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache), N ÷ K + 1)
-    polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))
-    image = map(st -> observed_stokes(st, T(ν_obs)), states[:, end])
-    polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, Val(K))
-    return dparams, image
+function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax::Integer = 1) where {T,N}
+    if method == :dual
+        tails = KA.allocate(cache.backend, SVector{4,T}, npixels(cache), N + 1)
+        polarized_tails!(tails, cache, params, t_obs, ν_obs, L)
+        image = tail_image(tails, ν_obs)
+        polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L)
+        return dparams, image
+    elseif method == :enzyme
+        K = chunk_size(N; kmax)
+        states = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache), N ÷ K + 1)
+        polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))
+        image = map(st -> observed_stokes(st, T(ν_obs)), states[:, end])
+        polarized_reverse_sweep!(dparams, dstokes, states, cache, params, t_obs, ν_obs, L, Val(K))
+        return dparams, image
+    else
+        throw(ArgumentError("method must be :dual or :enzyme, got $method"))
+    end
 end
