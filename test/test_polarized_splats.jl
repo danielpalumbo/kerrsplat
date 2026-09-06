@@ -334,8 +334,11 @@ function test_polarized_gradient(backend; res::Int, N::Int, tol::Float64, label:
         return total
     end
     gh = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), p)[1]
-    out = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out, zero(RadiativeState{Float64})); polarized_image!(out, cpu, p, t_obs, ν, L)
-    reference = [observed_stokes(st, ν) for st in out]
+    # (a different name from the closure's `out`: a variable assigned both inside a closure Enzyme differentiates and in
+    # the enclosing function is boxed, and Enzyme then treats the box captured by the `Const` closure as constant memory
+    # and returns a zero gradient)
+    out_ref = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out_ref, zero(RadiativeState{Float64})); polarized_image!(out_ref, cpu, p, t_obs, ν, L)
+    reference = [observed_stokes(st, ν) for st in out_ref]
     cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
     regenerate!(cache, a, θo; marcher = Recurrence(64))
     params = adapt_to(backend, p)

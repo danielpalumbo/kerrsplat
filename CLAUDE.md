@@ -48,7 +48,10 @@ before any performance work.
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
   tile, gradients summed).
 - Enzyme with non-`const` globals captured in closures hits an internal error; make them
-  `const` or pass them as arguments.
+  `const` or pass them as arguments. A variable assigned both inside a closure Enzyme
+  differentiates and elsewhere in the enclosing function is boxed by Julia, and Enzyme then
+  treats the box captured by the `Const` closure as constant memory and silently returns a
+  zero gradient: never reuse a closure's local names in the enclosing function.
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
   with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.

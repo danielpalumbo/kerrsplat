@@ -93,7 +93,8 @@ the winding-truncated loss (each needs an `element_adjoint!`; the Enzyme sweep,
 - Krang returns NaN at a = 0 (use 1e-3). Screen basis north = +β, east = −α; V = Σ I e^{+2πi(ul+vm)}.
 - Velocity and field components of a splat follow the axes (r̂, φ̂, −θ̂): the third is vertical.
 - A closure named like `f3` makes `8f3(x)` a Float32 literal times x; name closures without
-  trailing digits.
+  trailing digits. A name assigned both inside a closure Enzyme differentiates and in the
+  enclosing function is boxed, and Enzyme silently returns a zero gradient for it.
 - Enzyme reverse passes over the CPU kernel tape the whole screen (≈ 1 GB per 8e4
   pixel-samples): tile large screens.
 - Code that Enzyme must differentiate inside a CUDA kernel: no `sincos` (use `sincos_pair`),
