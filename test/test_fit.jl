@@ -567,7 +567,7 @@ function test_binning(backend; res = 6, N = 40, tol = 1e-9, label = "CPU backend
         camp, bp = binned_polar([3.0, 3.5, 4.0], 8; subsamples = (2, 3))
         @test size(bp) == (2, 8) && all(==(6), bp.count)
         ρ = hypot.(camp.αs, camp.βs)
-        @test all(3.0 .< ρ .< 4.0) && all(ρ[bp.pixel .<= 2] .< 3.5) && all(ρ[bp.pixel .> 2] .> 3.5)
+        @test all(3.0 .< ρ .< 4.0) && all(ρ[isodd.(bp.pixel)] .< 3.5) && all(ρ[iseven.(bp.pixel)] .> 3.5)   # radius fastest: iρ + (iψ − 1) nρ
         camc, bc = concatenate((cam2, b2), (camp, bp))
         @test npixels(camc) == npixels(cam2) + npixels(camp) && size(bc) == (res^2 + 16, 1) && maximum(bc.pixel) == res^2 + 16
         @test bc.count == vcat(fill(4, res^2), fill(6, 16))
