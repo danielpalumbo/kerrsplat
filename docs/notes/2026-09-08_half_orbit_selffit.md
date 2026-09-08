@@ -29,7 +29,7 @@ The GPU path (`--backend cuda`) reproduces the CPU run of case n = 0 to twelve d
 (χ² 21289.2555940 on both, identical recoveries and Fisher errors), in 1.0 minute of fitting
 instead of hours.
 
-## Results
+## Results (point-sampled screens, one point per pixel)
 
 | case | pixels | samples | fit time | χ²/N start → end | position errors (M) | nₑ, Θe, B errors | pattern rate | σ(a) joint / alone | σ(θo) joint / alone |
 |---|---|---|---|---|---|---|---|---|---|
@@ -58,14 +58,41 @@ and ≤ 2, so the first lensed passage carries 4% of the direct flux there and t
   fit reaches χ²/N 1.019 in 300 iterations, closer to the noise floor than the two lower orders.
 - A caveat on n ≤ 2: the fine annulus is point-sampled at Δρ = 0.011 M (its ring count is capped
   at 140), wider than the n = 2 ring itself (about 0.002 M), so the data and the model share a
-  sampling that no instrument has. The self-fit is consistent on that screen, and the Fisher
-  numbers are those of that screen; pixel integration over the ring width is still needed
-  before such a case says what an image at that resolution would measure.
+  sampling that no instrument has. The self-fit is consistent on that screen; the pixel-integrated
+  rerun below addresses this.
 - The thermodynamic errors (nₑ, Θe, B at the 3–30% level) do not improve systematically with the
   order: they are the one-zone synchrotron degeneracy of a single frequency (the emissivity fixes
   a combination of density, temperature and field), which more lensing orders do not break and
   a second frequency would. Per-parcel numbers are not comparable across cases, because each
   case draws its own perturbed start.
+
+## Pixel integration (2026-09-08, `Geodesics.Binning`, `--subsamples 2`)
+
+Every uniform pixel integrated over 2 × 2 points and every annulus cell over 4 × 2 points in
+(ρ, ψ), so that the n = 2 annulus samples its ring at 0.003 M; data and model share the
+integration.
+
+| case | pixels / points | fit time | χ²/N end | position errors (M) | Fisher σ(a) joint, duals | σ(θo) joint, duals |
+|---|---|---|---|---|---|---|
+| n = 0 | 2304 / 9216 | 0.9 min | 1.134 | 0.013, 0.15, 0.45, 0.17 | 3.1e-5 | 0.0066° |
+| n ≤ 1 | 12384 / 89856 | 10.3 min | 1.059 | 0.001, 0.070, 0.035, 0.049 | 2.6e-5 | 0.0042° |
+| n ≤ 2 | CASE2K2 |
+
+The fits behave as on the point-sampled screens: the same χ²/N floors (the data are the binned
+truth plus the same relative noise), the same parcels recovered to the same accuracy. The
+Fisher numbers do not: for n = 0 the joint σ(a) at the truth is 5.8e-4, 3.1e-5, 2.2e-4 and 6.0e-4
+for 1, 2, 3 and 4 points per pixel side (duals through the whole pipeline), and a
+finite-difference audit of the spin and inclination columns (`--fisher fd`, step 1e-4, parcel
+columns by duals through the transfer at fixed geodesics) reproduces the dual numbers at one
+point per pixel (5.80e-4 vs 5.78e-4) but gives 5.7e-5 against 3.1e-5 at two. So the derivatives
+are not glitching; the truncated images carry features sharper than any of these screens (the
+cut edges where a ray's passage count changes, and the demagnified lensed structure), and the
+information a screen sees in them depends on where its points fall. **The Fisher errors of
+this experiment are therefore not converged in screen sampling, at any order, and the
+tightening with n in the table above is an upper bound on what the sampling delivers, not a
+measurement**; the recoveries of the fits are the robust result. Converging the spacetime Fisher
+needs the instrument's own smoothing (a beam convolution of the binned image before the
+residuals, or a soft slab edge), which is the natural next step for this experiment.
 
 ## Cost
 
