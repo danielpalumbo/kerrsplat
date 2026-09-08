@@ -533,3 +533,88 @@ function test_image_loss_gradient(backend; res = 8, N = 40, tol = 1e-9, label = 
         end
     end
 end
+
+"""
+    test_binning(backend; res = 6, N = 40, tol = 1e-9, label = "CPU backend")
+
+Pixel integration: the binned cameras (`binned_grid`, `binned_polar`, `concatenate`) and `bin`
+against hand computations; `chi2` with a binning against the mean of the point cube; the χ²
+gradient on `backend` (`chi2_gradient!(...; binning)`) and `image_loss_gradient!` against host
+Enzyme through `chi2`/`polarized_image!` with the same binning; `spacetime_residuals` with the
+binning reproduces the χ².
+"""
+function test_binning(backend; res = 6, N = 40, tol = 1e-9, label = "CPU backend")
+    rng = Random.MersenneTwister(21)
+    a = 0.9; θo = deg2rad(60.0); L = gravitational_radius(4e6); ν = 230e9
+    p = polarized_test_params()
+    pixmean(v, b, q) = sum(v[b.pixel .== q]) / b.count[q]
+    @testset "$label pixel integration" begin
+        # one sub-sample per pixel: the pixel-centred grid, and bin is the identity
+        cam1, b1 = binned_grid((-9.0, 9.0), (-9.0, 9.0), res)
+        Δ = 18.0 / res
+        @test size(b1) == (res, res) && all(==(1), b1.count) && npixels(cam1) == res^2
+        @test cam1.αs[1] ≈ -9 + Δ / 2 && cam1.βs[1] ≈ -9 + Δ / 2 && cam1.αs[end] ≈ 9 - Δ / 2 && cam1.βs[end] ≈ 9 - Δ / 2
+        v = randn(rng, npixels(cam1))
+        @test vec(bin(b1, v)) == v
+        # two sub-samples per side: the mean of the four points, centred on the pixel
+        cam2, b2 = binned_grid((-9.0, 9.0), (-9.0, 9.0), res; subsamples = 2)
+        @test npixels(cam2) == 4 * res^2 && all(==(4), b2.count)
+        w = randn(rng, npixels(cam2)); m = bin(b2, w)
+        @test all(m[q] ≈ pixmean(w, b2, q) for q in 1:res^2)
+        @test pixmean(cam2.αs, b2, 1) ≈ -9 + Δ / 2 && pixmean(cam2.βs, b2, res^2) ≈ 9 - Δ / 2
+        @test maximum(abs.(cam2.αs[b2.pixel .== 1] .- (-9 + Δ / 2))) ≈ Δ / 4
+        # a polar annulus and the concatenation
+        camp, bp = binned_polar([3.0, 3.5, 4.0], 8; subsamples = (2, 3))
+        @test size(bp) == (2, 8) && all(==(6), bp.count)
+        ρ = hypot.(camp.αs, camp.βs)
+        @test all(3.0 .< ρ .< 4.0) && all(ρ[isodd.(bp.pixel)] .< 3.5) && all(ρ[iseven.(bp.pixel)] .> 3.5)   # radius fastest: iρ + (iψ − 1) nρ
+        camc, bc = concatenate((cam2, b2), (camp, bp))
+        @test npixels(camc) == npixels(cam2) + npixels(camp) && size(bc) == (res^2 + 16, 1) && maximum(bc.pixel) == res^2 + 16
+        @test bc.count == vcat(fill(4, res^2), fill(6, 16))
+        # χ² with the binning against the mean of the point cube
+        cpu = GeodesicCache(CPU(), camc, Val(N); store_samples = false)
+        regenerate!(cpu, a, θo; marcher = Fused(64))
+        times = [0.0, 20.0]
+        clean = bin(bc, polarized_cube(cpu, p, times, [ν], L))
+        @test size(clean) == (res^2 + 16, 1, 2, 1)
+        σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+        data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
+        movie = StokesMovie(data, times, [ν], σ)
+        q = p .+ 0.05 .* randn(rng, size(p))
+        χ_host = chi2(q, movie, cpu, L; binning = bc)
+        cube = polarized_cube(cpu, q, times, [ν], L)
+        χ_hand = 0.0
+        for k in 1:2, pix in 1:npixels(bc)
+            r = (pixmean(cube[:, 1, k, 1], bc, pix) - data[pix, 1, k, 1]) ./ σ
+            χ_hand += sum(abs2, r)
+        end
+        @test abs(χ_host - χ_hand) <= 1e-10 * χ_hand
+        # the χ² gradient on the backend against Enzyme on the host, both binned
+        g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2(x, movie, cpu, L; binning = bc)), q)[1]
+        cache = GeodesicCache(backend, camc, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = adapt_to(backend, q); dparams = adapt_to(backend, zeros(size(q)))
+        χ = chi2_gradient!(dparams, params, movie, cache, L; binning = bc)
+        g = Array(dparams)
+        @test abs(χ - χ_host) <= 1e-10 * χ_host
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @test all(isfinite, g)
+        @test e <= tol
+        # the spacetime residuals with the binning reproduce the χ²
+        r = spacetime_residuals([a, θo], q, movie, camc, L; N, binning = bc)
+        @test abs(sum(abs2, r) - χ_host) <= 1e-8 * χ_host
+        # an image loss on the binned image
+        loss_image(im) = sum(sum(abs2, im[i] - data[i, 1, 1, 1]) for i in eachindex(im))
+        host(x) = (out = Vector{RadiativeState{Float64}}(undef, npixels(cpu)); fill!(out, zero(RadiativeState{Float64}));
+                   polarized_image!(out, cpu, x, 0.0, ν, L); loss_image(bin(bc, map(st -> observed_stokes(st, ν), vec(to_screen(cpu, out))))))
+        value_host = host(q)
+        gi_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), q)[1]
+        dparams2 = adapt_to(backend, zeros(size(q)))
+        value = image_loss_gradient!(dparams2, loss_image, cache, params, 0.0, ν, L; binning = bc)
+        gi = Array(dparams2)
+        @test abs(value - value_host) <= 1e-10 * value_host
+        ei = maximum(abs.(gi .- gi_host)) / maximum(abs.(gi_host))
+        @test ei <= tol
+        @info "$label pixel integration: χ² gradient vs host Enzyme $e, image-loss gradient $ei ($(npixels(camc)) points in $(npixels(bc)) pixels)"
+    end
+end

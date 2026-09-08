@@ -53,9 +53,11 @@ Scripts take these by path or flag; they were on the original workstation only.
 The half-orbit self-fit experiment (`validation/winding/winding_selffit.jl --backend cuda`,
 `docs/notes/2026-09-08_half_orbit_selffit.md`) ran to completion on 2026-09-08 with the dual
 sweep: χ²/N 1.155, 1.055, 1.019 for n = 0, n ≤ 1, n ≤ 2 in 45 minutes for all three cases (the
-CPU path, tiled host Enzyme, reproduces case n = 0 to twelve digits). The point-sampled n = 2
-annulus (Δρ = 0.011 M) is wider than the n = 2 ring; pixel integration over the ring is still
-open before that case represents an instrument.
+CPU path, tiled host Enzyme, reproduces case n = 0 to twelve digits). Pixel integration
+(`Geodesics.Binning`: sub-sampled grids and polar annuli, `binning` keyword of `chi2`,
+`chi2_gradient!`, `image_loss_gradient!`, `fit!`, `fisher`, `spacetime_residuals`; the script's
+`--subsamples K`) integrates the pixels over their points; the note records the sub-sampled
+rerun.
 
 ## State on 2026-09-05
 

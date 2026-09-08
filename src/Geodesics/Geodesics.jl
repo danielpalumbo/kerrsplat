@@ -38,7 +38,7 @@ using StaticArrays
 
 const KA = KernelAbstractions
 
-export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache
+export Camera, PixelConstants, GeodesicSample, GeodesicSamples, GeodesicCache, Binning, bin, binned_grid, binned_polar, concatenate
 export regenerate!, npixels, nsamples, build_pixel, direct_sample, mino_step, mino_times
 export unsort, to_screen, prepare_backend!, case_permutation, host, ConcretePixel, sincos_pair, ENZYME_STACK_BYTES, ENZYME_HEAP_BYTES
 export pack_flags, unpack_flags, SAMPLE_OK, SAMPLE_NUR, SAMPLE_NUTH

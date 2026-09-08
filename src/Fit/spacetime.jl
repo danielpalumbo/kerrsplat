@@ -11,7 +11,7 @@ Residuals (model − data)/σ over the whole movie for the spacetime parameters 
 rebuilding the geodesic cache of the `camera` on the CPU backend with `N` samples per ray;
 generic in the element type of `x`, so ForwardDiff duals propagate through the cache.
 """
-function spacetime_residuals(x::AbstractVector{S}, params, movie::StokesMovie, camera, L; N, nmax = -1, slab = 0) where {S}
+function spacetime_residuals(x::AbstractVector{S}, params, movie::StokesMovie, camera, L; N, nmax = -1, slab = 0, binning = nothing) where {S}
     cache = GeodesicCache(CPU(), Geodesics.Camera(S.(camera.αs), S.(camera.βs), camera.size), Val(N); store_samples = false)
     regenerate!(cache, x[1], x[2]; marcher = Fused(64))
     q = S.(params)
@@ -21,11 +21,11 @@ function spacetime_residuals(x::AbstractVector{S}, params, movie::StokesMovie, c
         ν = movie.νs[l]
         fill!(out, zero(eltype(out)))
         polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L); nmax, slab)
-        img = to_screen(cache, out)
+        stokes = pixel_stokes(to_screen(cache, out), S(ν), binning)
         for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
             c = CartesianIndex(i, j, k, l)
             movie.mask[c] || continue
-            append!(res, (observed_stokes(img[i, j], S(ν)) .- movie.data[c]) ./ noise(movie.σ, c))
+            append!(res, (stokes[i, j] .- movie.data[c]) ./ noise(movie.σ, c))
         end
     end
     return res
