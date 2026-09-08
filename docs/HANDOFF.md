@@ -81,9 +81,9 @@ noise floor; spin and inclination fits on real data; per-ray interval lists for 
 splats; the dual sweep (`Splats.polarized_gradient!`, the default of `Fit.chi2_gradient!` and
 `Fit.image_loss_gradient!` since 2026-09-06: the adjoint over the compositing from 4-vectors,
 per-sample derivatives by forward-mode duals; 2.8 s per 128² × 300 gradient of six parcels on the 2080 SUPER, 34× the Enzyme sweep,
-`docs/notes/2026-09-06_dual_sweep.md`) for `KnotSplats`, the power-law and κ populations and
-the winding-truncated loss (each needs an `element_adjoint!`; the Enzyme sweep,
-`method = :enzyme`, remains the slow reference for any model); movie fits (`fit!` on a
+`docs/notes/2026-09-06_dual_sweep.md`; half-orbit truncation included since 2026-09-08) for
+`KnotSplats` and the power-law and κ populations (each needs an `element_adjoint!`; the
+Enzyme sweep, `method = :enzyme`, remains the slow reference for any model); movie fits (`fit!` on a
 `StokesMovie`) still take Enzyme's host gradient on the CPU backend and could call
 `chi2_gradient!` instead; the Comrade.jl route; GRMHD movie fits
 (need dumps); the upstream reports in `docs/notes/upstream_issues.md` (Daniel's call).

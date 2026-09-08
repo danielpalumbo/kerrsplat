@@ -46,7 +46,7 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Reflection parity (observers beyond 90°, negative spin, U and V handedness) | `Splats` | equatorial and azimuthal mirror images of the mirrored source (axial field) | 1e-11 |
 | GPU gradients: Enzyme inside the CUDA kernel over stored samples (`thin_gradient!`; the polarized consumer over ≤ 8 samples) | `Splats` | host Enzyme gradient | 6e-13 (thin, 64² × 300 in 1.2 s); 2e-15 (polarized chunk) |
 | Full polarized rays on the GPU: the chunked reverse sweep (`polarized_gradient!(...; method = :enzyme)`), the movie χ² gradient (`Fit.chi2_gradient!`) and any image loss through a host seed (`Fit.image_loss_gradient!`) | `Splats`, `Fit` | host Enzyme gradient of the same loss; Enzyme's CPU gradient of `chi2` | 5e-13 (32² × 300, CUDA); 6e-13 (χ² gradient, CUDA); exact but 4× slower than the 8-thread CPU at 32² |
-| The dual sweep (`polarized_gradient!`, the default; `polarized_tails!` + `polarized_dual_sweep!`): the adjoint over the compositing from tails and adjoint 4-vectors, the per-sample derivatives by forward-mode duals through `step_operator` and the splat coefficients (`docs/notes/2026-09-06_dual_sweep.md`) | `Transfer`, `Splats`, `Fit` | `test_step_adjoint` (finite differences over the 413 step cases); host Enzyme gradient of the same loss; the Enzyme sweep | 2e-15 (CPU, 8² × 40); 1.4e-14 vs the Enzyme sweep (CUDA, 32² × 300); 2.8 s per 128² × 300 gradient of six parcels on the 2080 SUPER (Enzyme sweep: 95 s); 0.83 s at 32² against 2.27 s for the CPU fits' host Enzyme gradient |
+| The dual sweep (`polarized_gradient!`, the default; `polarized_tails!` + `polarized_dual_sweep!`): the adjoint over the compositing from tails and adjoint 4-vectors, the per-sample derivatives by forward-mode duals through `step_operator` and the splat coefficients; half-orbit truncation through per-ray cutoffs (`winding_cutoff!`, `nmax`/`slab`) (`docs/notes/2026-09-06_dual_sweep.md`) | `Transfer`, `Splats`, `Fit` | `test_step_adjoint` (finite differences over the 413 step cases); host Enzyme gradient of the same loss, truncated and not (`test_polarized_gradient_winding`: cutoffs vs the host counter, gradients 3e-15–2e-14); the Enzyme sweep | 2e-15 (CPU, 8² × 40); 1.4e-14 vs the Enzyme sweep (CUDA, 32² × 300); 2.8 s per 128² × 300 gradient of six parcels on the 2080 SUPER (Enzyme sweep: 95 s); 0.83 s at 32² against 2.27 s for the CPU fits' host Enzyme gradient |
 | Half-orbit decomposition (`WindingState`, rays truncated after the n-th midplane passage) | `Transfer`, `Splats`, `Fit` | Krang's `Gθ` crossing times and `emission_radius` sub-image geometry; identity without truncation; Enzyme vs stencil; CUDA | 2e-7 in Mino time; 1e-13; 1e-5 |
 
 Timings on the RTX 2080 SUPER (256² × 1000 samples): direct evaluation 128 ns per sample,
@@ -76,10 +76,10 @@ and eight frequencies. Per-ray interval lists would remove the remaining per-spl
 
 ## Open items
 
-- GPU-side gradients: the dual sweep (2026-09-06) gives the polarized gradient of thermal
-  parcels on CUDA and the CPU backend without a tape; `KnotSplats`, the power-law and κ
-  populations and the winding-truncated loss still need their `element_adjoint!` (the Enzyme
-  sweep, `method = :enzyme`, covers any model at fifty times the forward cost per sample).
+- GPU-side gradients: the dual sweep (2026-09-06, half-orbit truncation 2026-09-08) gives the
+  polarized gradient of thermal parcels on CUDA and the CPU backend without a tape;
+  `KnotSplats` and the power-law and κ populations still need their `element_adjoint!` (the
+  Enzyme sweep, `method = :enzyme`, covers any model at fifty times the forward cost per sample).
 - The κ splats hold their hypergeometric factors fixed during a fit (κ and w are not fitted).
 - Per-ray interval lists for many splats (the per-sample bounding-sphere early-out exists).
 - Fits to ipole-rendered GRMHD movies (gate 7 ii): a KHARMA snapshot image is fitted to a few
