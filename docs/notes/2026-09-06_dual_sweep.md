@@ -66,21 +66,26 @@ the result does not depend on thread order (no atomics).
 - The refactored step (`E = Ej j`) against the BigFloat references: O 9e-14, E 6e-14
   angle-scaled, as before.
 
-## What it costs (RTX 2080 SUPER, Float64, two parcels, N = 300 stored samples)
+## What it costs (RTX 2080 SUPER, Float64, six parcels, N = 300 stored samples)
 
 | screen | forward image (march + transport) | tails | dual sweep | gradient (tails + sweep) | Enzyme chunked sweep |
 |---|---|---|---|---|---|
-| CUDA 32² | 0.23 s | 0.07 s | 0.30 s | 0.37 s | 1.6 s |
-| CUDA 64² | 0.29 s | 0.09 s | 0.45 s | 0.54 s | |
-| CUDA 128² | 0.34 s | 0.21 s | 1.01 s | 1.22 s | |
-| CPU backend, 8 threads, 32² | 0.11 s | 0.06 s | 0.26 s | 0.31 s | 0.67 s |
-| CPU backend, 8 threads, 64² | 0.20 s | 0.23 s | 1.00 s | 1.22 s | |
+| CUDA 32² | 0.52 s | 0.16 s | 0.67 s | 0.83 s | 8.2 s |
+| CUDA 64² | 0.77 s | 0.25 s | 1.10 s | 1.35 s | |
+| CUDA 128² | 0.89 s | 0.62 s | 2.15 s | 2.77 s | 95 s |
+| CPU backend, 8 threads, 32² | 0.25 s | 0.15 s | 0.56 s | 0.71 s | 1.28 s |
+| CPU backend, 8 threads, 64² | 0.45 s | 0.61 s | 2.25 s | 2.86 s | |
 
-The dual sweep costs about four times the forward transport over stored samples on either
-backend (the seven-partial duals are the price), and on CUDA it scales with the ray count as the
-forward does: 128² rays with the full polarized gradient in 1.2 s where the Enzyme sweep needed
-85 s (six parcels, 2026-09-05). At 32² the card is under-occupied (1024 threads) and the CPU
-backend is as fast; from 64² up the GPU pulls ahead.
+Enzyme's host gradient through the fused march (the path the CPU movie fits take) costs 2.27 s
+per gradient at 32² with eight threads on the same parcels. So the dual sweep costs about four
+times the forward transport over stored samples on either backend (the seven-partial duals are
+the price) and is 2.7× faster than the CPU fits' gradient already at 32² on this card, ten
+times faster than the Enzyme device sweep there and 34× at 128² (2.8 s against 95 s for the
+full polarized gradient of 16384 rays). At 32² the card is under-occupied (1024 threads) and
+the CPU backend's own dual sweep is as fast; from 64² up the GPU pulls ahead. With two parcels
+the figures are 0.37 s (32²), 0.54 s (64²) and 1.22 s (128²) on CUDA. Agreement between the
+dual and the Enzyme sweeps in these runs: 4e-15 to 3e-14; dual against the host gradient
+1.2e-14.
 
 ## Traps found
 
