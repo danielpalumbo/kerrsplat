@@ -50,11 +50,12 @@ Scripts take these by path or flag; they were on the original workstation only.
   time-averaged M87 GRMHD library (`tavgs_fits_480/*.fits`): `validation/grmhd_fit`.
 - No GRMHD fluid dumps: movie fits against GRMHD remain open for that reason.
 
-The half-orbit self-fit experiment (`validation/winding/winding_selffit.jl`, fits tiled to bound
-Enzyme's memory) was halted on 2026-09-05 after its n = 0 case (self-fit χ²/N 1.16, positions to
-0.01–0.3 M): the n ≤ 2 case would take about eight hours on this CPU, and the point-sampled
-camera cannot resolve the n = 2 ring (about 0.002 M wide); it needs pixel integration and the
-GPU gradients before it is worth running.
+The half-orbit self-fit experiment (`validation/winding/winding_selffit.jl --backend cuda`,
+`docs/notes/2026-09-08_half_orbit_selffit.md`) ran to completion on 2026-09-08 with the dual
+sweep: χ²/N 1.155, 1.055, 1.019 for n = 0, n ≤ 1, n ≤ 2 in 45 minutes for all three cases (the
+CPU path, tiled host Enzyme, reproduces case n = 0 to twelve digits). The point-sampled n = 2
+annulus (Δρ = 0.011 M) is wider than the n = 2 ring; pixel integration over the ring is still
+open before that case represents an instrument.
 
 ## State on 2026-09-05
 
