@@ -21,34 +21,53 @@
 Exact solution operator `O = exp(−KΔ)` (4×4) and emission vector `E = ∫₀^Δ exp(−Ku) du j` for the
 constant coefficients `j = (jI, jQ, jU, jV)`, `α = (αI, αQ, αU, αV)`, `ρ = (ρQ, ρU, ρV)` over a step
 of length `Δ` (all in the same units, e.g. invariants and the affine length). The Stokes vector after
-the step is `O * S + E`.
+the step is `O * S + E`. The step is linear in `j`: `E = Ej * j` with the emission matrix of
+[`step_operator`](@ref), which holds the whole dependence on the coefficients.
 """
 @inline function transfer_step(j::SVector{4,T}, α::SVector{4,T}, ρ::SVector{3,T}, Δ) where {T}
+    O, Ej = step_operator(α, ρ, Δ)
+    return O, Ej * j
+end
+
+"""
+    step_operator(α, ρ, Δ) -> (O, Ej)
+
+The solution operator `O = exp(−KΔ)` and the emission matrix `Ej = ∫₀^Δ exp(−Ku) du` of the
+constant-coefficient step (see [`transfer_step`](@ref): `E = Ej * j`). Written for any real
+number type, so that forward-mode duals in `α`, `ρ` give the derivatives of both matrices
+(the dual sweep of `Splats.polarized_gradient!`); the removable singularities are guarded on
+the value of their argument so that duals pass through them. Derivatives are exact except on
+the codimension-two degeneracy Λ₁ = Λ₂ = 0 (|α⃗| = |ρ⃗| and α⃗ ⟂ ρ⃗): at exact nilpotency the
+cubic branch's derivative misses the quartic terms (an O((K′Δ)⁴) relative error), and near it
+the derivative of the closed forms loses accuracy as eps/(ΘΔ²) while their value does not
+(the same holds for any differentiation of these formulae, Enzyme included).
+"""
+@inline function step_operator(α::SVector{4,T}, ρ::SVector{3,T}, Δ) where {T}
     αI = α[1]
     αQ, αU, αV = α[2], α[3], α[4]
     ρQ, ρU, ρV = ρ[1], ρ[2], ρ[3]
     α2 = αQ * αQ + αU * αU + αV * αV
     ρ2 = ρQ * ρQ + ρU * ρU + ρV * ρV
     a = αI * Δ
-    if (α2 + ρ2) * Δ^2 < T(1e-200)         # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
-        e = exp(-a)                        # density tails): the unpolarized operator with the full emission vector
-        return e * identity4(T), (Δ * phi(a)) * j
-    end
     K1 = @SMatrix [zero(T) αQ αU αV; αQ zero(T) ρV -ρU; αU -ρV zero(T) ρQ; αV ρU -ρQ zero(T)]
+    if (α2 + ρ2) * Δ^2 < T(1e-200)         # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
+        e = exp(-a)                        # density tails): the unpolarized operator to first order in K' (its value is
+        return e * (identity4(T) - Δ * K1), Δ * (phi(a) * identity4(T) - (Δ * moment1(a)) * K1)   # unpolarized, its derivative continuous)
+    end
     K2 = K1 * K1
     K3 = K2 * K1
     αρ = αQ * ρQ + αU * ρU + αV * ρV
     h = (α2 - ρ2) / 2
-    root = sqrt(h * h + αρ * αρ)
+    root = safe_sqrt(h * h + αρ * αρ)
     if h >= 0                              # the larger of Λ₁², Λ₂² from the stable expression, the smaller from their product
         Λ1sq = h + root
-        Λ2sq = Λ1sq > 0 ? αρ * αρ / Λ1sq : zero(T)
+        Λ2sq = _value(Λ1sq) > 0 ? αρ * αρ / Λ1sq : zero(T)
     else
         Λ2sq = root - h
-        Λ1sq = Λ2sq > 0 ? αρ * αρ / Λ2sq : zero(T)
+        Λ1sq = _value(Λ2sq) > 0 ? αρ * αρ / Λ2sq : zero(T)
     end
-    Λ1 = sqrt(Λ1sq)
-    Λ2 = sqrt(Λ2sq)
+    Λ1 = safe_sqrt(Λ1sq)
+    Λ2 = safe_sqrt(Λ2sq)
     b1 = Λ1 * Δ
     b2 = Λ2 * Δ
     Θ = Λ1sq + Λ2sq
@@ -58,8 +77,8 @@ the step is `O * S + E`.
         e = exp(-a)
         O = e * (identity4(T) - Δ * K1 + (Δ^2 / 2) * K2 - (Δ^3 / 6) * K3)
         M = moments(a)
-        E = Δ * (M[1] * j - Δ * M[2] * (K1 * j) + Δ^2 * M[3] / 2 * (K2 * j) - Δ^3 * M[4] / 6 * (K3 * j))
-        return O, E
+        Ej = Δ * (M[1] * identity4(T) - (Δ * M[2]) * K1 + (Δ^2 * M[3] / 2) * K2 - (Δ^3 * M[4] / 6) * K3)
+        return O, Ej
     end
     # ---- O = e^{−a} [c0 1 + c2 K'² − Δ sinh(b1)/b1 M3 − Δ sin(b2)/b2 M2] --------------------
     # with c0 = (Λ2² cosh b1 + Λ1² cos b2)/Θ, c2 = (cosh b1 − cos b2)/Θ and the bounded matrices
@@ -73,7 +92,7 @@ the step is `O * S + E`.
     c0 = (Λ2sq * ecosh + Λ1sq * e * cos(b2)) / Θ
     c2 = (ecoshm1 + e * versin(b2)) / Θ
     O = c0 * identity4(T) + c2 * K2 - (Δ * esinh_b) * M3 - (Δ * e * sinc(b2)) * M2
-    # ---- E = [C0 1 + C2 K'² − Ish M3 − Is M2] j: the same combinations of the integrals -----------
+    # ---- Ej = C0 1 + C2 K'² − Ish M3 − Is M2 (E = Ej j): the same combinations of the integrals ----
     # Ich = ∫₀^Δ e^{−αIu} cosh Λ1u du = Δ ∫₀¹ e^{−at} cosh b1t dt, Ish = ∫ e^{−αIu} sinh(Λ1u)/Λ1 du, etc.
     Ich = Δ * (phi(a) + int_coshm1(a, b1))
     Ic = Δ * int_cos(a, b2)
@@ -81,25 +100,35 @@ the step is `O * S + E`.
     Is = Δ^2 * int_sinc(a, b2)
     C0 = (Λ2sq * Ich + Λ1sq * Ic) / Θ
     C2 = Δ * (int_coshm1(a, b1) + int_versin(a, b2)) / Θ
-    E = C0 * j + C2 * (K2 * j) - Ish * (M3 * j) - Is * (M2 * j)
-    return O, E
+    Ej = C0 * identity4(T) + C2 * K2 - Ish * M3 - Is * M2
+    return O, Ej
 end
 
 "The 4×4 identity built in place: a global constant matrix referenced from a CUDA kernel is materialized as a constant table, which Enzyme's device reverse pass cannot handle."
 @inline identity4(::Type{T}) where {T} = SMatrix{4,4,T}(one(T), zero(T), zero(T), zero(T), zero(T), one(T), zero(T), zero(T), zero(T), zero(T), one(T), zero(T), zero(T), zero(T), zero(T), one(T))
 
 # ---- scalar building blocks -------------------------------------------------------------------
-"φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt."
-@inline phi(a) = a == 0 ? one(a) : -expm1(-a) / a
+# The removable singularities below are guarded on the *value* of the argument: for a
+# forward-mode dual `x == 0` also asks for zero partials (ForwardDiff ≥ 1), and the unguarded
+# branch would then evaluate 0/0 at an argument whose value is zero.
+@inline _value(x::Real) = x
+@inline _value(x::ForwardDiff.Dual) = ForwardDiff.value(x)
+"Whether the value of `x` is zero (its partials, if any, aside)."
+@inline vanishes(x) = iszero(_value(x))
+"Square root with a finite derivative at zero: the step depends on Λ₁, Λ₂ only through even functions, whose derivatives vanish there."
+@inline safe_sqrt(x) = _value(x) > 0 ? sqrt(x) : zero(x)
+
+"φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt (to first order at a = 0, so that a dual's derivative there is −1/2)."
+@inline phi(a) = vanishes(a) ? one(a) - a / 2 : -expm1(-a) / a
 
 "1 − cos b, without cancellation."
 @inline versin(b) = 2 * sin(b / 2)^2
 
 "sinh(b)/b."
-@inline sinhc(b) = b == 0 ? one(b) : sinh(b) / b
+@inline sinhc(b) = vanishes(b) ? one(b) : sinh(b) / b
 
 "sin(b)/b."
-@inline sinc(b) = b == 0 ? one(b) : sin(b) / b
+@inline sinc(b) = vanishes(b) ? one(b) : sin(b) / b
 
 "1 − sin(b)/b ≥ 0, by series for small b."
 @inline function sinc_deficit(b)

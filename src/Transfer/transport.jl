@@ -140,12 +140,73 @@ end
     return advance(acc, O, E)
 end
 
+"""
+    sample_step(c::RadiativeTransport, s, Δτ, pix) -> (O, E, active)
+
+The step operator and emission of one sample, what `transfer_sample` composes into the
+accumulator; a skipped sample (invalid, inside the horizon, or with no active element) returns
+the identity, zero and `active = false`.
+"""
+@inline function sample_step(c::RadiativeTransport, s::GeodesicSample, Δτ, pix)
+    T = typeof(c.ν_obs)
+    met = Krang.metric(pix)
+    if s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))
+        j4, α4, ρ3, active = accumulate_elements(c, s, pix, static_elements(c.model))
+        if active
+            Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
+            Δ = c.L / c.ν_obs * Σ * Δτ
+            O, E = transfer_step(j4, α4, ρ3, Δ)
+            return O, E, true
+        end
+    end
+    return identity4(T), zero(SVector{4,T}), false
+end
+
+"Tag of the forward-mode duals through the step operator."
+struct StepTag end
+
+"An `SVector` of duals with unit partials, `x[i]` seeded in partial `i` (`N` partials in all, offset by `off`)."
+@inline function seed_duals(x::SVector{M,T}, ::Type{Tag}, ::Val{N}, off::Int) where {M,T,Tag,N}
+    return SVector(ntuple(i -> ForwardDiff.Dual{Tag}(x[i], ForwardDiff.Partials(ntuple(m -> m == i + off ? one(T) : zero(T), Val(N)))), Val(M)))
+end
+
+"""
+    sample_adjoint(j4, α4, ρ3, Δ, w, R) -> (O, E, j̄, ᾱ, ρ̄)
+
+The step of one sample together with the adjoints of its coefficients, for the loss
+`wᵀ (O R + E)` in which `w` is the adjoint of the Stokes vector in front of the sample and `R`
+the Stokes vector arriving from behind it (the tail): `j̄ = Ejᵀ w` exactly, since `E = Ej j`, and
+`ᾱ`, `ρ̄` are the partials of `wᵀ O R + wᵀ Ej j` by forward-mode duals through
+[`step_operator`](@ref) (seven partials). `O` and `E` are the plain values.
+"""
+@inline function sample_adjoint(j4::SVector{4,T}, α4::SVector{4,T}, ρ3::SVector{3,T}, Δ, w::SVector{4,T}, R::SVector{4,T}) where {T}
+    αd = seed_duals(α4, StepTag, Val(7), 0)
+    ρd = seed_duals(ρ3, StepTag, Val(7), 4)
+    Od, Ejd = step_operator(αd, ρd, Δ)
+    q = dot(w, Od * R) + dot(w, Ejd * j4)
+    O = map(ForwardDiff.value, Od)
+    Ej = map(ForwardDiff.value, Ejd)
+    pq = ForwardDiff.partials(q)
+    return O, Ej * j4, Ej' * w, SVector(pq[1], pq[2], pq[3], pq[4]), SVector(pq[5], pq[6], pq[7])
+end
+
 "One element's screen-basis coefficients at a sample (zero when it does not emit or absorb there)."
 @inline function element_coefficients(c::RadiativeTransport, i, s::GeodesicSample, pix)
-    T = typeof(c.ν_obs)
     cf, fr = element(c.model, i, pix, s, c.ν_obs)
+    return screen_coefficients(cf, fr, c.ν_obs)
+end
+
+"""
+    screen_coefficients(cf, fr, ν_obs) -> (j4, α4, ρ3, active)
+
+The invariant screen-basis coefficients of one element from its fluid-frame coefficients `cf`
+and frame `fr` (polarization capped, invariants formed at ν_obs/g, rotated by 2χ), and whether
+it emits, absorbs or rotates at all; typed by `cf`, so duals in the element's parameters
+propagate.
+"""
+@inline function screen_coefficients(cf::StokesCoefficients{T}, fr::LocalFrame, ν_obs) where {T}
     (cf.jI > 0 || cf.αI > 0 || cf.ρQ != 0 || cf.ρV != 0) || return zero(SVector{4,T}), zero(SVector{4,T}), zero(SVector{3,T}), false
-    cinv = invariants(cap_polarization(cf), c.ν_obs / fr.g)
+    cinv = invariants(cap_polarization(cf), ν_obs / fr.g)
     jj, aa, rr = rotate_to_screen(cinv, fr.χ)
     return jj, aa, rr, true
 end

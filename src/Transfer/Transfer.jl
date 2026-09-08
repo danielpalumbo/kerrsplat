@@ -18,6 +18,7 @@ using Adapt
 using Bessels
 using ForwardDiff
 using Krang
+using LinearAlgebra: dot
 using StaticArrays
 using ..Geodesics: GeodesicSample, sincos_pair
 
@@ -32,10 +33,10 @@ include("transport.jl")
 export StokesCoefficients, thermal_synchrotron, powerlaw_synchrotron, powerlaw_rotativities, powerlaw_rotativities_valid, thermal_emissivity_leung,
        kappa_synchrotron, kappa_hypergeometric, kappa_rotativities,
        thermal_synchrotron_pandya, planck, planck_invariant, invariants, cap_polarization
-export transfer_step, RadiativeState, WindingState, wind, advance, rotate_to_screen
+export transfer_step, step_operator, sample_step, sample_adjoint, RadiativeState, WindingState, wind, advance, rotate_to_screen
 export LocalFrame, local_frame, boost_zamo_to_fluid, walker_penrose, screen_direction
 export UnpolarizedState, UnpolarizedTransport, unpolarized_coefficients, unpolarized_step, observed_intensity,
        gravitational_radius, pixel_solid_angle
-export RadiativeTransport, nelements, element, observed_stokes, CompositeModel, StaticCount, static_elements
+export RadiativeTransport, nelements, element, observed_stokes, CompositeModel, StaticCount, static_elements, screen_coefficients, seed_duals
 
 end

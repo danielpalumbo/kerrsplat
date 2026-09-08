@@ -36,13 +36,22 @@ before any performance work.
   the CPU on this card. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
   kernel); longer tapes spill to device malloc, so `prepare_backend!` raises the malloc heap to
   1 GB at the first gradient kernel (CUDA refuses to change it after a kernel has used malloc). Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
-  is worse, not better.
+  is worse, not better. The fast path is the dual sweep (`Splats.polarized_gradient!`, default
+  `method = :dual`): the reverse over the compositing is written by hand from 4-vectors (tails
+  and adjoints) and the per-sample derivatives are ForwardDiff duals, which run in CUDA
+  kernels without any of Enzyme's constraints; four times the forward transport per gradient.
+- ForwardDiff ≥ 1: `x == 0` on a dual also requires zero partials, and `sqrt` at a zero value
+  has NaN partials. Guard removable singularities on the value (`Transfer.vanishes`,
+  `Transfer.safe_sqrt`), never with `==` against a literal.
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
   tile, gradients summed).
 - Enzyme with non-`const` globals captured in closures hits an internal error; make them
-  `const` or pass them as arguments.
+  `const` or pass them as arguments. A variable assigned both inside a closure Enzyme
+  differentiates and elsewhere in the enclosing function is boxed by Julia, and Enzyme then
+  treats the box captured by the `Const` closure as constant memory and silently returns a
+  zero gradient: never reuse a closure's local names in the enclosing function.
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
   with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.

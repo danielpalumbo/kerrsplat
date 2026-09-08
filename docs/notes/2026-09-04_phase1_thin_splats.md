@@ -39,7 +39,7 @@ dependence, absorption. Units: geometric (GM/c², GM/c³), addendum §4.2.
   host renderer built on `march_ray` (a plain Julia loop) is what Enzyme reverse-mode
   differentiates in the tests (gate 6 of §7.5); the GPU path is the same consumer in a kernel.
 
-## Gradients on the GPU: status (rewritten 2026-09-05)
+## Gradients on the GPU: status (rewritten 2026-09-05; superseded for the polarized gradient by `2026-09-06_dual_sweep.md`)
 
 Enzyme reverse mode runs inside the CUDA kernel, one ray per thread, and matches the host
 gradient (`Splats.thin_gradient!`, gate `test_stored_gradient`: 1e-12 at 12² × 120 and
