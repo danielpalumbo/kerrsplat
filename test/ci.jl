@@ -25,6 +25,7 @@ include("riaf_model.jl")
 include("test_uvfits.jl")
 include("test_polarized_splats.jl")
 include("test_winding.jl")
+include("test_fit.jl")
 
 @testset "KerrSplat CI subset" begin
     test_geodesics(CPU(); res = 24, N = 16, tol = 1e-12, label = "CPU")
@@ -43,4 +44,5 @@ include("test_winding.jl")
     test_polarized_kernel_gradient(CPU(); K = 4, label = "CPU")
     test_polarized_gradient(CPU(); res = 6, N = 16, tol = 1e-10, label = "CPU backend")
     test_polarized_gradient_winding(CPU(); res = 6, N = 40, tol = 1e-10, label = "CPU backend")
+    test_binning(CPU(); res = 4, N = 24, tol = 1e-9, label = "CPU backend")
 end

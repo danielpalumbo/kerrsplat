@@ -48,25 +48,29 @@ StokesMovie(data::AbstractArray{SVector{4,T},4}, times, νs, σ; mask = trues(si
 the polarized splat model rendered through `cache` (already regenerated) and the length unit `L`.
 Written as a plain function of `params` so that Enzyme can differentiate it.
 """
-function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), priors = nothing, nmax = -1, slab = 0) where {T}
+function chi2(params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), priors = nothing, nmax = -1, slab = 0, binning = nothing) where {T}
     # the accumulator type is chosen in a branch so that each path is type-stable for Enzyme
-    total = nmax >= 0 ? _chi2_frames(Vector{WindingState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab) :
-                        _chi2_frames(Vector{RadiativeState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab)
+    total = nmax >= 0 ? _chi2_frames(Vector{WindingState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab, binning) :
+                        _chi2_frames(Vector{RadiativeState{T}}(undef, npixels(cache)), params, movie, cache, L, frames, freqs, nmax, slab, binning)
     return total + penalty(params, priors)
 end
 
-function _chi2_frames(out::AbstractVector, params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, frames, freqs, nmax, slab) where {T}
+"The observed Stokes vectors of an image in screen order, integrated over the pixels of a `Binning` when one is given."
+@inline pixel_stokes(img, ν, ::Nothing) = map(st -> observed_stokes(st, ν), img)
+@inline pixel_stokes(img, ν, binning::Binning) = bin(binning, map(st -> observed_stokes(st, ν), vec(img)))
+
+function _chi2_frames(out::AbstractVector, params, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, frames, freqs, nmax, slab, binning) where {T}
     nα, nβ = size(movie.data, 1), size(movie.data, 2)
     total = zero(T)
     for l in freqs, k in frames
         ν = movie.νs[l]
         fill!(out, zero(eltype(out)))
         polarized_image!(out, cache, params, movie.times[k], ν, L; nmax, slab)
-        img = to_screen(cache, out)
+        stokes = pixel_stokes(to_screen(cache, out), ν, binning)
         for j in 1:nβ, i in 1:nα
             idx = CartesianIndex(i, j, k, l)
             movie.mask[idx] || continue
-            r = (observed_stokes(img[i, j], ν) - movie.data[idx]) ./ noise(movie.σ, idx)
+            r = (stokes[i, j] - movie.data[idx]) ./ noise(movie.σ, idx)
             total += r[1] * r[1] + r[2] * r[2] + r[3] * r[3] + r[4] * r[4]
         end
     end
@@ -95,14 +99,14 @@ frequency enters each step. Returns the χ² history (full data at the start and
 minibatch value in between).
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)),
-              iterations::Integer = 100, η = 0.02, batch = nothing, rng = Random.default_rng(), callback = nothing) where {T}
+              iterations::Integer = 100, η = 0.02, batch = nothing, rng = Random.default_rng(), callback = nothing, binning = nothing) where {T}
     mask = T.(free)
     opt = Optimisers.setup(Optimisers.Adam(η), params)
-    history = T[chi2(params, movie, cache, L)]
+    history = T[chi2(params, movie, cache, L; binning)]
     for it in 1:iterations
         frames = batch === nothing ? eachindex(movie.times) : sort(randperm(rng, length(movie.times))[1:min(batch[1], length(movie.times))])
         freqs = batch === nothing ? eachindex(movie.νs) : sort(randperm(rng, length(movie.νs))[1:min(batch[2], length(movie.νs))])
-        f(q) = chi2(q, movie, cache, L; frames, freqs)
+        f(q) = chi2(q, movie, cache, L; frames, freqs, binning)
         g = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1] .* mask
         opt, params = Optimisers.update!(opt, params, g)
         push!(history, f(params))
@@ -211,7 +215,7 @@ the whole pipeline), with the noise of the movie. Returns F, J and the linear in
 free parameters. The eigen-decomposition of F ranks the identifiable parameter combinations:
 small eigenvalues are the degeneracies of the data set (e.g. nₑ–B–Θe at one frequency).
 """
-function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), chunk = 8, nmax = -1, slab = 0) where {T}
+function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), chunk = 8, nmax = -1, slab = 0, binning = nothing) where {T}
     idx = findall(vec(free))
     function model(x::AbstractVector{S}) where {S}
         q = S.(params)
@@ -224,11 +228,11 @@ function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::Geodesi
             ν = movie.νs[l]
             fill!(out, zero(eltype(out)))
             polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L); nmax, slab)
-            img = to_screen(cache, out)
+            stokes = pixel_stokes(to_screen(cache, out), S(ν), binning)
             for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
                 c = CartesianIndex(i, j, k, l)
                 movie.mask[c] || continue
-                st = observed_stokes(img[i, j], S(ν)) ./ noise(movie.σ, c)
+                st = stokes[i, j] ./ noise(movie.σ, c)
                 append!(vals, st)
             end
         end
@@ -297,9 +301,11 @@ end
 
 """
     fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing,
-         nmax = -1, slab = 0, gradient = :enzyme) -> (params, history, events)
+         nmax = -1, slab = 0, gradient = :enzyme, binning = nothing) -> (params, history, events)
 
-Run the stages in order on a parameter matrix (returned, since hygiene can change its size).
+Run the stages in order on a parameter matrix (returned, since hygiene can change its size);
+`binning` integrates the cache's points over pixels (`Geodesics.Binning`), and the movie then
+holds the binned pixels.
 `history` holds the χ² at the start of every iteration (the point where the gradient was taken,
 on the stage's minibatch and frequency subset) and `events` the hygiene passes as
 `(stage, iteration, nsplats_before, nsplats_after)`. `gradient = :enzyme` differentiates
@@ -310,7 +316,7 @@ works there); the dual path copies them to the backend every iteration.
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
               hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing, nmax = -1, slab = 0,
-              gradient::Symbol = :enzyme) where {T}
+              gradient::Symbol = :enzyme, binning = nothing) where {T}
     gradient in (:enzyme, :dual) || throw(ArgumentError("gradient must be :enzyme or :dual, got $gradient"))
     function batches(st)
         freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
@@ -321,13 +327,13 @@ function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicC
     make_valgrad = if gradient == :enzyme
         (st, it) -> begin
             frames, freqs = batches(st)
-            q -> _enzyme_valgrad(x -> chi2(x, movie, cache, L; frames, freqs, priors, nmax, slab), q)
+            q -> _enzyme_valgrad(x -> chi2(x, movie, cache, L; frames, freqs, priors, nmax, slab, binning), q)
         end
     else
         backend = cache.backend
         (st, it) -> begin
             frames, freqs = batches(st)
-            q -> _dual_valgrad(q, movie, cache, L, frames, freqs, priors, nmax, slab, backend)
+            q -> _dual_valgrad(q, movie, cache, L, frames, freqs, priors, nmax, slab, binning, backend)
         end
     end
     return _fit_loop!(params, make_valgrad, stages; hygiene, callback)
@@ -340,10 +346,10 @@ function _enzyme_valgrad(f, q)
 end
 
 "χ² (with the priors' penalty) and its gradient at the host parameters `q` by `chi2_gradient!` on `backend`."
-function _dual_valgrad(q::AbstractMatrix{T}, movie, cache, L, frames, freqs, priors, nmax, slab, backend) where {T}
+function _dual_valgrad(q::AbstractMatrix{T}, movie, cache, L, frames, freqs, priors, nmax, slab, binning, backend) where {T}
     pdev = KernelAbstractions.allocate(backend, T, size(q)); copyto!(pdev, q)
     gdev = KernelAbstractions.allocate(backend, T, size(q)); fill!(gdev, zero(T))
-    χ = chi2_gradient!(gdev, pdev, movie, cache, L; frames, freqs, nmax, slab)
+    χ = chi2_gradient!(gdev, pdev, movie, cache, L; frames, freqs, nmax, slab, binning)
     g = Array(gdev)
     if priors !== nothing
         value, gp = _enzyme_valgrad(x -> penalty(x, priors), q)
@@ -399,17 +405,18 @@ function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Sym
 end
 
 """
-    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, method = :dual, kmax = 1, nmax = -1, slab = 0) -> χ²
+    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, method = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) -> χ²
 
 The movie χ² and its gradient with respect to the splat parameters, evaluated on the backend of
 `cache` (a cache with stored samples) inside the kernel (the dual sweep by default, or the
 chunked Enzyme reverse sweep with `method = :enzyme`, see `Splats.polarized_gradient!`): for
 every frame and frequency the forward pass gives the model image, the residual seeds the
 reverse pass, and ∂χ²/∂params accumulates into `dparams` (on the backend). Priors are not
-included; `nmax`, `slab` truncate the rays as in `chi2`. The CPU backend and CUDA give the
-gradient of `chi2` (gate `test_chi2_gradient`).
+included; `nmax`, `slab` truncate the rays and `binning` integrates the points over pixels as
+in `chi2`. The CPU backend and CUDA give the gradient of `chi2` (gates `test_chi2_gradient`,
+`test_binning`).
 """
-function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0) where {T,N}
+function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) where {T,N}
     forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab)
     npix = npixels(cache)
     dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix)
@@ -420,16 +427,40 @@ function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicC
     for l in freqs, k in frames
         ν = movie.νs[l]
         image = forward(movie.times[k], ν)
-        for j in 1:npix
-            i = perm[j]
-            idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
-            if movie.mask[idx]
-                σ = noise(movie.σ, idx)
-                r = (image[j] - movie.data[idx]) ./ σ
-                total += sum(abs2, r)
-                seed[j] = 2 .* r ./ σ
-            else
-                seed[j] = zero(SVector{4,T})
+        if binning === nothing
+            for j in 1:npix
+                i = perm[j]
+                idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
+                if movie.mask[idx]
+                    σ = noise(movie.σ, idx)
+                    r = (image[j] - movie.data[idx]) ./ σ
+                    total += sum(abs2, r)
+                    seed[j] = 2 .* r ./ σ
+                else
+                    seed[j] = zero(SVector{4,T})
+                end
+            end
+        else
+            # the residual of every binned pixel, and its adjoint shared equally by the pixel's points
+            screen = Vector{SVector{4,T}}(undef, npix)
+            for j in 1:npix
+                screen[perm[j]] = image[j]
+            end
+            stokes = bin(binning, screen)
+            pseed = Vector{SVector{4,T}}(undef, Geodesics.npixels(binning))
+            for q in 1:Geodesics.npixels(binning)
+                idx = CartesianIndex((q - 1) % nα + 1, (q - 1) ÷ nα + 1, k, l)
+                if movie.mask[idx]
+                    σ = noise(movie.σ, idx)
+                    r = (stokes[q] - movie.data[idx]) ./ σ
+                    total += sum(abs2, r)
+                    pseed[q] = 2 .* r ./ σ ./ binning.count[q]
+                else
+                    pseed[q] = zero(SVector{4,T})
+                end
+            end
+            for j in 1:npix
+                seed[j] = pseed[binning.pixel[perm[j]]]
             end
         end
         copyto!(dstokes, seed)
@@ -439,7 +470,7 @@ function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicC
 end
 
 """
-    image_loss_gradient!(dparams, loss, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1, nmax = -1, slab = 0) -> value
+    image_loss_gradient!(dparams, loss, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) -> value
 
 Gradient of an arbitrary differentiable function of one model image with respect to the splat
 parameters, on the backend of `cache` (stored samples): the forward pass gives the image
@@ -448,9 +479,14 @@ parameters, on the backend of `cache` (stored samples): the forward pass gives t
 reverse pass on the backend (the dual sweep, or the chunked Enzyme sweep with
 `method = :enzyme`) turns that seed into ∂loss/∂params, accumulated into `dparams`. This is
 how the visibility, closure and self-calibration χ² of a frame get a GPU gradient without
-differentiating the Fourier transform on the device. Returns the loss value.
+differentiating the Fourier transform on the device. With a `binning` the loss receives the
+image integrated over its pixels. Returns the loss value.
 """
-function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0) where {T,N}
+
+"The screen image as Stokes vectors from its plain-number form, binned over pixels when a `Binning` is given."
+_pixel_image(x, nα, nβ, ::Nothing) = reshape([SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ], nα, nβ)
+_pixel_image(x, nα, nβ, binning::Binning) = bin(binning, [SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ])
+function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) where {T,N}
     forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab)
     npix = npixels(cache)
     sorted = forward(t_obs, ν_obs)
@@ -460,7 +496,7 @@ function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, 
     for j in 1:npix, s in 1:4
         screen[s, perm[j]] = sorted[j][s]
     end
-    g(x) = loss(reshape([SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ], nα, nβ))
+    g(x) = loss(_pixel_image(x, nα, nβ, binning))
     value = g(screen)
     dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
     seed = [SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]]) for j in 1:npix]
