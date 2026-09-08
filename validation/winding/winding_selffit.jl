@@ -7,8 +7,14 @@
 # information of the spin and inclination at the truth (joint with the free parcel parameters,
 # by ForwardDiff duals through the whole pipeline) quantifies what each order adds.
 #
-#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1]
+#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1] [--fisher fd|duals] [--fisher-only]
 #
+# The Fisher audit at the truth takes the parcel columns of the Jacobian by ForwardDiff duals through
+# the transfer at fixed geodesics (`Fit.fisher`) and, with `--fisher fd` (the default), the spin and
+# inclination columns by central finite differences of the residuals (step 1e-4 in a, 1e-4 rad in θo),
+# tile by tile; `--fisher duals` differentiates the whole pipeline, geodesics included, by duals (the
+# 2026-09-05 method, whose spin and inclination columns turned out to depend on the screen sampling:
+# Krang's closed forms differentiate noisily near polar observers). `--fisher-only` skips the fit.
 # `--subsamples K` integrates every pixel over K × K points (the annulus cells over 2K × K in ρ, ψ)
 # through `Geodesics.Binning`: with K = 1 the screens are point-sampled at the pixel centres.
 # With `--backend cuda` the fits take their χ² and gradient from the truncated dual sweep on the
@@ -24,6 +30,10 @@ const CASE = getopt("--case", 0); const ITER = getopt("--iterations", 300); cons
 const BACKEND = (i = findfirst(==("--backend"), ARGS); i === nothing ? "cpu" : lowercase(ARGS[i+1]))
 BACKEND in ("cpu", "cuda") || error("--backend must be cpu or cuda")
 const SUB = getopt("--subsamples", 1)
+const FISHER = (i = findfirst(==("--fisher"), ARGS); i === nothing ? "fd" : lowercase(ARGS[i+1]))
+FISHER in ("fd", "duals") || error("--fisher must be fd or duals")
+const FISHER_ONLY = "--fisher-only" in ARGS
+const FDSTEP = 1e-4
 const ETA = getopt("--eta", 0.005)                           # Adam step in parameter units: the pattern rates are ~0.05 rad/M
 const a = 0.94; const θo = deg2rad(17.0); const ν = 230e9
 const M_solar = 6.5e9; const L = gravitational_radius(M_solar)
@@ -74,6 +84,46 @@ function screen(n)
 end
 
 const TILE = 400                                              # pixels per tile: Enzyme's reverse pass over the CPU kernel needs ~1 GB per 8e4 pixel-samples
+
+"""
+Joint Fisher matrix of (spin, inclination, free parcel parameters) at the truth, summed over the
+tiles: with `FISHER == "fd"` the spin and inclination columns of each tile's Jacobian are central
+finite differences of `spacetime_residuals` (fresh geodesics at a ± h, θo ± h) and the parcel
+columns come from `Fit.fisher` (duals through the transfer at fixed geodesics); with
+`FISHER == "duals"` the whole Jacobian is ForwardDiff through `spacetime_residuals`.
+"""
+function fisher_at_truth(tls, movies, N, n, x0)
+    tF = time()
+    F = zeros(length(x0), length(x0))
+    for (t, (cam, b, r)) in enumerate(tls)
+        if FISHER == "duals"
+            function residuals(x)
+                params = similar(x, size(truth)); params .= truth
+                params[free] .= x[3:end]
+                return spacetime_residuals(x[1:2], params, movies[t], cam, L; N, nmax = n, slab = SLAB, binning = b)
+            end
+            J = ForwardDiff.jacobian(residuals, x0, ForwardDiff.JacobianConfig(residuals, x0, ForwardDiff.Chunk{12}()))
+        else
+            res(y) = spacetime_residuals(y, truth, movies[t], cam, L; N, nmax = n, slab = SLAB, binning = b)
+            Ja = (res([a + FDSTEP, θo]) .- res([a - FDSTEP, θo])) ./ (2FDSTEP)
+            Jθ = (res([a, θo + FDSTEP]) .- res([a, θo - FDSTEP])) ./ (2FDSTEP)
+            c = GeodesicCache(CPU(), cam, Val(N); store_samples = false); regenerate!(c, a, θo; marcher = Fused(64))
+            _, Jp, _ = fisher(truth, movies[t], c, L; free, chunk = 12, nmax = n, slab = SLAB, binning = b)
+            J = hcat(Ja, Jθ, Jp)
+        end
+        F .+= J' * J
+    end
+    @info "Fisher Jacobians (n ≤ $n, $FISHER)" minutes = (time() - tF) / 60
+    return F
+end
+
+function report_fisher(F, n, npix, nuni)
+    Finv = inv(F + 1e-12 * I)
+    σa_joint = sqrt(Finv[1, 1]); σθ_joint = sqrt(Finv[2, 2])
+    σa_alone = 1 / sqrt(F[1, 1]); σθ_alone = 1 / sqrt(F[2, 2])
+    @info "Fisher at the truth (n ≤ $n, $FISHER, $SUB × $SUB sub-samples)" σ_spin_joint = σa_joint σ_inclination_deg_joint = rad2deg(σθ_joint) σ_spin_alone = σa_alone σ_inclination_deg_alone = rad2deg(σθ_alone)
+    return σa_joint, σθ_joint, σa_alone, σθ_alone
+end
 
 "Slice of a movie cube for the pixels `rng` of a screen stored as (npix, 1, nt, nν)."
 tile_movie(movie, rng) = StokesMovie(movie.data[rng, :, :, :], movie.times, movie.νs, movie.σ)
@@ -128,6 +178,13 @@ function run_case(n)
         end
     end
     loss(q) = value_and_gradient(q)[1]
+    nfree = count(free)
+    x0 = vcat([a, θo], truth[free])
+    if FISHER_ONLY
+        F = fisher_at_truth(tls, movies, N, n, x0)
+        report_fisher(F, n, npix, nuni)
+        return nothing
+    end
     # perturbed start
     p0 = copy(truth)
     for i in 1:4
@@ -163,23 +220,8 @@ function run_case(n)
     uerr = [abs(q[19, i] - truth[19, i]) for i in 1:4]
     @info "recovery (n ≤ $n)" chi2 = χ1 reduced = χ1 / ndata position_M = round.(pos_err; sigdigits = 2) position_start_M = round.(pos0; sigdigits = 2) ne = round.(rel(13); sigdigits = 2) Te = round.(rel(14); sigdigits = 2) B = round.(rel(15); sigdigits = 2) pattern_rate = round.(ωerr; sigdigits = 2) u_phi = round.(uerr; sigdigits = 2) minutes = (time() - t0) / 60
     # joint Fisher information at the truth (spin, inclination, free parcel parameters), tile by tile
-    nfree = count(free)
-    x0 = vcat([a, θo], truth[free])
-    tF = time()
-    F = zeros(length(x0), length(x0))
-    for (cam, b, r) in tls
-        function residuals(x)
-            params = similar(x, size(truth)); params .= truth
-            params[free] .= x[3:end]
-            return spacetime_residuals(x[1:2], params, movies[findfirst(t -> t[3] == r, tls)], cam, L; N, nmax = n, slab = SLAB, binning = b)
-        end
-        J = ForwardDiff.jacobian(residuals, x0, ForwardDiff.JacobianConfig(residuals, x0, ForwardDiff.Chunk{12}()))
-        F .+= J' * J
-    end
-    Finv = inv(F + 1e-12 * I)
-    σa_joint = sqrt(Finv[1, 1]); σθ_joint = sqrt(Finv[2, 2])
-    σa_alone = 1 / sqrt(F[1, 1]); σθ_alone = 1 / sqrt(F[2, 2])
-    @info "Fisher at the truth (n ≤ $n)" σ_spin_joint = σa_joint σ_inclination_deg_joint = rad2deg(σθ_joint) σ_spin_alone = σa_alone σ_inclination_deg_alone = rad2deg(σθ_alone) minutes = (time() - tF) / 60
+    F = fisher_at_truth(tls, movies, N, n, x0)
+    σa_joint, σθ_joint, σa_alone, σθ_alone = report_fisher(F, n, npix, nuni)
     outdir = joinpath(@__DIR__, "output", "case_$n"); mkpath(outdir)
     writedlm(joinpath(outdir, "truth.csv"), truth, ','); writedlm(joinpath(outdir, "start.csv"), p0, ','); writedlm(joinpath(outdir, "fitted.csv"), q, ',')
     uni = reshape(clean[1:nuni, 1, 1, 1], 48, 48)
@@ -194,7 +236,7 @@ function run_case(n)
         println(io, "chi2 start $χ0 end $χ1 (reduced $(χ1 / ndata)) over $ndata data values")
         println(io, "position errors (M): start $pos0 end $pos_err")
         println(io, "relative errors: ne $(rel(13)) Te $(rel(14)) B $(rel(15)) pattern rate $ωerr; u_phi absolute $uerr")
-        println(io, "Fisher at the truth: σ(a) joint $σa_joint alone $σa_alone; σ(θo) joint $(rad2deg(σθ_joint))° alone $(rad2deg(σθ_alone))°")
+        println(io, "Fisher at the truth ($FISHER): σ(a) joint $σa_joint alone $σa_alone; σ(θo) joint $(rad2deg(σθ_joint))° alone $(rad2deg(σθ_alone))°")
         println(io, "cumulative sub-image fluxes on the uniform grid: $fluxes")
     end
     return nothing
