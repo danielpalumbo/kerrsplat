@@ -72,24 +72,75 @@ rows and ln nₑ through the density scaling (see the header of this file).
     return nothing
 end
 
-# the backward pass: tails[j, k] is the invariant Stokes vector arriving from samples k…N (tails[j, 1] the image)
-@kernel function polarized_tails_kernel!(tails, params, tvec, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
+# the half-orbit cutoff: kstop[j] is the first sample of ray j beyond its nmax-th passage through the slab
+# (N + 1 when the ray is never truncated); the counter advances exactly as in the WindingState consumer,
+# and since it never decreases, every sample from kstop on is skipped by the truncated transport
+@kernel function winding_cutoff_kernel!(kstop, S, pc, met::Krang.Kerr, θo, slab, nmax, ::Val{N}) where {N}
+    j = @index(Global, Linear)
+    T = typeof(slab)
+    hor = Krang.horizon(met) * (1 + T(1e-3))
+    w = zero(WindingState{T})
+    stop = N + 1
+    for k in 1:N
+        s = _stored_sample(S, j, k)
+        (s.ok && s.r > hor) || continue
+        w = wind(w, s.r * cos(s.θ), slab)
+        if w.n > nmax
+            stop = k
+            break
+        end
+    end
+    @inbounds kstop[j] = stop
+end
+
+"""
+    winding_cutoff!(kstop, cache, slab, nmax) -> kstop
+
+For every ray the index of its first sample beyond the `nmax`-th passage through the slab
+|z| < `slab` (`N + 1` when there is none; see `Transfer.WindingState`), from the samples stored
+in `cache`: the truncated transport skips that sample and every later one, so the dual sweep
+needs only this cutoff. `kstop` is a vector of `Int` of length npix on the backend.
+"""
+function winding_cutoff!(kstop, cache::GeodesicCache{T,N}, slab, nmax) where {T,N}
+    backend = cache.backend
+    winding_cutoff_kernel!(backend, 64)(kstop, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(slab), Int32(nmax), Val(N); ndrange = npixels(cache))
+    KA.synchronize(backend)
+    return kstop
+end
+
+"The per-ray cutoffs of a truncation (`nmax ≥ 0`), or `N + 1` everywhere for the full rays."
+function _cutoffs(cache::GeodesicCache{T,N}, nmax, slab) where {T,N}
+    kstop = KA.allocate(cache.backend, Int, npixels(cache))
+    if nmax >= 0
+        winding_cutoff!(kstop, cache, slab, nmax)
+    else
+        fill!(kstop, N + 1)
+    end
+    return kstop
+end
+
+# the backward pass: tails[j, k] is the invariant Stokes vector arriving from samples k…N (tails[j, 1] the image);
+# samples from the cutoff on contribute nothing
+@kernel function polarized_tails_kernel!(tails, kstop, params, tvec, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
     j = @index(Global, Linear)
     pix = build_pixel(pc, j, met, θo)
     Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
     c = RadiativeTransport(PolarizedSplats(params, tvec), ν, L)
     R = zero(SVector{4,typeof(ν)})
+    @inbounds stop = kstop[j]
     @inbounds tails[j, N + 1] = R
     for k in N:-1:1
-        O, E, on = Transfer.sample_step(c, _stored_sample(S, j, k), Δτ, pix)
-        on && (R = E + O * R)
+        if k < stop
+            O, E, on = Transfer.sample_step(c, _stored_sample(S, j, k), Δτ, pix)
+            on && (R = E + O * R)
+        end
         @inbounds tails[j, k] = R
     end
 end
 
 # the forward pass: the adjoint w of the Stokes vector in front of each sample, the sample's
 # adjoint from w and its tail, and the splat parameters' share of it into grad[j, :, :]
-@kernel function polarized_dual_kernel!(grad, dstokes, tails, params, tvec, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
+@kernel function polarized_dual_kernel!(grad, dstokes, tails, kstop, params, tvec, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
     j = @index(Global, Linear)
     T = typeof(ν)
     pix = build_pixel(pc, j, met, θo)
@@ -98,7 +149,8 @@ end
     c = RadiativeTransport(m, ν, L)
     hor = Krang.horizon(met) * (1 + T(1e-3))
     @inbounds w = dstokes[j] * ν^3
-    for k in 1:N
+    @inbounds stop = kstop[j]
+    for k in 1:min(stop - 1, N)
         s = _stored_sample(S, j, k)
         (s.ok && s.r > hor) || continue
         j4, α4, ρ3, active = Transfer.accumulate_elements(c, s, pix, nothing)
@@ -115,20 +167,23 @@ end
 end
 
 """
-    polarized_tails!(tails, cache, params, t_obs, ν_obs, L) -> tails
+    polarized_tails!(tails, cache, params, t_obs, ν_obs, L; nmax = -1, slab = 0) -> tails
 
 The backward pass of the dual sweep over the samples stored in `cache`: `tails[j, k]` is the
 invariant Stokes vector arriving at the observer side of sample `k` of ray `j` from the samples
 behind it (`tails[j, N + 1] = 0`; `tails[j, 1]` is the image, see [`tail_image`](@ref)). `tails`
-is `npix × (N + 1)` of `SVector{4}` on the backend.
+is `npix × (N + 1)` of `SVector{4}` on the backend. With `nmax ≥ 0` the rays are truncated
+after their `nmax`-th passage through the slab |z| < `slab`, as `polarized_image!` does
+(`winding_cutoff!`).
 """
-function polarized_tails!(tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L) where {T,N}
+function polarized_tails!(tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; nmax = -1, slab = 0) where {T,N}
     backend = cache.backend
     nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
     size(tails) == (npixels(cache), N + 1) || throw(ArgumentError("tails must be npix × (N + 1)"))
     prepare_backend!(backend)
     tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
-    polarized_tails_kernel!(backend, 64)(tails, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npixels(cache))
+    kstop = _cutoffs(cache, nmax, slab)
+    polarized_tails_kernel!(backend, 64)(tails, kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npixels(cache))
     KA.synchronize(backend)
     return tails
 end
@@ -137,23 +192,24 @@ end
 tail_image(tails, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1])
 
 """
-    polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L) -> dparams
+    polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax = -1, slab = 0) -> dparams
 
 The forward pass of the dual sweep: with the `tails` of [`polarized_tails!`](@ref) and
 `dstokes` the adjoint of the observed Stokes vectors (sorted pixel order, ∂l/∂(I, Q, U, V) in
 cgs), carry the adjoint of the Stokes vector in front of each sample along every ray, form the
 adjoints of the sample's step by forward-mode duals through the step operator, and accumulate
 ∂l/∂params into `dparams` (per-ray partial sums on the backend, reduced at the end, so that the
-result does not depend on the order of the threads).
+result does not depend on the order of the threads). `nmax`, `slab` must match the tails.
 """
-function polarized_dual_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}, tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L) where {T,N}
+function polarized_dual_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}, tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; nmax = -1, slab = 0) where {T,N}
     backend = cache.backend
     npix = npixels(cache)
     size(tails) == (npix, N + 1) || throw(ArgumentError("tails must be npix × (N + 1)"))
     prepare_backend!(backend)
     tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    kstop = _cutoffs(cache, nmax, slab)
     grad = KA.allocate(backend, T, npix, size(params, 1), size(params, 2)); fill!(grad, zero(T))
-    polarized_dual_kernel!(backend, 64)(grad, dstokes, tails, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npix)
+    polarized_dual_kernel!(backend, 64)(grad, dstokes, tails, kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npix)
     KA.synchronize(backend)
     dparams .+= reshape(sum(grad; dims = 1), size(params))
     return dparams

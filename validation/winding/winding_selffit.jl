@@ -7,14 +7,20 @@
 # information of the spin and inclination at the truth (joint with the free parcel parameters,
 # by ForwardDiff duals through the whole pipeline) quantifies what each order adds.
 #
-#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2]
+#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda]
 #
+# With `--backend cuda` the fits take their χ² and gradient from the truncated dual sweep on the
+# GPU (`Fit.chi2_gradient!(...; nmax, slab)` over stored samples, one cache for the whole screen);
+# the CPU path tiles the screen and differentiates with Enzyme on the host. The Fisher audit runs on
+# the CPU by ForwardDiff duals in both cases.
 # Writes output/case_n/ (untracked): data and model images, fitted parameters, a summary.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
-using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Enzyme, Optimisers, Krang, ForwardDiff, Statistics
+using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Enzyme, Optimisers, Krang, ForwardDiff, Statistics, CUDA, Adapt
 
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
 const CASE = getopt("--case", 0); const ITER = getopt("--iterations", 300); const SEED = getopt("--seed", 1); const NFRAMES = getopt("--frames", 2)
+const BACKEND = (i = findfirst(==("--backend"), ARGS); i === nothing ? "cpu" : lowercase(ARGS[i+1]))
+BACKEND in ("cpu", "cuda") || error("--backend must be cpu or cuda")
 const ETA = getopt("--eta", 0.005)                           # Adam step in parameter units: the pattern rates are ~0.05 rad/M
 const a = 0.94; const θo = deg2rad(17.0); const ν = 230e9
 const M_solar = 6.5e9; const L = gravitational_radius(M_solar)
@@ -85,20 +91,32 @@ function run_case(n)
     movie = StokesMovie(data, times, [ν], σ)
     fluxes = [sum(getindex.(polarized_cube(cache, truth, times[1:1], [ν], L; nmax = m, slab = SLAB)[1:nuni, 1, 1, 1], 1)) for m in 0:n]
     @info "sub-image fluxes on the uniform grid (arbitrary units)" cumulative = fluxes
-    # tiles: a cache and a movie slice per tile, so that the reverse pass runs tile by tile
+    # tiles: a cache and a movie slice per tile, so that the CPU reverse pass runs tile by tile (the Fisher audit uses them too)
     ntiles = cld(npixels(camera), TILE)
     tls = Geodesics.tiles(camera, ntiles)
-    caches = [(c = GeodesicCache(CPU(), cam, Val(N); store_samples = false); regenerate!(c, a, θo; marcher = Fused(64)); c) for (cam, _) in tls]
     movies = [tile_movie(movie, r) for (_, r) in tls]
-    @info "tiles" count = length(tls) pixels_per_tile = TILE
-    loss(q) = sum(chi2(q, movies[t], caches[t], L; nmax = n, slab = SLAB) for t in eachindex(tls))
-    function gradient(q)
-        g = zero(q)
-        for t in eachindex(tls)
-            g .+= Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2(x, movies[t], caches[t], L; nmax = n, slab = SLAB)), q)[1]
+    value_and_gradient = if BACKEND == "cuda"
+        gcache = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = true)
+        regenerate!(gcache, a, θo; marcher = Recurrence(64))
+        @info "GPU gradient: the truncated dual sweep over stored samples" pixels = npixels(camera) samples = N
+        q -> begin
+            dp = CUDA.zeros(Float64, size(q))
+            χ = chi2_gradient!(dp, CuArray(q), movie, gcache, L; nmax = n, slab = SLAB)
+            (χ, Array(dp))
         end
-        return g
+    else
+        caches = [(c = GeodesicCache(CPU(), cam, Val(N); store_samples = false); regenerate!(c, a, θo; marcher = Fused(64)); c) for (cam, _) in tls]
+        @info "tiles" count = length(tls) pixels_per_tile = TILE
+        q -> begin
+            χ = 0.0; g = zero(q)
+            for t in eachindex(tls)
+                χ += chi2(q, movies[t], caches[t], L; nmax = n, slab = SLAB)
+                g .+= Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2(x, movies[t], caches[t], L; nmax = n, slab = SLAB)), q)[1]
+            end
+            (χ, g)
+        end
     end
+    loss(q) = value_and_gradient(q)[1]
     # perturbed start
     p0 = copy(truth)
     for i in 1:4
@@ -117,14 +135,14 @@ function run_case(n)
     for it in 1:ITER
         η = ETA / 10 + (ETA - ETA / 10) * (1 + cos(π * (it - 1) / max(ITER - 1, 1))) / 2
         Optimisers.adjust!(opt, η)
-        g = gradient(q) .* mask
-        opt, q = Optimisers.update!(opt, q, g)
+        χ, g = value_and_gradient(q)                       # χ² at the current point, before the update
+        χ < best[1] && (best = (χ, copy(q)))
+        opt, q = Optimisers.update!(opt, q, g .* mask)
         if it % 20 == 0 || it == ITER
-            χ = loss(q)
-            χ < best[1] && (best = (χ, copy(q)))
             @info "iteration $it" chi2 = χ reduced = χ / ndata minutes = (time() - t0) / 60
         end
     end
+    χend = loss(q); χend < best[1] && (best = (χend, copy(q)))
     χ1, q = best
     # recovery metrics
     pos_err = [hypot(q[1, i] - truth[1, i], q[2, i] - truth[2, i], q[3, i] - truth[3, i]) for i in 1:4]

@@ -373,7 +373,7 @@ function polarized_reverse_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}
 end
 
 """
-    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1) -> (dparams, image)
+    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1, nmax = -1, slab = 0) -> (dparams, image)
 
 Gradient of Σⱼ dstokes[j] · observed_stokes(ray j) with respect to the polarized splat parameters,
 inside the kernel over the samples stored in `cache`, one ray per thread. `dstokes` is a vector
@@ -384,21 +384,24 @@ and the image (observed Stokes vectors, sorted order) are returned. Gate:
 `method = :dual` (the default) is the dual sweep: a backward pass stores the Stokes vector
 arriving from behind every sample ([`polarized_tails!`](@ref)), and a forward pass carries the
 adjoint of the Stokes vector in front of each sample and differentiates each sample locally by
-forward-mode duals ([`polarized_dual_sweep!`](@ref)). `method = :enzyme` is the chunked reverse
+forward-mode duals ([`polarized_dual_sweep!`](@ref)); with `nmax ≥ 0` it differentiates the
+rays truncated after their `nmax`-th passage through the slab |z| < `slab` (the loss of
+`polarized_image!(...; nmax, slab)`, gate `test_polarized_gradient_winding`). `method = :enzyme` is the chunked reverse
 sweep by Enzyme reverse mode inside the kernel: a forward kernel keeps the radiative state at
 each chunk boundary (`chunk_size(N; kmax)` samples per chunk, at most the eight a 64 KB
 per-thread stack can tape), then the chunks are differentiated from the last to the first with
 the adjoint of the incoming state carried along; exact but about fifty times the forward cost
 per sample on the device.
 """
-function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax::Integer = 1) where {T,N}
+function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax::Integer = 1, nmax = -1, slab = 0) where {T,N}
     if method == :dual
         tails = KA.allocate(cache.backend, SVector{4,T}, npixels(cache), N + 1)
-        polarized_tails!(tails, cache, params, t_obs, ν_obs, L)
+        polarized_tails!(tails, cache, params, t_obs, ν_obs, L; nmax, slab)
         image = tail_image(tails, ν_obs)
-        polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L)
+        polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax, slab)
         return dparams, image
     elseif method == :enzyme
+        nmax < 0 || throw(ArgumentError("the Enzyme sweep has no half-orbit truncation; use method = :dual"))
         K = chunk_size(N; kmax)
         states = KA.allocate(cache.backend, RadiativeState{T}, npixels(cache), N ÷ K + 1)
         polarized_forward_states!(states, cache, params, t_obs, ν_obs, L, Val(K))

@@ -138,3 +138,76 @@ function test_winding_gradient(; res = 8, N = 120)
         end
     end
 end
+
+"""
+    test_polarized_gradient_winding(backend; res, N, tol, label)
+
+The dual sweep with half-orbit truncation (`polarized_gradient!(...; nmax, slab)`) against the
+host Enzyme gradient of the same loss through `polarized_image!(...; nmax, slab)` (the
+`WindingState` consumer on the fused march), for n ≤ 0 and n ≤ 1 at a 17° observer, and the
+per-ray cutoffs of `winding_cutoff!` against the counter run on the host.
+"""
+function test_polarized_gradient_winding(backend; res::Int = 8, N::Int = 120, tol::Float64 = 1e-10, label::String = "CPU backend")
+    a = 0.94; θo = deg2rad(17.0); slab = 0.3
+    fov = 16.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    L = gravitational_radius(6.5e9); ν = 230e9; t_obs = 0.0
+    p = zeros(NPOLARIZEDPARAMS, 2)
+    p[:, 1] = [5.5, 1.0, 0.1, log(1.0), log(1.0), log(0.3), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(1e5), log(30.0), log(10.0), 1.0, 0.5, 0.0, 0.3, 0.0, 0.02]
+    p[:, 2] = [-4.0, 3.0, -0.1, log(1.2), log(0.8), log(0.3), 1.0, 0.1, 0.0, 0.0, 0.0, log(1e9), log(6e4), log(20.0), log(15.0), 1.8, -0.8, -0.1, 0.35, 0.05, -0.02]
+    rng = MersenneTwister(3)
+    w = [SVector{4}(randn(rng, 4)) for _ in 1:npixels(cpu)]
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    params = adapt_to(backend, p); dstokes = adapt_to(backend, w)
+    @testset "$label dual sweep with half-orbit truncation, $(res)² × $N" begin
+        # the cutoffs against the counter on the host over the same stored samples
+        S = cache.samples
+        t_h = Array(S.t); r_h = Array(S.r); θ_h = Array(S.θ); f_h = Array(S.flags)
+        hor = Krang.horizon(Krang.Kerr(a)) * (1 + 1e-3)
+        for nmax in (0, 1)
+            kstop = KernelAbstractions.allocate(backend, Int, npixels(cache))
+            Splats.winding_cutoff!(kstop, cache, slab, nmax)
+            ks = Array(kstop)
+            expected = fill(N + 1, npixels(cache))
+            for j in 1:npixels(cache)
+                wd = zero(WindingState{Float64})
+                for k in 1:N
+                    ok = (f_h[j, k] & 0x01) != 0x00
+                    (ok && r_h[j, k] > hor) || continue
+                    wd = wind(wd, r_h[j, k] * cos(θ_h[j, k]), slab)
+                    if wd.n > nmax
+                        expected[j] = k
+                        break
+                    end
+                end
+            end
+            @test ks == expected
+            @info "$label winding cutoffs (n ≤ $nmax): $(count(<=(N), ks)) of $(npixels(cache)) rays truncated, agreeing with the host counter"
+        end
+        for nmax in (0, 1)
+            function host(q)
+                out = Vector{WindingState{Float64}}(undef, npixels(cpu)); fill!(out, zero(WindingState{Float64}))
+                polarized_image!(out, cpu, q, t_obs, ν, L; nmax, slab)
+                total = 0.0
+                for j in eachindex(out)
+                    total += sum(w[j] .* observed_stokes(out[j], ν))
+                end
+                return total
+            end
+            gh = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(host), p)[1]
+            ref = Vector{WindingState{Float64}}(undef, npixels(cpu)); fill!(ref, zero(WindingState{Float64})); polarized_image!(ref, cpu, p, t_obs, ν, L; nmax, slab)
+            reference = [observed_stokes(st, ν) for st in ref]
+            dparams = adapt_to(backend, zeros(size(p)))
+            _, image = polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν, L; nmax, slab)
+            g = Array(dparams)
+            e = maximum(abs.(g .- gh)) / maximum(abs.(gh))
+            @test all(isfinite, g)
+            @test e <= tol
+            @test maximum(norm.(Array(image) .- reference)) <= 1e-12 * maximum(norm.(reference))
+            @info "$label truncated (n ≤ $nmax) dual-sweep gradient vs host Enzyme: max |Δ|/max = $e"
+        end
+    end
+end
