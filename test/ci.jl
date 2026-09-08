@@ -42,4 +42,5 @@ include("test_winding.jl")
     test_step_adjoint()
     test_polarized_kernel_gradient(CPU(); K = 4, label = "CPU")
     test_polarized_gradient(CPU(); res = 6, N = 16, tol = 1e-10, label = "CPU backend")
+    test_polarized_gradient_winding(CPU(); res = 6, N = 40, tol = 1e-10, label = "CPU backend")
 end

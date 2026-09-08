@@ -109,10 +109,24 @@ dual and the Enzyme sweeps in these runs: 4e-15 to 3e-14; dual against the host 
 - `LocalFrame(g, cosθB, zero(T))` with `T` the metric's Float64 and `g` a dual is a
   MethodError; the degenerate branches of `local_frame` are now typed by their arguments.
 
+## Half-orbit truncation (2026-09-08)
+
+The truncated transport (`polarized_image!(...; nmax, slab)`, the `WindingState` consumer)
+skips a sample once the ray's passage count exceeds `nmax`, and the count never decreases, so
+the truncation of a ray is one index: the first sample beyond its `nmax`-th passage.
+`winding_cutoff!` runs the counter over the stored samples (exactly the consumer's `wind`, on
+the same validity test) and both passes of the dual sweep stop there (`polarized_tails!`,
+`polarized_dual_sweep!`, `polarized_gradient!`, `Fit.chi2_gradient!`, `Fit.image_loss_gradient!`
+take `nmax`, `slab`; the Enzyme sweep does not). Gate `test_polarized_gradient_winding`: the
+cutoffs equal the counter run on the host for every ray, and the gradients of the truncated
+loss agree with host Enzyme through the winding consumer to 6e-15 and 3e-15 (CPU, n ≤ 0 and
+n ≤ 1, 6² × 40) and 1.6e-14 and 1.4e-14 (CUDA, 24² × 300). The half-orbit self-fit experiment
+(`validation/winding/winding_selffit.jl --backend cuda`) takes its χ² and gradient from this
+path over one stored-sample cache instead of tiled host Enzyme.
+
 ## What is still open
 
 The dual sweep covers `PolarizedSplats` (thermal parcels); `KnotSplats` and the power-law and κ
 populations need their own `element_adjoint!` (the same recipe: density scaling for the
-geometry, duals for the population rows). The winding-truncated loss (`nmax`) needs the
-half-orbit counter in both passes. The Enzyme sweep (`method = :enzyme`) stays as the reference
-for any model.
+geometry, duals for the population rows). The Enzyme sweep (`method = :enzyme`) stays as the
+reference for any model.
