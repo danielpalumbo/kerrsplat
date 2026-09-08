@@ -174,6 +174,20 @@ function test_fit_schedule(; res = 8, N = 60)
         @test length(h1) == length(h2) == 8 && isempty(e1) && isempty(e2)
         @test maximum(abs.(h1 .- h2) ./ abs.(h1)) < 1e-12
         @test maximum(abs.(q1 .- q2)) < 1e-12
+        @test h1[1] ≈ chi2(p, movie, cache, L)                      # history holds the loss at the start of each iteration
+    end
+    @testset "the dual-sweep movie fit follows the Enzyme fit" begin
+        # a stored-sample cache on the same Mino grid; a prior so that the host penalty path is exercised too
+        stored = GeodesicCache(CPU(), camera, Val(N); store_samples = true)
+        regenerate!(stored, a, θo; marcher = Recurrence(64))
+        priors = [Fit.Prior(rows = (:logB,), μ = log(28.0), σ = 0.5)]
+        one = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 8, η = 0.05, η_end = 0.02)]
+        q1, h1, _ = Fit.fit!(copy(p), movie, cache, L, one; hygiene = Fit.Hygiene(every = 0), priors)
+        q2, h2, _ = Fit.fit!(copy(p), movie, stored, L, one; hygiene = Fit.Hygiene(every = 0), priors, gradient = :dual)
+        @test length(h2) == 8
+        @test maximum(abs.(h1 .- h2) ./ abs.(h1)) < 1e-9
+        @test maximum(abs.(q1 .- q2)) < 1e-9
+        @info "dual-sweep movie fit vs the Enzyme fit over 8 iterations: history to $(maximum(abs.(h1 .- h2) ./ abs.(h1))), parameters to $(maximum(abs.(q1 .- q2)))"
     end
 end
 
