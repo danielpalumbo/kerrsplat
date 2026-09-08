@@ -76,7 +76,7 @@ integration.
 |---|---|---|---|---|---|---|
 | n = 0 | 2304 / 9216 | 0.9 min | 1.134 | 0.013, 0.15, 0.45, 0.17 | 3.1e-5 | 0.0066° |
 | n ≤ 1 | 12384 / 89856 | 10.3 min | 1.059 | 0.001, 0.070, 0.035, 0.049 | 2.6e-5 | 0.0042° |
-| n ≤ 2 | CASE2K2 |
+| n ≤ 2 | 20224 / 152576 | 32.2 min | 1.043 | 0.108, 0.007, 0.003, 0.010 | 1.2e-5 | 0.00058° |
 
 The fits behave as on the point-sampled screens: the same χ²/N floors (the data are the binned
 truth plus the same relative noise), the same parcels recovered to the same accuracy. The
@@ -100,4 +100,7 @@ Per iteration on the 2080 SUPER: 0.2 s for n = 0 (2304 rays × 80 samples × 2 f
 n ≤ 1 (12384 × 160 × 2) and 3.1 s for n ≤ 2 (20224 × 240 × 2): 0.6–0.7 ns per ray-sample-frame
 of full polarized gradient. The Fisher audit (CPU, ForwardDiff duals, 12-wide chunks, tiled)
 took 7.4, 6.3 and 8.0 minutes. The whole experiment, 45 minutes; the same three cases by tiled
-host Enzyme were estimated at twelve hours on 2026-09-05.
+host Enzyme were estimated at twelve hours on 2026-09-05. With 2 × 2 points per pixel (7–8×
+the rays) the fits took 0.9, 10.3 and 32.2 minutes: the card is under-occupied by the
+point-sampled screens, so pixel integration is nearly free at n = 0 and costs 2–2.5× at the
+higher orders.
