@@ -84,9 +84,9 @@ splats; the dual sweep (`Splats.polarized_gradient!`, the default of `Fit.chi2_g
 per-sample derivatives by forward-mode duals; 2.8 s per 128² × 300 gradient of six parcels on the 2080 SUPER, 34× the Enzyme sweep,
 `docs/notes/2026-09-06_dual_sweep.md`; half-orbit truncation included since 2026-09-08) for
 `KnotSplats` and the power-law and κ populations (each needs an `element_adjoint!`; the
-Enzyme sweep, `method = :enzyme`, remains the slow reference for any model); movie fits (`fit!` on a
-`StokesMovie`) still take Enzyme's host gradient on the CPU backend and could call
-`chi2_gradient!` instead; the Comrade.jl route; GRMHD movie fits
+Enzyme sweep, `method = :enzyme`, remains the slow reference for any model; movie fits take the
+dual sweep with `fit!(...; gradient = :dual)` on a stored-sample cache since 2026-09-08); the
+Comrade.jl route; GRMHD movie fits
 (need dumps); the upstream reports in `docs/notes/upstream_issues.md` (Daniel's call).
 
 ## Conventions that bit us

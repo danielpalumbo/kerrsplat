@@ -296,35 +296,76 @@ Base.@kwdef struct Hygiene
 end
 
 """
-    fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing)
-        -> (params, history, events)
+    fit!(params, movie, cache, L, stages; hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing,
+         nmax = -1, slab = 0, gradient = :enzyme) -> (params, history, events)
 
 Run the stages in order on a parameter matrix (returned, since hygiene can change its size).
-`history` holds the χ² after every iteration (the stage's minibatch and frequency subset) and
-`events` the hygiene passes as `(stage, iteration, nsplats_before, nsplats_after)`.
+`history` holds the χ² at the start of every iteration (the point where the gradient was taken,
+on the stage's minibatch and frequency subset) and `events` the hygiene passes as
+`(stage, iteration, nsplats_before, nsplats_after)`. `gradient = :enzyme` differentiates
+`chi2` with Enzyme on the host (any cache); `gradient = :dual` takes χ² and gradient from
+`chi2_gradient!` on the backend of `cache`, which must hold stored samples (the dual sweep; the
+priors' penalty is added on the host). The parameters stay on the host in both cases (hygiene
+works there); the dual path copies them to the backend every iteration.
 """
 function fit!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L, stages::AbstractVector{Stage};
-              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing, nmax = -1, slab = 0) where {T}
-    function make_loss(st, it)
+              hygiene::Hygiene = Hygiene(), rng = Random.default_rng(), callback = nothing, priors = nothing, nmax = -1, slab = 0,
+              gradient::Symbol = :enzyme) where {T}
+    gradient in (:enzyme, :dual) || throw(ArgumentError("gradient must be :enzyme or :dual, got $gradient"))
+    function batches(st)
         freqs_all = st.freqs === nothing ? collect(eachindex(movie.νs)) : collect(st.freqs)
         frames = st.batch === nothing ? collect(eachindex(movie.times)) : sort(randperm(rng, length(movie.times))[1:min(st.batch[1], length(movie.times))])
         freqs = st.batch === nothing ? freqs_all : sort(freqs_all[randperm(rng, length(freqs_all))[1:min(st.batch[2], length(freqs_all))]])
-        return q -> chi2(q, movie, cache, L; frames, freqs, priors, nmax, slab)
+        return frames, freqs
     end
-    return _fit_loop!(params, make_loss, stages; hygiene, callback)
+    make_valgrad = if gradient == :enzyme
+        (st, it) -> begin
+            frames, freqs = batches(st)
+            q -> _enzyme_valgrad(x -> chi2(x, movie, cache, L; frames, freqs, priors, nmax, slab), q)
+        end
+    else
+        backend = cache.backend
+        (st, it) -> begin
+            frames, freqs = batches(st)
+            q -> _dual_valgrad(q, movie, cache, L, frames, freqs, priors, nmax, slab, backend)
+        end
+    end
+    return _fit_loop!(params, make_valgrad, stages; hygiene, callback)
+end
+
+"Loss and gradient at `q` by Enzyme reverse mode on the host, in one call."
+function _enzyme_valgrad(f, q)
+    r = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.ReverseWithPrimal), Enzyme.Const(f), q)
+    return r.val, r.derivs[1]
+end
+
+"χ² (with the priors' penalty) and its gradient at the host parameters `q` by `chi2_gradient!` on `backend`."
+function _dual_valgrad(q::AbstractMatrix{T}, movie, cache, L, frames, freqs, priors, nmax, slab, backend) where {T}
+    pdev = KernelAbstractions.allocate(backend, T, size(q)); copyto!(pdev, q)
+    gdev = KernelAbstractions.allocate(backend, T, size(q)); fill!(gdev, zero(T))
+    χ = chi2_gradient!(gdev, pdev, movie, cache, L; frames, freqs, nmax, slab)
+    g = Array(gdev)
+    if priors !== nothing
+        value, gp = _enzyme_valgrad(x -> penalty(x, priors), q)
+        χ += value; g .+= gp
+    end
+    return χ, g
 end
 
 """
-    fit!(params, loss, stages; hygiene = Hygiene(), callback = nothing)
+    fit!(params, loss, stages; hygiene = Hygiene(), callback = nothing, gradient = nothing)
 
 The same staged schedule, annealing and partition hygiene for an arbitrary differentiable loss
 `loss(params)` (a visibility or closure χ² with gains, a composite of several data sets, …):
-`Stage.batch` and `Stage.freqs` are ignored (the loss decides what it evaluates); `gradient`, if
-given, is called as `gradient(params)` in place of Enzyme (e.g. the GPU `chi2_gradient!`).
-Returns `(params, history, events)` like the movie form.
+`Stage.batch` and `Stage.freqs` are ignored (the loss decides what it evaluates). `gradient`,
+if given, is called as `gradient(params)` in place of Enzyme and may return either the gradient
+or a `(value, gradient)` tuple (e.g. the GPU `image_loss_gradient!` wrapped to return both);
+with the gradient alone the loss is evaluated separately for `history`. Returns
+`(params, history, events)` like the movie form.
 """
 function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hygiene::Hygiene = Hygiene(), callback = nothing, gradient = nothing) where {T}
-    return _fit_loop!(params, (st, it) -> loss, stages; hygiene, callback, gradient)
+    valgrad = gradient === nothing ? (q -> _enzyme_valgrad(loss, q)) : (q -> (r = gradient(q); r isa Tuple ? r : (loss(q), r)))
+    return _fit_loop!(params, (st, it) -> valgrad, stages; hygiene, callback)
 end
 
 """
@@ -430,7 +471,8 @@ end
 
 export chi2_gradient!, image_loss_gradient!, sweep_passes
 
-function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector{Stage}; hygiene::Hygiene, callback, gradient = nothing) where {T}
+# `make_valgrad(stage, iteration)` returns a function of the parameters giving the loss and its gradient
+function _fit_loop!(params::AbstractMatrix{T}, make_valgrad, stages::AbstractVector{Stage}; hygiene::Hygiene, callback) where {T}
     history = T[]
     events = Tuple{Int,Int,Int,Int}[]
     for (si, st) in enumerate(stages)
@@ -440,8 +482,7 @@ function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector
         for it in 1:st.iterations
             η = st.η_end + (st.η - st.η_end) * (1 + cos(π * (it - 1) / max(st.iterations - 1, 1))) / 2
             Optimisers.adjust!(opt, η)
-            f = make_loss(st, it)
-            g = gradient === nothing ? Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), params)[1] : gradient(params)
+            value, g = make_valgrad(st, it)(params)
             if hygiene.every > 0 && it % hygiene.every == 0
                 before = size(params, 2)
                 q, kept = prune(params; fraction = hygiene.prune_fraction)
@@ -461,8 +502,8 @@ function _fit_loop!(params::AbstractMatrix{T}, make_loss, stages::AbstractVector
                 end
             end
             opt, params = Optimisers.update!(opt, params, g .* mask)
-            push!(history, f(params))
-            callback === nothing || callback(si, it, params, history[end])
+            push!(history, value)
+            callback === nothing || callback(si, it, params, value)
         end
     end
     return params, history, events
