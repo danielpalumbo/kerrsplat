@@ -202,13 +202,14 @@ function run_case(n)
         report_fisher(F, n, npix, nuni)
         return nothing
     end
-    # perturbed start
+    # perturbed start, from its own stream so that every band set and screen starts from the same point
+    rng0 = MersenneTwister(SEED + 1000)
     p0 = copy(truth)
     for i in 1:4
-        p0[1, i] += 0.3 * randn(rng); p0[2, i] += 0.3 * randn(rng); p0[3, i] += 0.05 * randn(rng)
-        p0[4:6, i] .+= 0.15 .* randn(rng, 3)
-        p0[13, i] += 0.2 * randn(rng); p0[14, i] += 0.1 * randn(rng); p0[15, i] += 0.15 * randn(rng)
-        p0[19, i] += 0.05 * randn(rng); p0[21, i] *= 1 + 0.02 * randn(rng)
+        p0[1, i] += 0.3 * randn(rng0); p0[2, i] += 0.3 * randn(rng0); p0[3, i] += 0.05 * randn(rng0)
+        p0[4:6, i] .+= 0.15 .* randn(rng0, 3)
+        p0[13, i] += 0.2 * randn(rng0); p0[14, i] += 0.1 * randn(rng0); p0[15, i] += 0.15 * randn(rng0)
+        p0[19, i] += 0.05 * randn(rng0); p0[21, i] *= 1 + 0.02 * randn(rng0)
     end
     χ0 = loss(p0)
     ndata = 4 * length(data)
