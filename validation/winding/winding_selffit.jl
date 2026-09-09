@@ -7,8 +7,13 @@
 # information of the spin and inclination at the truth (joint with the free parcel parameters,
 # by ForwardDiff duals through the whole pipeline) quantifies what each order adds.
 #
-#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1] [--fisher fd|duals] [--fisher-only]
+#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1] [--fisher fd|duals] [--fisher-only] [--frequencies 230] [--tag name]
 #
+# `--frequencies 86,230,345` fits the movie at several frequencies (GHz) at once, each band with its
+# own noise (1%, 0.5%, 0.5%, 0.2% of that band's peak in I, Q, U, V): the multifrequency test of
+# whether bands on both sides of the parcels' synchrotron turnover (near 180 GHz for the truth;
+# τ_z ≈ 3 at 86 GHz, 0.3 at 230 GHz, 0.12 at 345 GHz) pin down nₑ, Θe and B. `--tag` names the
+# output directory `output/case_n_tag`.
 # The Fisher audit at the truth takes the parcel columns of the Jacobian by ForwardDiff duals through
 # the transfer at fixed geodesics (`Fit.fisher`) and, with `--fisher fd` (the default), the spin and
 # inclination columns by central finite differences of the residuals (step 1e-4 in a, 1e-4 rad in θo),
@@ -35,7 +40,10 @@ FISHER in ("fd", "duals") || error("--fisher must be fd or duals")
 const FISHER_ONLY = "--fisher-only" in ARGS
 const FDSTEP = 1e-4
 const ETA = getopt("--eta", 0.005)                           # Adam step in parameter units: the pattern rates are ~0.05 rad/M
-const a = 0.94; const θo = deg2rad(17.0); const ν = 230e9
+const a = 0.94; const θo = deg2rad(17.0)
+const νs = [parse(Float64, v) * 1e9 for v in split((i = findfirst(==("--frequencies"), ARGS); i === nothing ? "230" : ARGS[i+1]), ",")]
+const ν = νs[1]                                              # the band of the printed images and fluxes
+const TAG = (i = findfirst(==("--tag"), ARGS); i === nothing ? "" : "_" * ARGS[i+1])
 const M_solar = 6.5e9; const L = gravitational_radius(M_solar)
 const SLAB = 0.6                                              # ≥ 4σ_z of the parcels
 const met = Krang.Kerr(a)
@@ -117,12 +125,20 @@ function fisher_at_truth(tls, movies, N, n, x0)
     return F
 end
 
+"Marginal Fisher errors (joint with everything else) of the rows `rows` of every parcel, from the inverse Fisher matrix."
+function marginal_errors(Finv, rows)
+    nper = length(freerows)
+    return [sqrt(Finv[2 + (i - 1) * nper + findfirst(==(r), freerows), 2 + (i - 1) * nper + findfirst(==(r), freerows)]) for r in rows, i in 1:size(truth, 2)]
+end
+
 function report_fisher(F, n, npix, nuni)
     Finv = inv(F + 1e-12 * I)
     σa_joint = sqrt(Finv[1, 1]); σθ_joint = sqrt(Finv[2, 2])
     σa_alone = 1 / sqrt(F[1, 1]); σθ_alone = 1 / sqrt(F[2, 2])
-    @info "Fisher at the truth (n ≤ $n, $FISHER, $SUB × $SUB sub-samples)" σ_spin_joint = σa_joint σ_inclination_deg_joint = rad2deg(σθ_joint) σ_spin_alone = σa_alone σ_inclination_deg_alone = rad2deg(σθ_alone)
-    return σa_joint, σθ_joint, σa_alone, σθ_alone
+    @info "Fisher at the truth (n ≤ $n, $FISHER, $SUB × $SUB sub-samples, $(length(νs)) bands)" σ_spin_joint = σa_joint σ_inclination_deg_joint = rad2deg(σθ_joint) σ_spin_alone = σa_alone σ_inclination_deg_alone = rad2deg(σθ_alone)
+    me = marginal_errors(Finv, (13, 14, 15))
+    @info "marginal Fisher errors of the emission rows per parcel (joint)" ln_ne = round.(me[1, :]; sigdigits = 3) ln_Te = round.(me[2, :]; sigdigits = 3) ln_B = round.(me[3, :]; sigdigits = 3)
+    return σa_joint, σθ_joint, σa_alone, σθ_alone, me
 end
 
 "Slice of a movie cube for the pixels `rng` of a screen stored as (npix, 1, nt, nν)."
@@ -135,12 +151,13 @@ function run_case(n)
     cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
     regenerate!(cache, a, θo; marcher = Fused(64))
     @info "case n ≤ $n" pixels = npix points = npixels(camera) samples = N
-    clean = bin(binning, polarized_cube(cache, truth, times, [ν], L; nmax = n, slab = SLAB))
-    peak = maximum(norm.(clean))
-    σ = SVector(0.01, 0.005, 0.005, 0.002) * peak
+    clean = bin(binning, polarized_cube(cache, truth, times, νs, L; nmax = n, slab = SLAB))
+    peaks = [maximum(norm.(clean[:, :, :, l])) for l in eachindex(νs)]              # each band's own noise level
+    σ = [SVector(0.01, 0.005, 0.005, 0.002) * peaks[idx[4]] for idx in CartesianIndices(clean)]
     rng = MersenneTwister(SEED)
-    data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
-    movie = StokesMovie(data, times, [ν], σ)
+    data = [clean[idx] + σ[idx] .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
+    movie = StokesMovie(data, times, νs, σ)
+    @info "bands" GHz = νs ./ 1e9 peak_I = round.(peaks; sigdigits = 3)
     fluxes = [sum(getindex.(bin(binning, polarized_cube(cache, truth, times[1:1], [ν], L; nmax = m, slab = SLAB))[1:nuni, 1, 1, 1], 1)) for m in 0:n]
     @info "sub-image fluxes on the uniform grid (arbitrary units)" cumulative = fluxes
     # tiles: a cache and a movie slice per tile, so that the CPU reverse pass runs tile by tile (the Fisher audit uses
@@ -195,6 +212,7 @@ function run_case(n)
     end
     χ0 = loss(p0)
     ndata = 4 * length(data)
+    @info "multifrequency" bands = length(νs) data_values = ndata
     @info "start" chi2 = χ0 reduced = χ0 / ndata
     t0 = time()
     q = copy(p0); mask = Float64.(free)
@@ -221,22 +239,26 @@ function run_case(n)
     @info "recovery (n ≤ $n)" chi2 = χ1 reduced = χ1 / ndata position_M = round.(pos_err; sigdigits = 2) position_start_M = round.(pos0; sigdigits = 2) ne = round.(rel(13); sigdigits = 2) Te = round.(rel(14); sigdigits = 2) B = round.(rel(15); sigdigits = 2) pattern_rate = round.(ωerr; sigdigits = 2) u_phi = round.(uerr; sigdigits = 2) minutes = (time() - t0) / 60
     # joint Fisher information at the truth (spin, inclination, free parcel parameters), tile by tile
     F = fisher_at_truth(tls, movies, N, n, x0)
-    σa_joint, σθ_joint, σa_alone, σθ_alone = report_fisher(F, n, npix, nuni)
-    outdir = joinpath(@__DIR__, "output", "case_$n"); mkpath(outdir)
+    σa_joint, σθ_joint, σa_alone, σθ_alone, me = report_fisher(F, n, npix, nuni)
+    outdir = joinpath(@__DIR__, "output", "case_$n$TAG"); mkpath(outdir)
     writedlm(joinpath(outdir, "truth.csv"), truth, ','); writedlm(joinpath(outdir, "start.csv"), p0, ','); writedlm(joinpath(outdir, "fitted.csv"), q, ',')
     uni = reshape(clean[1:nuni, 1, 1, 1], 48, 48)
     for (k, s) in enumerate(("I", "Q", "U", "V"))
         writedlm(joinpath(outdir, "data_$(s).csv"), getindex.(uni, k), ',')
     end
+    for (l, νl) in enumerate(νs)
+        writedlm(joinpath(outdir, "data_I_$(round(Int, νl / 1e9))GHz.csv"), getindex.(reshape(clean[1:nuni, 1, 1, l], 48, 48), 1), ',')
+    end
     model = bin(binning, polarized_cube(cache, q, times[1:1], [ν], L; nmax = n, slab = SLAB))
     writedlm(joinpath(outdir, "model_I.csv"), getindex.(reshape(model[1:nuni, 1, 1, 1], 48, 48), 1), ',')
     writedlm(joinpath(outdir, "camera.csv"), hcat(camera.αs, camera.βs, binning.pixel), ',')
     open(joinpath(outdir, "summary.txt"), "w") do io
-        println(io, "case n ≤ $n: $npix pixels ($nuni uniform) from $(npixels(camera)) points ($SUB × $SUB per uniform pixel), $N samples, $NFRAMES frames, $ITER iterations, eta $ETA")
+        println(io, "case n ≤ $n: $npix pixels ($nuni uniform) from $(npixels(camera)) points ($SUB × $SUB per uniform pixel), $N samples, $NFRAMES frames, bands $(νs ./ 1e9) GHz, $ITER iterations, eta $ETA")
         println(io, "chi2 start $χ0 end $χ1 (reduced $(χ1 / ndata)) over $ndata data values")
         println(io, "position errors (M): start $pos0 end $pos_err")
         println(io, "relative errors: ne $(rel(13)) Te $(rel(14)) B $(rel(15)) pattern rate $ωerr; u_phi absolute $uerr")
         println(io, "Fisher at the truth ($FISHER): σ(a) joint $σa_joint alone $σa_alone; σ(θo) joint $(rad2deg(σθ_joint))° alone $(rad2deg(σθ_alone))°")
+        println(io, "marginal Fisher errors per parcel: ln ne $(me[1, :]); ln Te $(me[2, :]); ln B $(me[3, :])")
         println(io, "cumulative sub-image fluxes on the uniform grid: $fluxes")
     end
     return nothing
