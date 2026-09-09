@@ -64,7 +64,9 @@ and ≤ 2, so the first lensed passage carries 4% of the direct flux there and t
   order: they are the one-zone synchrotron degeneracy of a single frequency (the emissivity fixes
   a combination of density, temperature and field), which more lensing orders do not break and
   a second frequency would. Per-parcel numbers are not comparable across cases, because each
-  case draws its own perturbed start.
+  case draws its own perturbed start. Daniel asked (2026-09-08) for the follow-up: a
+  multifrequency fit of the n ≤ 1 case with frequencies above and below the parcels' turnover
+  frequency, to see whether that pins down the emission properties (HANDOFF, open items).
 
 ## Pixel integration (2026-09-08, `Geodesics.Binning`, `--subsamples 2`)
 
