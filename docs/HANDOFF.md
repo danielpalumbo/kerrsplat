@@ -77,6 +77,14 @@ in the CPU subset). Real-data results: M87 closure
 fit χ²/N 1.5; self-calibrated polarimetric fit χ²/N 7 with six parcels; GRMHD snapshot fit to
 5% of the Stokes I norm.
 
+Daniel's request (2026-09-08): a multifrequency self-fit of the n ≤ 1 half-orbit case with
+frequencies above and below the synchrotron turnover of the parcels (the optically thick side
+fixes the source function, the thin side the emissivity), to see whether it pins down the
+emission properties (nₑ, Θe, B) that the single-frequency fits leave degenerate at 3–30%;
+`validation/winding/winding_selffit.jl` needs a `--frequencies` option (the movie cube and
+`chi2_gradient!` already take several frequencies), and the turnover of the truth parcels
+should be measured first with `polarized_cube` over a frequency ladder.
+
 Open, roughly in order of value: the time-resolved visibility likelihood (one slow-light frame
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
