@@ -96,6 +96,33 @@ measurement**; the recoveries of the fits are the robust result. Converging the 
 needs the instrument's own smoothing (a beam convolution of the binned image before the
 residuals, or a soft slab edge), which is the natural next step for this experiment.
 
+## Multifrequency (2026-09-09, Daniel's request of 2026-09-08)
+
+Do bands on both sides of the parcels' synchrotron turnover pin down the emission properties
+that a single band leaves degenerate? The truth's spectrum on a 32² screen (n ≤ 1) peaks at
+178 GHz; a parcel's vertical optical depth 2σ_z α_I is 3 at 86 GHz, 0.3 at 230 GHz and 0.12 at
+345 GHz (in-plane, 2σ_xy: 14, 1.5, 0.6). The n ≤ 1 case (point-sampled screen, 12,384 pixels,
+two frames) was fitted at 230 GHz alone, at 86 + 345 GHz and at 86 + 230 + 345 GHz, each band
+with its own noise (1%, 0.5%, 0.5%, 0.2% of that band's peak in I, Q, U, V), so that the
+multiband fits have two and three times the data values; the finite-difference Fisher audit
+reports the marginal errors of ln nₑ, ln Θe and ln B per parcel, joint with everything else.
+
+First pass, 300 iterations (each band set from a different perturbed start):
+
+| bands (GHz) | χ²/N end | fit errors nₑ, Θe, B (per parcel) | marginal Fisher σ(ln nₑ), σ(ln Θe), σ(ln B) |
+|---|---|---|---|
+| 230 | 1.056 | 2–26%, 1–16%, 0.1–14% | 0.05–0.09, 0.015–0.029, 0.025–0.048 |
+| 86 + 345 | 1.052 | 2–25%, 0.4–1.2%, 1.5–8% | 0.02–0.05, 0.0012–0.0019, 0.003–0.004 |
+| 86 + 230 + 345 | 1.36 (not converged) | 4–36%, 0.1–2%, 4–15% | 0.02–0.04, 0.0011–0.0017, 0.003–0.004 |
+
+Bracketing the turnover tightens the Fisher errors of Θe by 13–20× and of B by 8–12×, and the
+fits show it: Θe recovered to about 1% and B to a few per cent where the single band left them
+at up to 16% and 14%. The density's Fisher error improves only 2× (to 2–5%), and its fit
+errors stay at 2–25% in both cases: the fits stop about Δχ² ≈ 10⁴ above the truth's χ² (the
+optimizer's residual at 300 Adam iterations, not the information content), so the fit errors of
+the weakly constrained rows are optimizer-limited. The third band adds almost nothing to the
+Fisher errors beyond the bracketing pair. MF1000
+
 ## Cost
 
 Per iteration on the 2080 SUPER: 0.2 s for n = 0 (2304 rays × 80 samples × 2 frames), 1.0 s for
