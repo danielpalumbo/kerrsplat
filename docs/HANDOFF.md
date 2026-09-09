@@ -77,13 +77,14 @@ in the CPU subset). Real-data results: M87 closure
 fit χ²/N 1.5; self-calibrated polarimetric fit χ²/N 7 with six parcels; GRMHD snapshot fit to
 5% of the Stokes I norm.
 
-Daniel's request (2026-09-08): a multifrequency self-fit of the n ≤ 1 half-orbit case with
-frequencies above and below the synchrotron turnover of the parcels (the optically thick side
-fixes the source function, the thin side the emissivity), to see whether it pins down the
-emission properties (nₑ, Θe, B) that the single-frequency fits leave degenerate at 3–30%;
-`validation/winding/winding_selffit.jl` needs a `--frequencies` option (the movie cube and
-`chi2_gradient!` already take several frequencies), and the turnover of the truth parcels
-should be measured first with `polarized_cube` over a frequency ladder.
+Daniel's request of 2026-09-08, done 2026-09-09 (`docs/notes/2026-09-08_half_orbit_selffit.md`,
+section "Multifrequency"): the n ≤ 1 half-orbit self-fit at 86 + 345 GHz, bracketing the
+parcels' turnover (178 GHz), against 230 GHz alone: Θe and B come back to ≲ 1–2% for three of
+the four parcels (single band: 5–18%, 2.5–7%), Fisher σ(ln Θe) 13–20× and σ(ln B) 8–12×
+tighter, densities 2–3× better; a third band adds little. Open from it: a Levenberg–Marquardt
+polish of the parcel parameters from the Adam endpoint (the fits stop Δχ² ≈ 10³ above the
+truth along the nₑ–B valley of an edge parcel; `fisher` forms the Jacobian), and a field of
+view that holds every parcel's lensed images.
 
 Open, roughly in order of value: the time-resolved visibility likelihood (one slow-light frame
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
