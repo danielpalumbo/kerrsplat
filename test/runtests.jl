@@ -90,6 +90,7 @@ gate2_refs = gate2_references()
         test_spacetime_duals(; res = 8, N = 60)
         test_spacetime_fit(; res = 8, N = 60)
         test_fisher(; res = 8, N = 60)
+        test_polish(; res = 8, N = 40)
     end
     if CUDA.functional()
         @info "CPU tests done; starting the CUDA tests"

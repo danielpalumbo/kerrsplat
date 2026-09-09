@@ -618,3 +618,53 @@ function test_binning(backend; res = 6, N = 40, tol = 1e-9, label = "CPU backend
         @info "$label pixel integration: χ² gradient vs host Enzyme $e, image-loss gradient $ei ($(npixels(camc)) points in $(npixels(bc)) pixels)"
     end
 end
+
+"""
+    test_polish(; res = 8, N = 40)
+
+The Levenberg–Marquardt polish: `prior_residuals` against `penalty` for the fixed, shrinkage
+and pattern priors; from a start a few per cent off the truth of a two-parcel movie, four LM
+iterations reach the noise floor (χ² below the truth's) and land within the Laplace errors of
+the truth; the covariance is the inverse Fisher matrix over the same free entries.
+"""
+function test_polish(; res = 8, N = 40)
+    rng = Random.MersenneTwister(13)
+    a = 0.9; θo = deg2rad(60.0)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cache, a, θo; marcher = Fused(64))
+    L = gravitational_radius(4e6); times = [0.0, 20.0]; νs = [230e9]
+    p_true = polarized_test_params()
+    clean = polarized_cube(cache, p_true, times, νs, L)
+    σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+    data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)]
+    movie = StokesMovie(data, times, νs, σ)
+    priors = [Fit.Prior(rows = (:logB,), μ = log(30.0), σ = 0.3), Fit.Prior(rows = (:logTe, :logne), σ = (0.5, 1.0), shrink = true), Fit.PatternPrior(Krang.Kerr(a), 0.05)]
+    @testset "prior residuals" begin
+        for pr in priors
+            @test sum(abs2, prior_residuals(p_true, pr)) ≈ penalty(p_true, pr)
+        end
+        @test sum(abs2, prior_residuals(p_true, priors)) ≈ penalty(p_true, priors)
+        @test isempty(prior_residuals(p_true, nothing))
+    end
+    @testset "Levenberg–Marquardt polish reaches the noise floor" begin
+        χ_true = chi2(p_true, movie, cache, L)
+        free = freeze(p_true, (:x, :y, :z, :logne, :logTe, :logB, :u2))
+        p0 = copy(p_true); p0[free] .+= 0.05 .* randn(rng, count(free))
+        χ0 = chi2(p0, movie, cache, L)
+        q, history, cov, idx = polish!(copy(p0), movie, cache, L; free, iterations = 4, chunk = 8)
+        χ1 = chi2(q, movie, cache, L)
+        @test history[1] ≈ χ0 && history[end] ≈ χ1 && length(history) == 5
+        @test χ1 <= χ_true
+        σp = sqrt.(diag(cov))
+        z = abs.(q[idx] .- p_true[idx]) ./ σp
+        @test maximum(z) < 5
+        F, _, idx2 = fisher(q, movie, cache, L; free, chunk = 8)
+        @test idx2 == idx
+        @test maximum(abs.(inv(Symmetric(F)) .- cov)) <= 1e-8 * maximum(abs.(cov))
+        # with priors the polish keeps χ² + penalty going down and the residual norm matches
+        q2, h2, _, _ = polish!(copy(p0), movie, cache, L; free, iterations = 2, chunk = 8, priors)
+        @test h2[end] <= h2[1] && h2[end] ≈ chi2(q2, movie, cache, L; priors)
+        @info "polish: χ² $χ0 → $χ1 (truth $χ_true) in 4 LM iterations; worst |Δ|/σ_Laplace $(round(maximum(z); digits = 2)); with priors $(h2[1]) → $(h2[end])"
+    end
+end
