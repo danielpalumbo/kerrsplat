@@ -1,9 +1,11 @@
 name: CI
 
+# One run per pull request: the merge commit of a PR is the commit its run tested, so a second run
+# on the push to main would repeat it (the repository is public since 2026-09-10, so minutes are
+# free on standard runners, but a run is about an hour of Enzyme compilation).
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
