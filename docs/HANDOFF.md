@@ -103,8 +103,12 @@ Gain fitting follows Comrade.jl's structure (Daniel, 2026-09-09): `Fit.Instrumen
 RIME with per-scan complex feed gains, leakage per track, the feed rotation (R† G D R for
 EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's priors, and the feed rotation angles from the
 antenna table (`feed_angles`, ehtim's formulas, to 2.4e-4 rad of ehtim's; the EHT mounts in
-`EHT_MOUNTS`). Still to come on it: the joint sky-plus-instrument fit inside the time-resolved
-likelihood (the static self-calibration in `validation/m87_fit` predates the model).
+`EHT_MOUNTS`), and the joint sky-plus-instrument fit inside the time-resolved likelihood
+(`selfcal!`, the joint LM polish; `docs/notes/2026-09-09_synthetic_vlbi.md`, self-calibration
+section: the synthetic truth's gains and d-terms come back within their Laplace errors). Next on
+this path: the real M87 full-polarization file (`hops_3601_M87+netcal.uvfits`) through the
+instrument model with its feed rotation (the static self-calibration in `validation/m87_fit`
+predates the model), and the UT-to-M mapping of scan times for real time-resolved data.
 
 Open, roughly in order of value: the two items above; more parcels in the joint
 self-calibration update with densification; a smooth background component for extended flux and a

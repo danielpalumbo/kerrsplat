@@ -129,10 +129,10 @@ if MODE == "selfcal"
         tP = time()
         x0 = pack(q, freemask, gains, gm, dterms, dm)
         resid(x) = (t = unpack(q, freemask, gains, gm, dterms, dm, x); timeresolved_residuals(t[1], tr, cache, L, Δα, D, ν; nmax = NMAX, slab = SLAB, binning, instrument = (inst, t[2], t[3])))
-        x, hist, cov = levenberg_marquardt!(x0, resid; iterations = POLISH, chunk = 12)
+        x, hist, covj = levenberg_marquardt!(x0, resid; iterations = POLISH, chunk = 12)
         q, gains, dterms = unpack!(copy(q), freemask, copy(gains), gm, copy(dterms), dm, x)
         χ1 = hist[end]
-        σx = sqrt.(max.(diag(cov), 0.0))
+        σx = sqrt.(max.(diag(covj), 0.0))
         nsky = count(freemask)
         laplace = [σx[(i - 1) * nper + findfirst(==(r), freerows)] for r in (1, 2, 13, 14, 15), i in 1:4]
         gerr = gains[gm] .- gains_true[gm]; derr = dterms[dm] .- dterms_true[dm]
