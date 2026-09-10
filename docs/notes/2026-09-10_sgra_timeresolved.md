@@ -74,4 +74,53 @@ undo, then 5.3 → 4.83 over the last 400. Per scan the static sky fits most of 
 at 12.7 and 13.2; they are also the scans the moving fits missed worst, so that hour holds
 either the source's own change or a systematic, and a moving sky started from this one has to
 show the difference. The model's flux sits on the prior at 2.401 Jy in every frame (a static
-sky has one flux). SELFCAL3_RESULT
+sky has one flux).
+
+Self-calibration from the static sky with the pattern rates still frozen and the flux prior
+weakened to 2.4 ± 0.5 Jy (600 iterations): products χ²/N 4971 → 81.5, better than the 229 of
+the staged sky but the same failure. The gains absorb what the joint loop cannot fit (|g_R|
+0.16 ± 0.06 at the SMA, 0.35 ± 0.09 at the SPT, 0.72–0.85 elsewhere, gain phases at the SPT
+random), the model's flux drifts to 2.05 Jy, and the sky's own closure χ²/N goes from 4.6 to
+50: the products at unit gains start at χ²/N 4971 although the closures fit, so the amplitude
+scale of the static sky is far from the data's on the SMA and SPT baselines, and the joint
+Adam loop moves the sky to meet the gains instead of the gains to meet the sky. A gain-only
+solve with the sky held (Levenberg–Marquardt over the instrument alone, the protocol every
+imaging pipeline uses between sky updates) is the next tool: it tells whether the static sky's
+amplitudes can be calibrated at all with sane gains, and it starts the joint fit from
+calibrated gains rather than from unit ones.
+
+## The instrument solve, and what the amplitudes said
+
+The instrument-only solve (`calibrate!`: Levenberg–Marquardt over the gains with the static
+sky's model visibilities held, the phases started from the reference baselines and solved
+first) on the static sky: products χ²/N 4971 → 211 in 8 seconds, with the gains again
+collapsing (ALMA 0.46, the SMA 0.25) and the parallel hands worse than the cross-hands (RR
+202, LL 257, RL 119, LR 170). The per-baseline table of the sky's Stokes I amplitude against
+the data's, without gains, explained it: the model is too bright on every baseline, by 1.2 on
+the shortest (AZ–LM, 1.1 Gλ) and by 2.6–5 beyond 3 Gλ (AZ–SM 2.6, LM–SP 2.9, AZ–SP 5.0 at
+8.5 Gλ), the ratio growing with baseline length. That is the signature of Sgr A*'s
+interstellar scattering, which the model lacked: the diffractive kernel (Johnson et al. 2018;
+23 × 12 μas FWHM at 230 GHz, position angle 82°) multiplies the visibilities by 0.6–0.9 at
+3 Gλ and by 0.04–0.4 at 8.5 Gλ depending on the orientation. The closure stage did not see
+it because its SNR cut keeps the bright, short baselines, where the kernel is near one, and a
+static ring fits those at χ²/N 5 with or without it. The model visibilities of every scan now
+go through `ScatteringKernel` (`taper`, gated against ehtim's `sgra_kernel_uv`), on by default
+in the script (`--no-scatter` to drop it).
+
+With the kernel on the same static sky (fitted without it), the amplitude ratios fall to
+1.02–1.19 on the ALMA/APEX–SMT, ALMA/APEX–LMT and LMT–SMA baselines and to 0.4–0.6 on the
+ALMA/APEX–SPT and ALMA/APEX–SMA ones, with 1.2–2 left on the LMT/SMA/SMT–SPT baselines: the
+scale is right and the residual pattern is the sky's, fitted without the kernel's anisotropy
+(the sky's own closure χ²/N with the kernel is 10.6, from 4.6 without). The instrument solve
+on it still collapses (χ²/N 205). The static closure fit is being repeated with the kernel,
+followed by the instrument solve and a self-calibration that starts from the solved gains.
+KERNEL_RESULT
+
+Motion from the static sky (before the kernel) with the pattern rates moving at a twentieth
+of the common step (`--eta-omega 0.05`, 600 iterations): closure χ²/N 4.83 → 4.45 by
+iteration 300, then a spike to 21 at iteration 400 that the rest of the schedule brought back
+only to 11.2; the rates stayed within ±0.003 rad/M, a thirtieth of Keplerian at 5 M, so the
+small step made the motion harmless and also inert. The spike is not the rates': the static
+run had the same one at iteration 425 (5.0 → 7.9). A parcel row that Adam kicks past a
+threshold (a size or a density) is the likely cause and is worth a per-iteration trace of the
+parameters when the kernel fits are in. MOTION_RESULT

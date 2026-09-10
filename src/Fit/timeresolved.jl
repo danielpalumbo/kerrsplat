@@ -8,15 +8,18 @@
 # of the plan's gate 7, in the data domain).
 
 """
-    ScanData(time, data)
+    ScanData(time, data, kernel = nothing)
 
-One scan: its frame time `time` (the movie's units, M) and its data over the scan's
-baselines, a `VisibilityData` or a `ClosureData`.
+One scan: its frame time `time` (the movie's units, M), its data over the scan's baselines
+(a `VisibilityData`, a `ClosureData` or an `ObservedScan`), and the scattering kernel its
+model visibilities go through (`ScatteringKernel`, or `nothing`).
 """
-struct ScanData{T,D}
+struct ScanData{T,D,K}
     time::T
     data::D
+    kernel::K
 end
+ScanData(time, data) = ScanData(time, data, nothing)
 
 """
     TimeResolved(scans)
@@ -32,8 +35,8 @@ Base.length(tr::TimeResolved) = length(tr.scans)
 frame_times(tr::TimeResolved) = unique(sort([s.time for s in tr.scans]))
 
 "The χ² of one screen image (Stokes matrix in cgs) against one scan."
-scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:ClosureData}) = chi2_closures(image, Δα, L, D, s.data)
-scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}) = chi2_visibilities(image, Δα, L, D, s.data)
+scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:ClosureData}) = chi2_closures(image, Δα, L, D, s.data; kernel = s.kernel)
+scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}) = chi2_visibilities(image, Δα, L, D, s.data; kernel = s.kernel)
 
 "Number of χ² terms: two real values per Stokes parameter and baseline for visibilities, one per closure quantity."
 ndata(s::ScanData{<:Any,<:VisibilityData}) = 8 * length(s.data.u)
@@ -126,7 +129,7 @@ instrument's share of a joint step, next to the sky's share from the dual sweep.
 """
 function instrument_gradient(image, Δα, L, D, scans, instrument::Tuple)
     inst, gains, dterms = instrument
-    parts = [(s.data.obs, s.data.rows, visibilities(image, Δα, L, D, s.data.obs.u[s.data.rows], s.data.obs.v[s.data.rows])) for s in scans if s.data isa ObservedScan]
+    parts = [(s.data.obs, s.data.rows, scan_model(image, Δα, L, D, s)) for s in scans if s.data isa ObservedScan]
     f(g, d) = sum(chi2_instrument(model, o, rows, inst, g, d) for (o, rows, model) in parts; init = zero(promote_type(eltype(g), eltype(d))))
     value = f(gains, dterms)
     return value, ForwardDiff.gradient(g -> f(g, dterms), gains), ForwardDiff.gradient(d -> f(gains, d), dterms)
@@ -134,7 +137,7 @@ end
 
 "The scaled residuals of one scan against one screen image (real and imaginary parts per Stokes parameter and baseline; wrapped closure phases and log closure amplitudes), whose squared norm is `scan_loss`."
 function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData})
-    model = visibilities(image, Δα, L, D, s.data.u, s.data.v)
+    model = taper(s.kernel, visibilities(image, Δα, L, D, s.data.u, s.data.v), s.data.u, s.data.v)
     S = real(eltype(first(model)))
     res = S[]
     for k in eachindex(model)
@@ -145,7 +148,7 @@ function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData})
 end
 function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:ClosureData})
     d = s.data
-    model = visibilities(image, Δα, L, D, d.u, d.v)
+    model = taper(s.kernel, visibilities(image, Δα, L, D, d.u, d.v), d.u, d.v)
     S = real(eltype(first(model)))
     res = S[]
     if !isempty(d.triangles)
@@ -199,7 +202,7 @@ uncertainties propagated from the Stokes I noise as the real-data path does and 
 quantities with a leg below `snr` dropped: the gain-free stage of a time-resolved fit
 (`observed_scans` gives the products through the instrument for the self-calibrated stage).
 """
-function closure_scans(obs::Observation{T}, times::AbstractVector; snr = 3) where {T}
+function closure_scans(obs::Observation{T}, times::AbstractVector; snr = 3, kernel = nothing) where {T}
     scans = scan_index(obs); nscans = maximum(scans)
     length(times) == nscans || throw(DimensionMismatch("$(length(times)) times for $nscans scans"))
     tri = scan_triangles(obs); quad = scan_quadrangles(obs)
@@ -214,7 +217,7 @@ function closure_scans(obs::Observation{T}, times::AbstractVector; snr = 3) wher
         kt = [i for i in eachindex(tri) if scans[abs(tri[i][1])] == k && σ_phase[i] < 1 / snr]
         kq = [i for i in eachindex(quad) if scans[abs(quad[i][1])] == k && σ_logamp[i] < 1 / snr]
         data = ClosureData(obs.u[rows], obs.v[rows], NTuple{3,Int}[remap.(tri[i]) for i in kt], phases[kt], σ_phase[kt], NTuple{4,Int}[remap.(quad[i]) for i in kq], logamps[kq], σ_logamp[kq])
-        return ScanData(T(times[k]), data)
+        return ScanData(T(times[k]), data, kernel)
     end
     return TimeResolved([scan(k) for k in 1:nscans])                     # one concrete element type for all scans
 end
@@ -286,7 +289,7 @@ propagated from the visibility noise as the real-data path does (closures with a
 dropped).
 """
 function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::AbstractVector{<:ScanCoverage}; noise = 0.01, closures::Bool = true,
-                         rng = Random.default_rng(), nmax = -1, slab = 0, binning = nothing) where {T}
+                         rng = Random.default_rng(), nmax = -1, slab = 0, binning = nothing, kernel = nothing) where {T}
     out = Vector{accumulator_type(T, nmax)}(undef, npixels(cache))
     frames = Dict{T,Matrix{SVector{4,T}}}()
     for t in unique(c.time for c in cov)
@@ -296,7 +299,7 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     end
     function scan(c)
         img = frames[c.time]
-        vis = visibilities(img, Δα, L, D, c.u, c.v)
+        vis = taper(kernel, visibilities(img, Δα, L, D, c.u, c.v), c.u, c.v)
         flux = real(visibilities(img, Δα, L, D, [zero(T)], [zero(T)])[1][1])
         σ = T(noise) * flux
         noisy = [vis[k] .+ σ .* SVector{4}(complex.(randn(rng, 4), randn(rng, 4))) for k in eachindex(vis)]
@@ -309,9 +312,9 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
             logamps = log_closure_amplitudes(noisy, quad)
             σ_logamp = [sqrt(sum((σ / abs(noisy[abs(k)][1]))^2 for k in q)) for q in quad]
             keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
-            return ScanData(c.time, ClosureData(c.u, c.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q]))
+            return ScanData(c.time, ClosureData(c.u, c.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q]), kernel)
         else
-            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, SVector(σ, σ, σ, σ)))
+            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, SVector(σ, σ, σ, σ)), kernel)
         end
     end
     return TimeResolved([scan(c) for c in cov])
@@ -340,24 +343,26 @@ ndata(s::ScanData{<:Any,<:ObservedScan}) = sum(count(isfinite, s.data.obs.σ_coh
 The scans of an observation (`scan_index`) as `ObservedScan`s with the frame time `times[k]`
 (M) of scan k, for the time-resolved self-calibrated likelihood.
 """
-function observed_scans(obs::Observation{T}, times::AbstractVector) where {T}
+function observed_scans(obs::Observation{T}, times::AbstractVector; kernel = nothing) where {T}
     scans = scan_index(obs); nscans = maximum(scans)
     length(times) == nscans || throw(DimensionMismatch("$(length(times)) times for $nscans scans"))
-    return TimeResolved([ScanData(T(times[k]), ObservedScan(obs, findall(==(k), scans))) for k in 1:nscans])
+    return TimeResolved([ScanData(T(times[k]), ObservedScan(obs, findall(==(k), scans)), kernel) for k in 1:nscans])
+end
+
+"The model visibilities of an `ObservedScan` from one screen image, through the scan's scattering kernel."
+function scan_model(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan})
+    o = s.data.obs; rows = s.data.rows
+    return taper(s.kernel, visibilities(image, Δα, L, D, o.u[rows], o.v[rows]), o.u[rows], o.v[rows])
 end
 
 # the losses of scans that need no instrument ignore it
 scan_loss(image, Δα, L, D, s::ScanData, ::Nothing) = scan_loss(image, Δα, L, D, s)
 scan_residuals(image, Δα, L, D, s::ScanData, ::Nothing) = scan_residuals(image, Δα, L, D, s)
 function scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan}, instrument::Tuple)
-    o = s.data.obs; rows = s.data.rows
-    model = visibilities(image, Δα, L, D, o.u[rows], o.v[rows])
-    return chi2_instrument(model, o, rows, instrument[1], instrument[2], instrument[3])
+    return chi2_instrument(scan_model(image, Δα, L, D, s), s.data.obs, s.data.rows, instrument[1], instrument[2], instrument[3])
 end
 function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan}, instrument::Tuple)
-    o = s.data.obs; rows = s.data.rows
-    model = visibilities(image, Δα, L, D, o.u[rows], o.v[rows])
-    return instrument_residuals(model, o, rows, instrument[1], instrument[2], instrument[3])
+    return instrument_residuals(scan_model(image, Δα, L, D, s), s.data.obs, s.data.rows, instrument[1], instrument[2], instrument[3])
 end
 scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan}) = throw(ArgumentError("an ObservedScan needs the instrument: pass instrument = (model, gains, dterms)"))
 scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan}) = throw(ArgumentError("an ObservedScan needs the instrument: pass instrument = (model, gains, dterms)"))
@@ -410,3 +415,128 @@ function selfcal!(sky::AbstractMatrix{T}, gains::AbstractMatrix{T}, dterms::Abst
 end
 
 export selfcal!
+
+"""
+    scan_models(params, tr, cache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing) -> Vector
+
+The model visibilities (a Stokes `SVector{4}` per row) of every `ObservedScan` of `tr` from
+the splat movie, one render per frame (`nothing` for scans of other kinds): the sky's side of
+the products, held while the instrument alone is solved (`calibrate!`).
+"""
+function scan_models(params::AbstractMatrix{S}, tr::TimeResolved, cache::GeodesicCache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing) where {S}
+    out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
+    models = Vector{Any}(nothing, length(tr.scans))
+    for t in frame_times(tr)
+        fill!(out, zero(eltype(out)))
+        polarized_image!(out, cache, params, S(t), S(ν), S(L); nmax, slab)
+        img = pixel_stokes(to_screen(cache, out), S(ν), binning)
+        for (k, s) in enumerate(tr.scans)
+            (s.time == t && s.data isa ObservedScan) || continue
+            models[k] = scan_model(img, Δα, L, D, s)
+        end
+    end
+    return models
+end
+
+"""
+    reference_phases!(gains, tr, models, inst; dterms = zero d-terms) -> gains
+
+Starting phases for an instrument solve, scan by scan: the gain phases of the segment's
+stations chained from its reference station through the parallel-hand products, each
+station's R phase from the phase of the observed over the predicted RR on a baseline to a
+station already set (`gp = ±arg(RR_obs / RR_pred)`, the sign by which end it is) and its
+L/R phase ratio from LL the same way (LL alone sets the R phase when RR is missing). The
+amplitudes and the d-terms stay as they are and enter the prediction. Phase-only
+self-calibration from unit gains is multimodal (a wrong phase is best "fitted" by a vanishing
+amplitude), so a solve from zero phases strands; this is the closed-form start every
+self-calibration uses, and `calibrate!` applies it by default.
+"""
+function reference_phases!(gains::AbstractMatrix{T}, tr::TimeResolved, models, inst::InstrumentModel; dterms = zero_instrument(inst)[2]) where {T}
+    for (k, s) in enumerate(tr.scans)
+        s.data isa ObservedScan || continue
+        o = s.data.obs; rows = s.data.rows; model = models[k]
+        for g in unique(inst.seg[rows])
+            done = falses(nstations(inst)); done[inst.ref[g]] = true
+            for st in 1:nstations(inst)
+                c = gain_column(inst, st, g)
+                gains[2, c] = zero(T); inst.polarized && (gains[4, c] = zero(T))
+            end
+            changed = true
+            while changed
+                changed = false
+                for (j, r) in enumerate(rows)
+                    inst.seg[r] == g || continue
+                    s1 = o.s1[r]; s2 = o.s2[r]
+                    (done[s1] ⊻ done[s2]) || continue
+                    J1 = station_jones(inst, gains, dterms, s1, g, inst.φ1[r]); J2 = station_jones(inst, gains, dterms, s2, g, inst.φ2[r])
+                    V = products(apply_jones(coherency(model[j]), J1, J2))
+                    unknown = done[s1] ? s2 : s1; sign = done[s1] ? -one(T) : one(T)
+                    c = gain_column(inst, unknown, g)
+                    δR = isfinite(o.σ_coh[r][1]) && abs(V[1]) > 0 ? T(angle(o.coh[r][1] / V[1])) : T(NaN)
+                    δL = isfinite(o.σ_coh[r][2]) && abs(V[2]) > 0 ? T(angle(o.coh[r][2] / V[2])) : T(NaN)
+                    (isfinite(δR) || isfinite(δL)) || continue
+                    if isfinite(δR)
+                        gains[2, c] = sign * δR
+                        inst.polarized && isfinite(δL) && (gains[4, c] = sign * (δL - δR))
+                    else
+                        gains[2, c] = sign * δL
+                    end
+                    done[unknown] = true; changed = true
+                end
+            end
+        end
+    end
+    return gains
+end
+
+"""
+    calibrate!(gains, dterms, tr, models, inst; masks, iterations = 10, chunk = 12, λ = 1e-3, phases = true, phase_first = true)
+        -> (gains, dterms, history, covariance)
+
+The instrument alone: Levenberg–Marquardt over the free gain and d-term entries (`masks`,
+`free_mask`) with the sky's model visibilities `models` (`scan_models`) held. The residuals
+are the products' through the Jones chain (`instrument_residuals`) scan by scan and the
+instrument's priors: the same residuals as the joint polish with the sky frozen, without a
+render per Jacobian column. This is the self-calibration step of every imaging pipeline
+(Comrade's instrument-only solve, ehtim's `self_cal`) between sky updates. `phases` starts
+the gain phases from the reference baselines (`reference_phases!`) and `phase_first` solves
+the phases alone (amplitudes and d-terms held) for `iterations` before the full solve, both
+against the multimodality of the phase problem. Returns the matrices updated in place, the
+χ² history (both solves, in order) and the Laplace covariance of the packed entries of the
+full solve.
+"""
+function calibrate!(gains::AbstractMatrix{T}, dterms::AbstractMatrix{T}, tr::TimeResolved, models, inst::InstrumentModel; masks::Tuple,
+                    iterations::Integer = 10, chunk::Integer = 12, λ::Real = 1e-3, phases::Bool = true, phase_first::Bool = true) where {T}
+    gm, dm = masks
+    nosky = zeros(T, 0, 0); nofree = falses(0, 0)
+    function solve(gmask, dmask)
+        function residuals(x::AbstractVector{S}) where {S}
+            _, g, d = unpack(nosky, nofree, gains, gmask, dterms, dmask, x)
+            res = S[]
+            for (k, s) in enumerate(tr.scans)
+                s.data isa ObservedScan || continue
+                append!(res, instrument_residuals(models[k], s.data.obs, s.data.rows, inst, g, d))
+            end
+            append!(res, S.(instrument_prior_residuals(inst, g, d)))
+            return res
+        end
+        xs0 = pack(nosky, nofree, gains, gmask, dterms, dmask)
+        xs, hs, cs = levenberg_marquardt!(xs0, residuals; iterations, chunk, λ)
+        unpack!(nosky, nofree, gains, gmask, dterms, dmask, xs)
+        return hs, cs
+    end
+    # (the solver's locals are named apart from this scope's: a closure's assignment to a name of the enclosing
+    # function assigns the enclosing variable)
+    phases && reference_phases!(gains, tr, models, inst; dterms)
+    history = T[]
+    if phase_first
+        pm = copy(gm); pm[1, :] .= false; inst.polarized && (pm[3, :] .= false)
+        h1, _ = solve(pm, falses(size(dterms)))
+        append!(history, h1)
+    end
+    h2, covariance = solve(gm, dm)
+    append!(history, h2)
+    return gains, dterms, history, covariance
+end
+
+export scan_models, scan_model, calibrate!, reference_phases!

@@ -746,6 +746,24 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         ev = maximum(abs.(Array(dparams2) .- gv_host)) / maximum(abs.(gv_host))
         @test abs(χv - χv_host) <= 1e-10 * χv_host
         @test ev <= tol
+        # the scattering kernel: synthetic visibilities are the tapered ones, and the χ² and the device gradient go through it
+        kernel = ScatteringKernel(ν)                                        # Sgr A*'s kernel bites at this test's Gλ baselines
+        trk0 = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.0, closures = false, kernel)
+        for (s, c) in zip(trk0.scans, cov)
+            img = polarized_image(cpu, p, c.time, ν, L)
+            @test s.data.vis == taper(kernel, visibilities(img, Δα, L, D, c.u, c.v), c.u, c.v)
+            @test s.kernel === kernel && any(abs(s.data.vis[k][1]) < 0.9 * abs(visibilities(img, Δα, L, D, c.u, c.v)[k][1]) for k in eachindex(c.u))
+        end
+        trk = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = true, rng, kernel)
+        χk_host = chi2_timeresolved(q, trk, cpu, L, Δα, D, ν)
+        @test χk_host != chi2_timeresolved(q, TimeResolved([ScanData(s.time, s.data) for s in trk.scans]), cpu, L, Δα, D, ν)
+        gk_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, trk, cpu, L, Δα, D, ν)), q)[1]
+        dparamsk = adapt_to(backend, zeros(size(q)))
+        χk = timeresolved_gradient!(dparamsk, params, trk, cache, L, Δα, D, ν)
+        ek = maximum(abs.(Array(dparamsk) .- gk_host)) / maximum(abs.(gk_host))
+        @test abs(χk - χk_host) <= 1e-10 * χk_host && ek <= tol
+        rk = timeresolved_residuals(q, trk, cpu, L, Δα, D, ν)
+        @test abs(sum(abs2, rk) - χk_host) <= 1e-12 * χk_host
         # an image prior (a total-flux prior) enters the χ², the device gradient and the residuals alike
         F0 = total_flux(polarized_image(cpu, p, 0.0, ν, L), Δα, L, D)
         fluxprior(img) = [(total_flux(img, Δα, L, D) - 0.9 * F0) / (0.02 * F0)]

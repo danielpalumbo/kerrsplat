@@ -24,6 +24,9 @@ plan, the addendum, then the GPU geodesic plan). Detailed findings: `docs/notes/
 | Mode C as a soft constraint (`PatternPrior`) | `Fit` | Keplerian rate through the ZAMO tetrad; Enzyme vs stencil | 1e-12; 1e-6 |
 | Staged fit for an arbitrary loss (`fit!(params, loss, stages)`) | `Fit` | the movie form's history and parameters, step for step | 1e-12 |
 | Per-row step multipliers (`Stage(steps = (; omega = 0.05))`, `selfcal!(...; steps)`, `step_scale`) | `Fit` | first Adam update of the scaled row equals the factor times the plain one, other rows untouched | 1e-12 |
+| Instrument-only solve with the sky held (`scan_models`, `calibrate!`) | `Fit` | the joint LM polish with the sky frozen (`timeresolved_residuals` through `pack`/`unpack`), history, solution and covariance | 1e-8 |
+| Reference-baseline phase start (`reference_phases!`), phases-first solve, χ² by product (`chi2_products`) | `Fit` | chained phases vs the truth from scrambled phases; the default solve from scrambled and from zero phases agree; the split sums to `chi2_instrument` | 0.3 rad; 1e-6; exact |
+| Sgr A* diffractive scattering kernel (`ScatteringKernel`, `taper`; the `kernel` of every `ScanData`) | `Fit` | ehtim's `sgra_kernel_uv` for two parameter sets (`test/data/sgra_kernel_ehtim.csv`); synthetic scans, χ², device gradient and residuals through it | 1e-12; 1e-9 |
 | χ², staged minibatched Adam, hygiene | `Fit` | noisy movie reaches the noise floor; merge exact | χ²/N = 1.0; 1e-12 |
 | Spacetime derivatives of polarized images | `Transfer`/`Splats` | finite differences | 3e-6 |
 | Fisher audit | `Fit` | (finding) nₑ–B–Θe degeneracy at one frequency | σ 0.58 → 0.45 with a second frequency |

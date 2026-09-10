@@ -1,0 +1,31 @@
+Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage calibrate (static): 202 rows, 21 scans in 21 frames over 865.0 M, 1616 data values, 394 gains, 8 parcels, flux prior 2.4 ± 0.5 Jy, noise floor 0.02, uvmin 0.1, 600 iterations, spin 0.94 inclination 150.0, init 'output/sgra_static_params.csv'
+chi2 start 8.033120558893852e6 (reduced 4970.990444860057) end 400298.08724336384 (reduced 247.7092124030717); closure chi2 of the sky per frame 587.6732148979374 over 128 (reduced 4.591196991390136)
+pattern rates: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+scan  1  UT  9.003 h  t =    0.0 M   24 products χ²/N 564.41 (RR 723.7 LL 759.4 RL 377.6 LR 397.0)    0 closures χ²/N    NaN  flux 2.401 Jy  stations AA AZ SP
+scan  2  UT  9.024 h  t =    3.6 M   24 products χ²/N 302.42 (RR 455.1 LL 433.1 RL 304.9 LR 16.6)    0 closures χ²/N    NaN  flux 2.401 Jy  stations AA AZ LM SP
+scan  3  UT  9.335 h  t =   58.4 M   48 products χ²/N 325.75 (RR 399.1 LL 623.2 RL 44.9 LR 235.9)    0 closures χ²/N    NaN  flux 2.401 Jy  stations AA AZ LM SP
+scan  4  UT  9.552 h  t =   96.6 M   72 products χ²/N 260.97 (RR 395.3 LL 471.8 RL 43.1 LR 133.7)    6 closures χ²/N   2.31  flux 2.401 Jy  stations AA AP AZ LM SP
+scan  5  UT  9.901 h  t =  158.1 M   40 products χ²/N 337.61 (RR 386.3 LL 483.5 RL 153.0 LR 327.6)    2 closures χ²/N   0.01  flux 2.401 Jy  stations AA AP AZ SP
+scan  6  UT  9.919 h  t =  161.3 M   32 products χ²/N 290.81 (RR 318.8 LL 505.0 RL 312.7 LR 26.8)    0 closures χ²/N    NaN  flux 2.401 Jy  stations AA AP AZ LM SP
+scan  7  UT 10.119 h  t =  196.4 M   72 products χ²/N 354.98 (RR 440.5 LL 380.6 RL 366.7 LR 232.1)    5 closures χ²/N   1.62  flux 2.401 Jy  stations AA AP AZ LM SP
+scan  8  UT 10.302 h  t =  228.6 M   72 products χ²/N 386.92 (RR 619.1 LL 528.7 RL 244.7 LR 155.2)    7 closures χ²/N   1.18  flux 2.401 Jy  stations AA AP AZ LM SP
+scan  9  UT 10.720 h  t =  302.2 M   72 products χ²/N 372.20 (RR 504.9 LL 568.8 RL 293.0 LR 122.1)    4 closures χ²/N   0.41  flux 2.401 Jy  stations AA AP AZ LM SP
+scan 10  UT 10.889 h  t =  332.1 M  112 products χ²/N 259.59 (RR 417.9 LL 367.3 RL 146.2 LR 107.0)    4 closures χ²/N   0.48  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 11  UT 11.103 h  t =  369.7 M  112 products χ²/N 221.06 (RR 337.5 LL 287.8 RL 189.3 LR 69.6)    5 closures χ²/N   6.66  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 12  UT 11.451 h  t =  431.0 M   80 products χ²/N 243.60 (RR 307.7 LL 422.3 RL 126.7 LR 117.7)   11 closures χ²/N  12.73  flux 2.401 Jy  stations AA AZ LM SM SP
+scan 13  UT 11.652 h  t =  466.4 M  112 products χ²/N 203.92 (RR 269.9 LL 335.9 RL 126.7 LR 83.1)   11 closures χ²/N  13.18  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 14  UT 12.269 h  t =  575.1 M  112 products χ²/N 148.17 (RR 287.6 LL 54.0 RL 171.9 LR 79.2)   10 closures χ²/N   2.92  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 15  UT 12.452 h  t =  607.2 M  112 products χ²/N 169.66 (RR 322.3 LL 66.1 RL 178.5 LR 111.8)   19 closures χ²/N   3.94  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 16  UT 12.802 h  t =  668.8 M  112 products χ²/N 147.68 (RR 232.0 LL 91.0 RL 163.7 LR 104.0)   19 closures χ²/N   3.83  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 17  UT 12.986 h  t =  701.3 M  112 products χ²/N 149.59 (RR 252.9 LL 106.8 RL 144.1 LR 94.7)    8 closures χ²/N   2.53  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 18  UT 13.421 h  t =  777.9 M   72 products χ²/N  91.26 (RR 142.2 LL 76.3 RL 76.8 LR 69.7)    6 closures χ²/N   1.86  flux 2.401 Jy  stations AA AP AZ SM SP
+scan 19  UT 13.585 h  t =  806.7 M   72 products χ²/N 120.69 (RR 201.5 LL 62.0 RL 126.7 LR 92.6)    6 closures χ²/N   0.84  flux 2.401 Jy  stations AA AP AZ SM SP
+scan 20  UT 13.615 h  t =  812.0 M   40 products χ²/N 332.75 (RR 339.0 LL 470.6 RL 428.7 LR 92.8)    0 closures χ²/N    NaN  flux 2.401 Jy  stations AA AP AZ LM SM SP
+scan 21  UT 13.919 h  t =  865.5 M  112 products χ²/N 135.03 (RR 237.6 LL 108.8 RL 118.7 LR 75.1)    5 closures χ²/N   4.47  flux 2.401 Jy  stations AA AP AZ LM SM SP
+all scans by product: RR χ²/N 334.89 over 404, LL 282.03 over 404, RL 175.49 over 404, LR 116.01 over 404
+AA   scans 21  |gR| 0.151 ± 0.228  phase rms 0.00 rad  L/R amp 1.302
+AP   scans 17  |gR| 0.525 ± 0.590  phase rms 3.86 rad  L/R amp 0.638
+AZ   scans 21  |gR| 0.586 ± 1.439  phase rms 1.26 rad  L/R amp 1.387
+LM   scans 17  |gR| 0.830 ± 0.501  phase rms 1.11 rad  L/R amp 1.003
+SM   scans 12  |gR| 0.210 ± 0.240  phase rms 2.04 rad  L/R amp 0.950
+SP   scans 21  |gR| 0.414 ± 0.292  phase rms 3.42 rad  L/R amp 1.130

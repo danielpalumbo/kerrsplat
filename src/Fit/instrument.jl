@@ -229,6 +229,37 @@ function chi2_instrument(model::AbstractVector{<:SVector{4}}, o::Observation, ro
     return total
 end
 
+"""
+    chi2_products(model, o::Observation, rows, im, gains, dterms) -> (χ², n)
+
+[`chi2_instrument`](@ref) split by product: the χ² and the number of real values of RR, LL,
+RL and LR as two `SVector{4}`s (dual-feed data; for Stokes I only the first entry). The
+diagnostic of a self-calibration: closures constrain Stokes I alone, so a sky whose
+polarization is wrong misfits the cross-hands while the parallel hands fit.
+"""
+function chi2_products(model::AbstractVector{<:SVector{4}}, o::Observation, rows, im::InstrumentModel, gains::AbstractMatrix, dterms::AbstractMatrix)
+    S = promote_type(real(eltype(first(model))), eltype(gains), eltype(dterms))
+    total = zeros(S, 4); n = zeros(Int, 4)
+    for (k, r) in enumerate(rows)
+        g = im.seg[r]; s1 = o.s1[r]; s2 = o.s2[r]
+        if im.polarized
+            J1 = station_jones(im, gains, dterms, s1, g, im.φ1[r]); J2 = station_jones(im, gains, dterms, s2, g, im.φ2[r])
+            V = products(apply_jones(coherency(model[k]), J1, J2))
+            for p in 1:4
+                σ = o.σ_coh[r][p]
+                isfinite(σ) || continue
+                d = V[p] - o.coh[r][p]
+                total[p] += (real(d)^2 + imag(d)^2) / σ^2; n[p] += 2
+            end
+        else
+            g1, _ = station_gains(im, gains, s1, g); g2, _ = station_gains(im, gains, s2, g)
+            d = g1 * conj(g2) * model[k][1] - o.vis[r][1]
+            total[1] += (real(d)^2 + imag(d)^2) / o.σ[r][1]^2; n[1] += 2
+        end
+    end
+    return SVector{4}(total), SVector{4}(n)
+end
+
 "The prior residuals of the instrument (see the header): `lg/σ_lg[s]`, `lg_rat/σ_lgrat`, `gp_rat/σ_gprat` per station and segment, the d-term parts over `σ_d`; the phases gp_R carry no prior."
 function instrument_prior_residuals(im::InstrumentModel, gains::AbstractMatrix, dterms::AbstractMatrix)
     S = promote_type(eltype(gains), eltype(dterms))
@@ -250,6 +281,7 @@ end
 "The prior penalty of the instrument parameters, the squared norm of [`instrument_prior_residuals`](@ref)."
 penalty_instrument(im::InstrumentModel, gains, dterms) = sum(abs2, instrument_prior_residuals(im, gains, dterms); init = zero(promote_type(eltype(gains), eltype(dterms))))
 
+export chi2_products
 export coherency, stokes, products, coherency_of_products, feed_rotation, jones, apply_jones,
        Segmentation, ScanSeg, IntegSeg, TrackSeg, segments, Reference, SingleReference, FirstReference,
        InstrumentModel, nstations, ngainrows, gain_column, zero_instrument, free_mask, station_gains, station_leakage, station_jones,
