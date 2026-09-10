@@ -11,7 +11,10 @@
 # 2017 D-terms (EHT Collaboration 2021, Paper VII).
 #
 #     julia -t 8 --project=../.. m87_jones.jl [--data <file.uvfits>] [--init params.csv] [--res 32] [--samples 60] [--iterations 300] [--eta 0.005] [--eta-gain 0.02] [--polish 6] [--fnoise 0.02] [--tag jones]
-#                                          [--no-leakage] [--sigma-lg 0.2] [--sigma-lgrat 0.1] [--raw] [--fix-sky]
+#                                          [--no-leakage] [--sigma-lg 0.2] [--sigma-lgrat 0.1] [--raw] [--fix-sky] [--uvmin 0.1]
+# `--uvmin` (Gλ) drops the shorter baselines, as the earlier M87 runs did: the intra-site baselines see the jet's extended flux.
+# `--crosshand-phase 90` (degrees) applies the global RL phase of ALMA's 45° feed offset (Paper VII, Appendix D; `rotate_crosshands`)
+# that the HOPS netcal products lack: with it the d-terms come out in the published frame and the sky's EVPA is absolute.
 # `--no-leakage` drops the d-terms, `--sigma-lg` sets the log-amplitude prior width (Comrade's 0.2; the LMT keeps 1.0 unless it is
 # tighter), `--raw` uses the raw-data Jones chain G D R instead of R† G D R, `--fix-sky` fits the instrument alone on the starting sky.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
@@ -25,10 +28,18 @@ res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--i
 η = getopt("--eta", 0.005); ηgain = getopt("--eta-gain", 0.02); npolish = getopt("--polish", 6); fnoise = getopt("--fnoise", 0.02)
 tag = getstr("--tag", "jones"); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
 leakage = !("--no-leakage" in ARGS); σ_lg = getopt("--sigma-lg", 0.2); σ_lgrat = getopt("--sigma-lgrat", 0.1); corrected = !("--raw" in ARGS); fixsky = "--fix-sky" in ARGS
+uvmin = getopt("--uvmin", 0.1); crossphase = getopt("--crosshand-phase", 0.0)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar)
 obs = average_scans(read_uvfits(path)); ν = obs.freq
+crossphase == 0 || (obs = rotate_crosshands(obs, deg2rad(crossphase)); @info "cross-hand products rotated by $(crossphase)°")
+if uvmin > 0
+    keep = hypot.(obs.u, obs.v) .>= uvmin * 1e9
+    obs = Fit.Observation{Float64}(obs.time[keep], obs.tint[keep], obs.s1[keep], obs.s2[keep], obs.stations, obs.u[keep], obs.v[keep], obs.vis[keep], obs.σ[keep],
+                                   obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source, obs.coh[keep], obs.σ_coh[keep])
+    @info "baselines shorter than $uvmin Gλ dropped" remaining = length(obs)
+end
 # Comrade's fractional noise floor on the products: σ → √(σ² + (f |V|)²)
 for r in 1:length(obs)
     obs.σ_coh[r] = SVector{4}(sqrt(obs.σ_coh[r][p]^2 + (fnoise * abs(obs.coh[r][p]))^2) for p in 1:4)
@@ -78,7 +89,7 @@ if npolish > 0
     χ1 = hist[end]
     σx = sqrt.(max.(diag(covj), 0.0))
     nsky = count(free); ng = count(gm)
-    laplace_d = reshape(σx[nsky+ng+1:end], 4, :)
+    laplace_d = fill(NaN, 4, nstations(inst)); laplace_d[dm] .= σx[nsky+ng+1:end]           # the free d-term parts back in station columns
     @info "joint Levenberg–Marquardt polish ($npolish iterations)" chi2 = hist[1] => hist[end] reduced = χ1 / ndat minutes = (time() - tP) / 60
 end
 # the sky alone against the closure quantities (gain-independent), as the earlier runs reported it
@@ -101,7 +112,7 @@ end
 writedlm(joinpath(outdir, "m87_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "m87_$(tag)_gains.csv"), gains, ','); writedlm(joinpath(outdir, "m87_$(tag)_dterms.csv"), dterms, ',')
 open(joinpath(outdir, "m87_$(tag)_summary.txt"), "w") do io
     println(io, "M87 2017 full polarization through the instrument model: $(length(obs)) rows, $(inst.nseg) scans, $ndat product values, $(count(gm)) gains, $(count(dm)) d-term parts, fractional noise $fnoise")
-    println(io, "options: leakage $leakage, corrected $corrected, sigma_lg $σ_lg, fix_sky $fixsky")
+    println(io, "options: leakage $leakage, corrected $corrected, sigma_lg $σ_lg, fix_sky $fixsky, uvmin $uvmin, crosshand phase $(crossphase)°")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky $χc0 → $χc over $nclos (reduced $(χc0 / nclos) → $(χc / nclos)); flux $flux Jy")
     foreach(l -> println(io, l), lines)
 end

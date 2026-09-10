@@ -80,6 +80,7 @@ function test_scan_average()
     @testset "scan averaging" begin
         same = average_scans(obs)
         @test length(same) == length(obs) && same.time == obs.time && same.vis == obs.vis && same.σ == obs.σ && same.u == obs.u
+        @test same.coh == obs.coh && same.σ_coh == obs.σ_coh
         n = length(obs)
         δ = [SVector{4}(0.01 * cis(k), 0.0im, 0.002im, 0.0im) for k in 1:n]
         dbl = Fit.Observation{Float64}(vcat(obs.time, obs.time .+ 20 / 3600), vcat(obs.tint, obs.tint), vcat(obs.s1, obs.s1), vcat(obs.s2, obs.s2), obs.stations,
@@ -91,6 +92,15 @@ function test_scan_average()
         @test maximum(abs(av.σ[k][1] - sqrt(obs.σ[k][1]^2 + 4obs.σ[k][1]^2) / 2) for k in 1:n) < 1e-15
         @test all(av.vis[k][3] == obs.vis[k][3] && av.σ[k][3] == obs.σ[k][3] for k in 1:n)   # U present in one row only: that row
         @test all(abs(av.σ[k][2] - obs.σ[k][2] / sqrt(2)) < 1e-15 for k in 1:n)
+        # the correlation products are averaged on their own: a product present in one row only (a single-polarization
+        # station) survives with that row's value and noise, one present in both is the mean
+        coh2 = [SVector(c[1] + 0.01, c[2], c[3], c[4]) for c in obs.coh]
+        σc2 = [SVector(Inf, s[2], s[3], s[4]) for s in obs.σ_coh]
+        dblc = Fit.Observation{Float64}(dbl.time, dbl.tint, dbl.s1, dbl.s2, obs.stations, dbl.u, dbl.v, dbl.vis, dbl.σ, obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source,
+                                        vcat(obs.coh, coh2), vcat(obs.σ_coh, σc2))
+        avc = average_scans(dblc)
+        @test all(avc.coh[k][1] == obs.coh[k][1] && avc.σ_coh[k][1] == obs.σ_coh[k][1] for k in 1:n)
+        @test all(abs(avc.coh[k][2] - obs.coh[k][2]) < 1e-15 && abs(avc.σ_coh[k][2] - obs.σ_coh[k][2] / sqrt(2)) < 1e-15 for k in 1:n)
         # a gap larger than the scan threshold separates the rows again
         far = Fit.Observation{Float64}(vcat(obs.time, obs.time .+ 0.1), dbl.tint, dbl.s1, dbl.s2, obs.stations, dbl.u, dbl.v, dbl.vis, dbl.σ, obs.freq, obs.bandwidth, obs.ra, obs.dec, obs.mjd, obs.source)
         @test length(average_scans(far)) == 2n

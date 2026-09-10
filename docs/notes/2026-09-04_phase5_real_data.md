@@ -129,3 +129,87 @@ thousand iterations), so six parcels are the limit of this run rather than the o
 structural next steps are a larger parcel set with densification in the joint update, R/L gains
 and leakage terms, a smooth background component for the extended flux, and a noise model with
 a systematic floor, i.e. the ingredients of the EHT polarimetric analyses.
+
+## The full-polarization data through the instrument model (2026-09-10, `m87_jones.jl`)
+
+The same `hops_3601_M87+netcal.uvfits` file refitted with the instrument model that follows
+Comrade.jl's structure (`docs/STATUS.md`, `Fit.InstrumentModel`; Daniel's request of
+2026-09-09): the data are the four correlation products themselves (RR, LL, RL, LR, kept by
+the reader and averaged on their own over scans, so that the JCMT's single hand enters), the
+model V = J₁ C J₂† with J = R† G D R (per-scan complex R and L gains with ALMA as the phase
+reference, d-terms per station over the track, the feed rotation of the EHT array from the
+antenna table), Comrade's priors (log amplitudes N(0, 0.2), the LMT 1.0; the L/R ratios
+N(0, 0.1); d-term parts N(0, 0.2)) and a 2% fractional noise floor on the products, as Comrade's
+tutorials add. Baselines below 0.1 Gλ are dropped as in the earlier runs (the intra-site
+baselines see the jet's extended flux), leaving 189 rows, 22 scans, 1330 product values,
+372 free gain entries and 28 d-term parts. The sky is the six-parcel model of self-calibration
+run 6 above, its eighteen non-temporal rows free, fitted jointly with the instrument
+(`Fit.selfcal!`, 300 Adam iterations from a unit instrument, one dual sweep per iteration on
+the GPU) and polished by six joint Levenberg–Marquardt iterations with the Laplace covariance.
+
+| variant | χ²/N of the products, start → end | closure χ²/N of the sky alone, start → end (240 quantities) | flux (Jy) |
+|---|---|---|---|
+| leakage, corrected feeds, σ_lg 0.2 (baseline) | 275 → 1.33 | 3.86 → 3.79 | 0.373 |
+| no leakage | 275 → 4.08 | 3.86 → 4.14 | 0.369 |
+| tight amplitude priors, σ_lg 0.05 | 275 → 1.48 | 3.86 → 3.68 | 0.402 |
+| instrument alone, sky fixed | 275 → 2.78 | 3.86 | 0.382 |
+
+The instrument model with leakage is what the data need: without d-terms the products stay at
+χ²/N 4.1, and the fixed-sky variant shows that most of the descent is the instrument's (2.8 with
+the starting sky). The sky's own closure χ² barely moves (3.86 → 3.79; the closure-only fit of
+2026-09-04 on the Stokes-I file, with 4,096 closures rather than 240 scan-averaged ones,
+reached 1.5), so the products are fitted through the instrument rather than by moving the
+parcels, which is the behaviour Comrade's priors are designed to give. The gain amplitudes stay
+near unity (0.89–1.13 per station; the LMT's scatter 0.19 under its wide prior) and the flux is
+the starting sky's; the phases are free (rms 0.4–1.6 rad per station).
+
+The d-terms per station after the polish, with their Laplace errors (baseline):
+
+| station | D_R | D_L |
+|---|---|---|
+| AA | −0.029 − 0.018i (±0.007) | +0.047 − 0.003i (±0.006) |
+| AP | +0.015 + 0.061i (±0.013) | −0.033 + 0.036i (±0.013) |
+| AZ | +0.086 − 0.046i (±0.005) | −0.105 − 0.043i (±0.006) |
+| JC | (no R feed) | −0.139 + 0.037i (±0.022) |
+| LM | +0.028 − 0.022i (±0.005) | −0.001 − 0.008i (±0.007) |
+| PV | +0.006 + 0.112i (±0.012) | +0.028 + 0.123i (±0.016) |
+| SM | +0.092 + 0.066i (±0.06) | −0.173 + 0.014i (±0.022) |
+
+Magnitudes of a few per cent at ALMA and the LMT and of ten per cent at the SMT, Pico Veleta
+and the SMA, with formal errors of 0.5–1.5% (the SMA's R feed 6%), the range of the 2017
+D-terms of EHT Collaboration (2021, Paper VII). What this run does not have: an amplitude
+reference (the flux is fixed only by the sky model), and the priors' widths tuned to this data
+set rather than Comrade's defaults.
+
+### Against the published D-terms: the missing ALMA feed phase
+
+Station by station, the d-terms above are the published ones (Paper VII, Tables 3–5) rotated by
+−90° for R and +90° for L at every station: D_R,ours = −i D_R,pub, D_L,ours = +i D_L,pub. This
+is what a global R−L phase of 90° in the data does (RL → −i RL with the sky's EVPA rotated by
+−45°; the algebra is gated in `test_crosshand_rotation`), and Paper VII's Appendix D names the
+phase: ALMA's Band 6 feeds are rotated by 45° with respect to their projection on the focal
+plane, which leaves a phase offset between the post-converted RCP and LCP signals, applied by
+the collaboration as a global phase to the RL (LR*) products "before performing the analysis".
+The HOPS netcal file lacks it; `Fit.rotate_crosshands(obs, π/2)` applies it (the script's
+`--crosshand-phase 90`), and the refit then gives, against the April 11 low-band values of the
+five imaging and posterior-exploration methods of Table 5 (LMT, SMT, PV) and the campaign
+intra-site values of Tables 3–4 (ALMA, APEX):
+
+| station | ours, D_R (%) | published D_R | ours, D_L | published D_L |
+|---|---|---|---|---|
+| AA | +0.5 − 5.8i (±0.8) | along −i, amplitudes 2.6–7.1 over the campaign (Table 3) | −0.5 − 5.1i (±0.7) | along −i, 2.8–6.1 |
+| AP | −8.7 + 3.1i (±1.3) | −8.67 + 2.96i (±0.70) | +4.0 + 3.1i (±1.3) | 4.66 + 4.58i (±1.20) |
+| AZ | +3.0 + 9.4i (±0.6) | 2.9–4.1 + 6.9–8.8i (five methods) | −2.6 + 8.1i (±0.6) | −3.9 to −5.9 + 9.3–11.0i |
+| LM | +0.6 + 3.9i (±0.5) | 0.7–2.8 + 0.5–4.4i | −0.2 + 1.0i (±0.7) | −0.4 to −1.4 + −0.5–0.9i |
+| PV | −12.2 − 2.3i (±1.1) | −11.3 to −14.2 + −1.2–3.6i | +15.9 − 1.5i (±1.5) | 12.9–16.2 + −1.6–1.6i |
+
+ALMA's d-terms come out along the negative imaginary axis with similar amplitudes, as the
+paper says they must (the X–Y phase offset of the linear feeds); APEX's D_R agrees to 0.1%;
+the SMT, PV and LMT agree within 1–3%, the spread between the published methods. The SMA and
+the JCMT are not comparable in this fit (seven and nine scans, the JCMT's single hand, and the
+SMA's extra R–L phase rotation for its own feed offset that the paper applies separately).
+The unrotated fit had the sky's EVPA off by 45°: any polarimetric result from the 2017 HOPS
+netcal products needs this rotation. With it the products' χ²/N is 1.42 (the sky of run 6 was
+fitted in the unrotated frame and has not fully re-rotated in 300 iterations; the closure χ²
+3.90). Gate `test_dterm_recovery`: ehtim's own seeded d-terms are recovered from its corrupted
+products through this fit to 3e-12, which pins the convention on the simulator's side.

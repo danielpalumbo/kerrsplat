@@ -262,3 +262,103 @@ function test_selfcal(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend
         @info "$label self-calibration: χ² at the truth $(round(χ_true; digits = 1)) for $(ndata(tr)) values; sky gradient vs host Enzyme $e, gain gradient $eg, d-term gradient $ed; instrument recovered from unit gains: χ² $(round(hist[1]; digits = 1)) → $(round(hist[end]; digits = 1)), worst |Δ|/σ $(round(maximum(abs.(x .- xt) ./ max.(σx, 1e-3)); digits = 2)); joint polish χ² $(round(hj[1]; digits = 1)) → $(round(hj[end]; digits = 1)); joint Adam (6 iterations) $(round(hA[1]; digits = 1)) → $(round(hA[end]; digits = 1))"
     end
 end
+
+"""
+    test_crosshand_rotation()
+
+`rotate_crosshands`: the products and the Stokes visibilities transform together (RL e^{iθ},
+LR e^{−iθ}, Q + iU rotated), and the instrument χ² is invariant under rotating the data by θ
+together with the sky's cross-hands by θ and the d-terms by d_R e^{iθ}, d_L e^{−iθ}: the
+transformation that a missing global R−L phase (ALMA's 45° feed offset, Paper VII) imprints on
+fitted d-terms.
+"""
+function test_crosshand_rotation()
+    dir = joinpath(@__DIR__, "data")
+    obs = read_uvfits(joinpath(dir, "synth_eht2017_noiseless.uvfits"))
+    rng = Random.MersenneTwister(31)
+    @testset "cross-hand phase rotation" begin
+        θ = 0.7
+        r = rotate_crosshands(obs, θ)
+        @test r.vis != obs.vis && all(r.vis[k][1] == obs.vis[k][1] && r.vis[k][4] == obs.vis[k][4] for k in 1:length(obs))
+        @test all(r.coh[k][3] ≈ obs.coh[k][3] * cis(θ) && r.coh[k][4] ≈ obs.coh[k][4] * cis(-θ) for k in 1:length(obs))
+        @test all(r.coh[k][3] ≈ r.vis[k][2] + im * r.vis[k][3] for k in 1:length(obs))
+        @test rotate_crosshands(r, -θ).vis ≈ obs.vis
+        inst = InstrumentModel(obs; feedangles = (0.4 .* randn(rng, length(obs)), 0.4 .* randn(rng, length(obs))))
+        gains, dterms = zero_instrument(inst)
+        gains .= 0.1 .* randn(rng, size(gains)); dterms .= 0.05 .* randn(rng, size(dterms))
+        rows = 1:length(obs)
+        model = [v .* (1 + 0.05im) for v in obs.vis]
+        χa = chi2_instrument(model, obs, rows, inst, gains, dterms)
+        model_r = [(rl = (m[2] + im * m[3]) * cis(θ); lr = (m[2] - im * m[3]) * cis(-θ); SVector(m[1], (rl + lr) / 2, (rl - lr) / (2im), m[4])) for m in model]
+        dterms_r = copy(dterms)
+        for s in 1:nstations(inst)
+            dR = complex(dterms[1, s], dterms[2, s]) * cis(θ); dL = complex(dterms[3, s], dterms[4, s]) * cis(-θ)
+            dterms_r[:, s] = [real(dR), imag(dR), real(dL), imag(dL)]
+        end
+        χb = chi2_instrument(model_r, r, rows, inst, gains, dterms_r)
+        @test abs(χa - χb) <= 1e-10 * χa
+        @info "cross-hand rotation by $θ rad: χ² invariant with the sky's cross-hands and the d-terms rotated along ($(abs(χa - χb) / χa))"
+    end
+end
+
+"""
+    test_dterm_recovery()
+
+ehtim's D-terms recovered through the instrument fit: the corrupted products of the fixture
+observation (seeded gains with uniformly random phases, R/L amplitude ratios and d-terms, feed
+rotation corrected; no noise) against the clean products as the sky, with gains per time stamp
+and d-terms per station fitted by `levenberg_marquardt!` from the gains of ehtim's Jones
+matrices (relative to the reference station: the calibration state after a gain solve) and
+zero d-terms; the recovered d-terms equal ehtim's and the gains stay theirs.
+"""
+function test_dterm_recovery()
+    dir = joinpath(@__DIR__, "data")
+    f = _jones_fixture(dir, "corrected")
+    obs0 = read_uvfits(joinpath(dir, "synth_eht2017_noiseless.uvfits"))
+    n = length(f.time)
+    stations = obs0.stations
+    s1 = [findfirst(==(f.t1[k]), stations) for k in 1:n]; s2 = [findfirst(==(f.t2[k]), stations) for k in 1:n]
+    σ = 1e-3
+    obs = Observation{Float64}(f.time, fill(10.0, n), s1, s2, stations, zeros(n), zeros(n), [stokes(coherency_of_products(c)) for c in f.clean], fill(SVector(σ, σ, σ, σ), n),
+                               obs0.freq, obs0.bandwidth, obs0.ra, obs0.dec, obs0.mjd, "SYNTH", copy(f.corrupt), fill(SVector(σ, σ, σ, σ), n))
+    key(s, k) = (stations[s], round(f.time[k]; digits = 6))
+    φ1 = [f.φ[key(s1[k], k)] for k in 1:n]; φ2 = [f.φ[key(s2[k], k)] for k in 1:n]
+    inst = InstrumentModel(obs; feedangles = (φ1, φ2), segmentation = IntegSeg(), reference = SingleReference("AA"))
+    gm, dm = free_mask(inst, obs)
+    model = [stokes(coherency_of_products(c)) for c in f.clean]
+    rows = 1:n
+    resid(x) = (t = unpack(zeros(1, 1), falses(1, 1), zeros(size(gm)), gm, zeros(size(dm)), dm, x); instrument_residuals(model, obs, rows, inst, t[2], t[3]))
+    # ehtim's gains in our parameterization, relative to the reference station of each time stamp
+    true_gains, _ = zero_instrument(inst)
+    jones_of(s, g) = f.J[key(s, findfirst(==(g), inst.seg))]
+    for g in 1:inst.nseg
+        Jref = jones_of(inst.ref[g], g)
+        for s in 1:nstations(inst)
+            c = gain_column(inst, s, g)
+            gm[1, c] || continue
+            J = jones_of(s, g)
+            gR = J[1, 1]; gL = J[2, 2]
+            true_gains[1, c] = log(abs(gR)); true_gains[2, c] = angle(gR / Jref[1, 1])
+            true_gains[3, c] = log(abs(gL / gR)); true_gains[4, c] = angle((gL / gR) / (Jref[2, 2] / Jref[1, 1]))
+        end
+    end
+    @testset "ehtim's D-terms recovered through the instrument fit" begin
+        x0 = pack(zeros(1, 1), falses(1, 1), true_gains, gm, zeros(size(dm)), dm)
+        x, hist, cov = levenberg_marquardt!(x0, resid; iterations = 8, chunk = 12)
+        _, gains, dterms = unpack(zeros(1, 1), falses(1, 1), zeros(size(gm)), gm, zeros(size(dm)), dm, x)
+        @test hist[end] < 1e-8 * hist[1]
+        worst_d = 0.0; worst_g = 0.0
+        for (k, J) in f.J
+            s = findfirst(==(k[1]), stations)
+            r = findfirst(i -> abs(obs.time[i] - k[2]) < 1e-6 && (s1[i] == s || s2[i] == s), 1:n)
+            r === nothing && continue                                      # the station is absent at that time
+            φ = f.φ[k]
+            gR = J[1, 1]; gL = J[2, 2]; dR = J[1, 2] / (gR * cis(2φ)); dL = J[2, 1] / (gL * cis(-2φ))
+            worst_d = max(worst_d, abs(complex(dterms[1, s], dterms[2, s]) - dR), abs(complex(dterms[3, s], dterms[4, s]) - dL))
+            gRf, gLf = station_gains(inst, gains, s, inst.seg[r])
+            worst_g = max(worst_g, abs(abs(gRf) - abs(gR)) / abs(gR), abs(abs(gLf / gRf) - abs(gL / gR)))
+        end
+        @test worst_d < 1e-6 && worst_g < 1e-6
+        @info "ehtim's d-terms recovered from its gains and zero leakage: χ² $(hist[1]) → $(hist[end]); worst d-term error $worst_d, worst gain amplitude / ratio error $worst_g"
+    end
+end
