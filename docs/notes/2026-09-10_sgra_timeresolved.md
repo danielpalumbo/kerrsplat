@@ -148,4 +148,71 @@ jl) and (ik, jl, il, jk), which are independent and between them use all six bas
 (`test_uvfits` checks both). The M87 closure fits of 2026-09-04 ran with the incomplete set;
 their conclusions rested on the self-calibrated products, not on the closures alone, but their
 closure χ²/N will read differently with the full set. The static fit, the instrument solve
-and the self-calibration are being repeated with it; their results follow.
+and the self-calibration are being repeated with it.
+
+## With every baseline in the closures
+
+The static closure fit with the kernel and the full closure set (143 closures instead of
+128, 900 iterations): χ²/N 37.3 → 4.59, the sky's own closures 4.59, converged (5.15 after
+300 iterations, 4.67 after 500, 4.59 from 700 on). The two scans at UT 11.5 h again hold the
+residual (15.6 and 40.8); the other nineteen sit at 0.03–4.0.
+
+The dual-feed instrument solve on it still ends at χ²/N 181 with the SMA gain at 0.25, and
+the per-baseline table still has the SPT baselines at 0.3–0.4 of the data and the SMA ones at
+2–4 times it. Two things are now clear from the split by product and by station. First, this
+amplitude pattern is station-like (every SPT baseline low by about the same factor, every SMA
+baseline high), and closure amplitudes are blind to exactly that: with the full closure set
+the sky can still trade a station-like amplitude pattern against the true one, and it has.
+Second, the model's L/R ratios come out at 0.29 (SPT) to 0.71 (ALMA) where the prior allows
+±10%, and LL fits worse than RR by a factor 1.8: the closure stage constrains Stokes I alone,
+so the sky's Q, U and V are whatever the initial parcels had, and the dual-feed products then
+misfit the parallel hands through V and the cross-hands through Q and U with nothing the
+gains can do about it. The next step is the standard one: solve the instrument on Stokes I
+alone (`--stokes-i`, one complex gain per station on the parallel-hand average, the
+polarization left out), then self-calibrate Stokes I, and only then let the polarization rows
+meet the products.
+
+The Stokes I instrument solve on the same sky: χ²/N 1268 → 14.1 (303 after the phase start,
+the phase-only solve stalling at 259, the full solve reaching 14 in six iterations), and per
+scan 0.02–2.3 for seventeen of the twenty-one scans, with two scans (the 3rd and 10th) at 13
+and 14 and the last at 4.2. So the sky fits the Stokes I products with gains almost at its
+closure level, and the polarization was what the dual-feed products could not swallow. The
+gains say what the closures could not: the SPT's amplitude gain is 2.2 on average with a
+scatter of 3 and the SMA's 0.39, the absorption of a station-like amplitude error of the sky
+(its SPT baselines faint, its SMA baselines bright) that closure amplitudes cannot see and
+only the gains' priors can push back on. That is the job of the joint Stokes I
+self-calibration from these gains.
+
+The joint Stokes I self-calibration (static sky, the gains started from the solve, flux prior
+2.4 ± 0.5 Jy, 600 iterations): products χ²/N 14.1 → 6.72, still falling by 0.1 per 50
+iterations at the end (11.9 after 50, 8.0 after 300, 6.8 after 550). Per scan the products fit
+at 0.01–3.5 except the 12th (UT 11.45 h) at 5.5. The gains moved toward their priors as the
+sky took over the station-like pattern: ALMA 1.01 ± 0.40, APEX 0.94, SMT 0.81, LMT 1.06, SPT
+1.42 ± 0.68 (from 2.2), SMA 0.49 ± 0.25 (from 0.39). The sky's own closure χ²/N rose from 4.6
+to 9.7, almost all of it in the 12th and 14th scans (45 and 17) again, as the products, not the
+closures, are what the joint fit minimizes.
+
+## Where this stands
+
+The chain that works for Sgr A* on this day is the one every imaging pipeline uses, and every
+piece of it had to be put in today: the scattering kernel on the model visibilities, closure
+amplitudes over every baseline, a Stokes I closure fit, an instrument solve on Stokes I with
+the phases started from the reference baselines, and a joint Stokes I self-calibration from
+the solved gains. From a ring of eight parcels it reaches Stokes I products at χ²/N 6.7 with
+gains near their priors, where the morning's runs sat at 230 and 80 with the gains collapsed.
+
+Open, in the order to take them:
+
+1. The SMA's amplitude gain of 0.49 is not physical (its a priori calibration in 2017 was
+   good to 10–20%); the model is still twice too bright on the SMA baselines. Whether this is
+   the sky (an east–west structure the parcels cannot make) or the data (the SMA's a priori
+   amplitudes on this day) is checkable against the published gain solutions.
+2. The hour around UT 11.5 h holds the closure residual in every fit; a moving sky (the pattern
+   rates at their own step) from the Stokes I self-calibrated sky, and a look at the
+   per-station data of those scans.
+3. The polarization: with the Stokes I sky and gains held, the parcels' field rows against the
+   dual-feed products (the L/R ratios and d-terms of the instrument model), then everything
+   jointly. The closure stage constrains Stokes I alone; the dual-feed products from a
+   closure-only sky are unusable, as the morning showed.
+4. A longer Stokes I self-calibration (the trace has not flattened) and the joint LM polish
+   for the Laplace errors.

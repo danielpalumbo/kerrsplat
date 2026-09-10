@@ -11,7 +11,7 @@
 #     julia -t 8 --project=../.. sgra_jones.jl [--data <file.uvfits>] [--res 32] [--samples 60] [--nsplat 8] [--iterations 600] [--eta 0.005] [--eta-gain 0.02]
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
 #                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal|calibrate] [--staged] [--static] [--eta-omega 0.05]
-#                                          [--calibrate 0] [--init-gains gains.csv] [--init-dterms dterms.csv] [--no-scatter]
+#                                          [--calibrate 0] [--init-gains gains.csv] [--init-dterms dterms.csv] [--no-scatter] [--stokes-i]
 #
 # The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
 # of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
@@ -24,7 +24,9 @@
 # freed at the common Adam step of 0.005 rad/M per iteration, wrecking it within a hundred iterations); when they are free,
 # `--eta-omega` is the factor of the common step they move with (0.05: 2.5e-4 rad/M per iteration at the default step).
 # The model visibilities go through the diffractive scattering kernel of Sgr A* (`ScatteringKernel`, Johnson et al. 2018)
-# unless `--no-scatter`. `--stage calibrate` solves the instrument alone by Levenberg–Marquardt with the initial sky held (`calibrate!`, `--calibrate`
+# unless `--no-scatter`. `--stokes-i` fits the instrument as one complex gain per station on the Stokes I visibilities
+# (the parallel hands averaged), which leaves the sky's polarization out of the products: the closure stage constrains
+# Stokes I alone, so its sky has free Q, U, V that the dual-feed products then misfit. `--stage calibrate` solves the instrument alone by Levenberg–Marquardt with the initial sky held (`calibrate!`, `--calibrate`
 # iterations, 10 by default there); `--calibrate N` before `--stage selfcal` starts the joint loop from that solve instead of
 # unit gains. `--init-gains`/`--init-dterms` start the instrument from a previous run's files.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
@@ -39,7 +41,7 @@ fluxprior = getopt("--flux", 2.4); σflux = getopt("--sigma-flux", 0.05); fnoise
 nframes = getopt("--frames", 0); seed = getopt("--seed", 1); init = getstr("--init", ""); npolish = getopt("--polish", 0); tag = getstr("--tag", "jones")
 stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal", "calibrate") || error("--stage must be closures, selfcal or calibrate"); staged = "--staged" in ARGS; static = "--static" in ARGS
 ncal = getopt("--calibrate", stage == "calibrate" ? 10 : 0); initgains = getstr("--init-gains", ""); initdterms = getstr("--init-dterms", "")
-scatter = !("--no-scatter" in ARGS)
+scatter = !("--no-scatter" in ARGS); stokesI = "--stokes-i" in ARGS
 ηω = getopt("--eta-omega", 0.05); steps = (; omega = ηω)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
@@ -54,13 +56,13 @@ for r in 1:length(obs)                                   # Comrade's fractional 
     obs.σ_coh[r] = SVector{4}(sqrt(obs.σ_coh[r][p]^2 + (fnoise * abs(obs.coh[r][p]))^2) for p in 1:4)
     obs.σ[r] = SVector{4}(sqrt(obs.σ[r][p]^2 + (fnoise * abs(obs.vis[r][p]))^2) for p in 1:4)
 end
-inst = InstrumentModel(obs; leakage = false, reference = SingleReference("AA"))       # d-terms calibrated in this file; the feed rotation commutes with diagonal gains
+inst = InstrumentModel(obs; polarized = !stokesI, leakage = false, reference = SingleReference("AA"))       # d-terms calibrated in this file; the feed rotation commutes with diagonal gains
 gm, dm = free_mask(inst, obs)
 tscan = scan_times(obs, M_solar)
 times = nframes > 0 ? (edges = range(minimum(tscan), maximum(tscan), length = nframes + 1); [edges[min(searchsortedlast(edges, t), nframes)] + step(edges) / 2 for t in tscan]) : tscan
 kernel = scatter ? ScatteringKernel(ν) : nothing
 tr = stage == "closures" ? closure_scans(obs, times; kernel) : observed_scans(obs, times; kernel)
-ndat = ndata(tr)
+ndat = (stokesI && stage != "closures") ? 2 * length(obs) : ndata(tr)             # the Stokes I instrument sees two real values per row
 @info "data" file = basename(path) rows = length(obs) scans = inst.nseg frames = length(frame_times(tr)) span_M = round(maximum(tscan); digits = 0) stations = obs.stations products = ndat free_gains = count(gm) fractional_noise = fnoise
 
 fov = 20.0; Δα = fov / res
@@ -150,7 +152,7 @@ for (k, s) in enumerate(tr.scans)
     if stage != "closures"
         χP, nP = chi2_products(taper(kernel, visibilities(img, Δα, L, D, obs.u[rows], obs.v[rows]), obs.u[rows], obs.v[rows]), obs, rows, inst, gains, dterms)
         global χprod .+= χP; global nprod .+= nP
-        split = @sprintf(" (RR %.1f LL %.1f RL %.1f LR %.1f)", (χP ./ max.(nP, 1))...)
+        split = stokesI ? "" : @sprintf(" (RR %.1f LL %.1f RL %.1f LR %.1f)", (χP ./ max.(nP, 1))...)
     end
     kt = [i for i in eachindex(tri) if keep_t[i] && scans_of_rows[abs(tri[i][1])] == k]; kq = [i for i in eachindex(quad) if keep_q[i] && scans_of_rows[abs(quad[i][1])] == k]
     cdata = ClosureData(obs.u, obs.v, tri[kt], phases[kt], σ_phase[kt], quad[kq], logamps[kq], σ_logamp[kq])
@@ -160,7 +162,7 @@ for (k, s) in enumerate(tr.scans)
     sts = join(obs.stations[sort(unique(vcat(obs.s1[rows], obs.s2[rows])))], " ")
     push!(lines, @sprintf("scan %2d  UT %6.3f h  t = %6.1f M  %3d %s χ²/N %6.2f%s  %3d closures χ²/N %6.2f  flux %.3f Jy  stations %s", k, mean(obs.time[rows]), s.time, ns, stage == "closures" ? "closures" : "products", χs / max(ns, 1), split, nc, nc > 0 ? χc / nc : NaN, F, sts))
 end
-stage == "closures" || push!(lines, @sprintf("all scans by product: RR χ²/N %.2f over %d, LL %.2f over %d, RL %.2f over %d, LR %.2f over %d", (χprod[1] / max(nprod[1], 1)), nprod[1], (χprod[2] / max(nprod[2], 1)), nprod[2], (χprod[3] / max(nprod[3], 1)), nprod[3], (χprod[4] / max(nprod[4], 1)), nprod[4]))
+stage == "closures" || stokesI || push!(lines, @sprintf("all scans by product: RR χ²/N %.2f over %d, LL %.2f over %d, RL %.2f over %d, LR %.2f over %d", (χprod[1] / max(nprod[1], 1)), nprod[1], (χprod[2] / max(nprod[2], 1)), nprod[2], (χprod[3] / max(nprod[3], 1)), nprod[3], (χprod[4] / max(nprod[4], 1)), nprod[4]))
 # per baseline: the sky's Stokes I amplitude against the data's (no gains), the amplitude information the closure stage's SNR cut leaves out
 blines = Dict{Tuple{Int,Int},Vector{NTuple{3,Float64}}}()
 for (k, s) in enumerate(tr.scans)
@@ -177,13 +179,14 @@ for (key, v) in bl
 end
 @info "per scan\n" * join(lines, "\n")
 @info "sky alone" closure_chi2 = χtot_c closures = ntot_c reduced = χtot_c / max(ntot_c, 1) pattern_rates = round.(q[21, :]; sigdigits = 3) flux_range = extrema(total_flux(frames[t], Δα, L, D) for t in frame_times(tr))
-glines = [@sprintf("%-3s  scans %2d  |gR| %.3f ± %.3f  phase rms %.2f rad  L/R amp %.3f", name, count(g -> gm[1, gain_column(inst, s, g)], 1:inst.nseg), exp(mean(gains[1, [gain_column(inst, s, g) for g in 1:inst.nseg if gm[1, gain_column(inst, s, g)]]])),
-           std(exp.(gains[1, [gain_column(inst, s, g) for g in 1:inst.nseg if gm[1, gain_column(inst, s, g)]]])), sqrt(mean(abs2, gains[2, [gain_column(inst, s, g) for g in 1:inst.nseg if gm[1, gain_column(inst, s, g)]]])),
-           exp(mean(gains[3, [gain_column(inst, s, g) for g in 1:inst.nseg if gm[1, gain_column(inst, s, g)]]]))) for (s, name) in enumerate(obs.stations) if any(gm[1, gain_column(inst, s, g)] for g in 1:inst.nseg)]
+cols(s) = [gain_column(inst, s, g) for g in 1:inst.nseg if gm[1, gain_column(inst, s, g)]]
+glines = [@sprintf("%-3s  scans %2d  |gR| %.3f ± %.3f  phase rms %.2f rad%s", name, length(cols(s)), exp(mean(gains[1, cols(s)])), std(exp.(gains[1, cols(s)])),
+                   sqrt(mean(abs2, gains[2, cols(s)])), inst.polarized ? @sprintf("  L/R amp %.3f", exp(mean(gains[3, cols(s)]))) : "")
+          for (s, name) in enumerate(obs.stations) if !isempty(cols(s))]
 @info "gains per station\n" * join(glines, "\n")
 writedlm(joinpath(outdir, "sgra_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "sgra_$(tag)_gains.csv"), gains, ','); writedlm(joinpath(outdir, "sgra_$(tag)_dterms.csv"), dterms, ',')
 open(joinpath(outdir, "sgra_$(tag)_summary.txt"), "w") do io
-    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage $stage$(staged ? " (staged)" : "")$(static ? " (static)" : "")$(scatter ? ", scattering kernel" : ", no scattering kernel"): $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat data values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc, init '$init'")
+    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage $stage$(staged ? " (staged)" : "")$(static ? " (static)" : "")$(scatter ? ", scattering kernel" : ", no scattering kernel")$(stokesI ? ", Stokes I instrument" : ""): $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat data values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc, init '$init'")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky per frame $χtot_c over $ntot_c (reduced $(χtot_c / max(ntot_c, 1)))")
     println(io, "pattern rates: $(q[21, :])")
     foreach(l -> println(io, l), lines); foreach(l -> println(io, l), glines)
