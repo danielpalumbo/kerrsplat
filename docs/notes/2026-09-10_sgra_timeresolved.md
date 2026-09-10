@@ -62,4 +62,16 @@ self-calibration from it with the pattern rates still frozen and a weaker flux p
 afterwards with its own, much smaller step (`--eta-omega`, a per-row multiplier of the Adam
 step: Adam's step is scale-free, so a slow row needs a smaller step, not a smaller gradient);
 a snapshot baseline to separate the source's variability from the model's inability.
-STATIC_RESULT
+
+## The static sky
+
+The static closure fit (`--static`, 900 iterations, 65 minutes on the GPU): closure χ²/N with
+the flux prior 47 → 4.83 (the sky's closure χ²/N over the 128 closures of its own frames 4.59),
+still falling by 0.05 per 25 iterations at the end. The trace: 17.4 after 25 iterations, 10.3
+after 75, 6.0 after 275, 5.04 after 400, a spike to 7.9 at 425 that took 250 iterations to
+undo, then 5.3 → 4.83 over the last 400. Per scan the static sky fits most of the track at
+χ²/N 0.4–4.7 and misses two scans, the 12th and 13th (UT 11.45 and 11.65 h, t ≈ 430–470 M),
+at 12.7 and 13.2; they are also the scans the moving fits missed worst, so that hour holds
+either the source's own change or a systematic, and a moving sky started from this one has to
+show the difference. The model's flux sits on the prior at 2.401 Jy in every frame (a static
+sky has one flux). SELFCAL3_RESULT
