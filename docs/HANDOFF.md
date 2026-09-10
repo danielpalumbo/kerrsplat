@@ -87,8 +87,18 @@ Adam fits leave (Δχ² ≈ 10³ above the truth along the nₑ–B valley of an
 the Laplace errors; the note records the polished recoveries. Still open: a field of view that
 holds every parcel's lensed images.
 
-Open, roughly in order of value: the time-resolved visibility likelihood (one slow-light frame
-per scan, needed for Sgr A*); more parcels in the joint self-calibration update with
+The time-resolved visibility likelihood (one slow-light frame per scan, needed for Sgr A*) exists
+since 2026-09-09 (`Fit.chi2_timeresolved`, `timeresolved_gradient!`, `synthetic_scans`,
+`coverage`, `timeresolved_residuals` for the polish; `validation/winding/winding_vlbi.jl` fits
+the half-orbit truth to synthetic closure or visibility data on the EHT 2017 coverage, the
+plan's gate 7 in the data domain, `docs/notes/2026-09-09_synthetic_vlbi.md`: closures alone
+leave the likelihood flat at that coverage, calibrated visibilities recover positions and
+motion but not the plasma rows). Real observations still need a UT-to-M time mapping and
+per-scan gains in the time-resolved loss (the static self-calibration path has them); the
+data-domain results call for multiband data, joint gains and denser (ngEHT-class) coverage,
+all reachable with the existing pieces.
+
+Open, roughly in order of value: more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
 noise floor; spin and inclination fits on real data; per-ray interval lists for hundreds of
 splats; the dual sweep (`Splats.polarized_gradient!`, the default of `Fit.chi2_gradient!` and

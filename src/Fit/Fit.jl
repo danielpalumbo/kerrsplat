@@ -683,5 +683,6 @@ include("spacetime.jl")
 include("polish.jl")
 include("visibilities.jl")
 include("uvfits.jl")
+include("timeresolved.jl")
 
 end

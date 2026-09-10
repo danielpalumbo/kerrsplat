@@ -46,4 +46,5 @@ include("test_fit.jl")
     test_polarized_gradient_winding(CPU(); res = 6, N = 40, tol = 1e-10, label = "CPU backend")
     test_binning(CPU(); res = 4, N = 24, tol = 1e-9, label = "CPU backend")
     test_polish(; res = 6, N = 24)
+    test_timeresolved(CPU(); res = 4, N = 12, tol = 1e-9, label = "CPU backend")
 end

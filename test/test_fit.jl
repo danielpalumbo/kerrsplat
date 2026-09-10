@@ -672,3 +672,72 @@ function test_polish(; res = 8, N = 40)
         @info "polish: χ² $χ0 → $χ1 (truth $χ_true) in 4 LM iterations; worst |Δ|/σ_Laplace $(round(maximum(z); digits = 2)); with priors $(h2[1]) → $(h2[end])"
     end
 end
+
+"""
+    test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend")
+
+The time-resolved visibility likelihood: `synthetic_scans` without noise returns the frames'
+visibilities exactly; `chi2_timeresolved` equals the sum of the per-scan χ² on the rendered
+frames; `timeresolved_gradient!` on `backend` (closures, and visibilities with a prior) against
+the host Enzyme gradient of `chi2_timeresolved`.
+"""
+function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend")
+    rng = Random.MersenneTwister(17)
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar); ν = 230e9
+    p = polarized_test_params()
+    # three scans at two frame times, each on the baselines among four of five stations
+    function scancov(t)
+        sts = sort(randperm(rng, 5)[1:4]); s1 = Int[]; s2 = Int[]
+        for i in 1:4, j in i+1:4
+            push!(s1, sts[i]); push!(s2, sts[j])
+        end
+        return ScanCoverage(t, 3e9 .* randn(rng, length(s1)), 3e9 .* randn(rng, length(s1)), s1, s2)
+    end
+    cov = [scancov(0.0), scancov(0.0), scancov(20.0)]
+    @testset "$label time-resolved likelihood" begin
+        exact = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.0, closures = false)
+        @test frame_times(exact) == [0.0, 20.0] && length(exact) == 3
+        for (c, s) in zip(cov, exact.scans)
+            img = polarized_image(cpu, p, c.time, ν, L)
+            @test s.data.vis == visibilities(img, Δα, L, D, c.u, c.v)
+        end
+        tr = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = true, rng)
+        @test ndata(tr) > 0 && all(!isempty(s.data.triangles) for s in tr.scans)
+        q = p .+ 0.05 .* randn(rng, size(p))
+        χ_host = chi2_timeresolved(q, tr, cpu, L, Δα, D, ν)
+        χ_hand = sum(scan_loss(polarized_image(cpu, q, s.time, ν, L), Δα, L, D, s) for s in tr.scans)
+        @test abs(χ_host - χ_hand) <= 1e-12 * χ_hand
+        g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, tr, cpu, L, Δα, D, ν)), q)[1]
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = adapt_to(backend, q); dparams = adapt_to(backend, zeros(size(q)))
+        χ = timeresolved_gradient!(dparams, params, tr, cache, L, Δα, D, ν)
+        g = Array(dparams)
+        @test abs(χ - χ_host) <= 1e-10 * χ_host
+        e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
+        @test all(isfinite, g) && e <= tol
+        # visibilities with a prior
+        priors = [Fit.Prior(rows = (:logB,), μ = log(28.0), σ = 0.5)]
+        trv = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng)
+        χv_host = chi2_timeresolved(q, trv, cpu, L, Δα, D, ν; priors)
+        gv_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, trv, cpu, L, Δα, D, ν; priors)), q)[1]
+        dparams2 = adapt_to(backend, zeros(size(q)))
+        χv = timeresolved_gradient!(dparams2, params, trv, cache, L, Δα, D, ν; priors)
+        ev = maximum(abs.(Array(dparams2) .- gv_host)) / maximum(abs.(gv_host))
+        @test abs(χv - χv_host) <= 1e-10 * χv_host
+        @test ev <= tol
+        # the residual vectors square to the χ², and the Levenberg–Marquardt polish runs on them
+        rc = timeresolved_residuals(q, tr, cpu, L, Δα, D, ν); rv = timeresolved_residuals(q, trv, cpu, L, Δα, D, ν)
+        @test length(rc) == ndata(tr) && abs(sum(abs2, rc) - χ_host) <= 1e-12 * χ_host
+        @test length(rv) == ndata(trv) && abs(sum(abs2, rv) - chi2_timeresolved(q, trv, cpu, L, Δα, D, ν)) <= 1e-12 * χv_host
+        freeq = freeze(q, (:x, :y, :logne, :logTe, :logB))
+        qp, hp, covp, idxp = polish!(copy(q), x -> timeresolved_residuals(x, trv, cpu, L, Δα, D, ν); free = freeq, iterations = 3, chunk = 8)
+        @test hp[end] < hp[1] && hp[end] ≈ chi2_timeresolved(qp, trv, cpu, L, Δα, D, ν) && all(isfinite, covp) && length(idxp) == count(freeq)
+        @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end])"
+    end
+end
