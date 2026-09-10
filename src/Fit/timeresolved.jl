@@ -41,20 +41,30 @@ ndata(s::ScanData{<:Any,<:ClosureData}) = length(s.data.phases) + length(s.data.
 ndata(tr::TimeResolved) = sum(ndata, tr.scans; init = 0)
 
 """
-    chi2_timeresolved(params, tr, cache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, priors = nothing)
+    chi2_timeresolved(params, tr, cache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, priors = nothing, instrument = nothing, image_prior = nothing)
 
 The χ² of the splat movie against a time-resolved observation: every distinct frame time is
 rendered once (slow light, `polarized_image!`, the pixels integrated by `binning` if given,
-pixel size `Δα` in M, distance `D` in cm) and compared with the scans at that time. Enzyme on
-the host differentiates it (the reference of `timeresolved_gradient!`).
+pixel size `Δα` in M, distance `D` in cm) and compared with the scans at that time, through
+the `instrument` for `ObservedScan`s. `image_prior(img)`, if given, returns scaled residuals
+of every rendered frame (e.g. a total-flux prior `img -> [(total_flux(img, Δα, L, D) − F)/σ]`),
+added to the χ² as their squared norm: the amplitude anchor of an instrument fit, whose gains'
+log-amplitudes are otherwise held only by their priors. Enzyme on the host differentiates it
+(the reference of `timeresolved_gradient!`).
 """
-function chi2_timeresolved(params::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, priors = nothing, instrument = nothing) where {T}
-    total = nmax >= 0 ? _tr_frames(Vector{WindingState{T}}(undef, npixels(cache)), params, tr, cache, L, Δα, D, ν, nmax, slab, binning, instrument) :
-                        _tr_frames(Vector{RadiativeState{T}}(undef, npixels(cache)), params, tr, cache, L, Δα, D, ν, nmax, slab, binning, instrument)
+function chi2_timeresolved(params::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, priors = nothing, instrument = nothing, image_prior = nothing) where {T}
+    total = nmax >= 0 ? _tr_frames(Vector{WindingState{T}}(undef, npixels(cache)), params, tr, cache, L, Δα, D, ν, nmax, slab, binning, instrument, image_prior) :
+                        _tr_frames(Vector{RadiativeState{T}}(undef, npixels(cache)), params, tr, cache, L, Δα, D, ν, nmax, slab, binning, instrument, image_prior)
     return total + penalty(params, priors) + _instrument_penalty(instrument)
 end
 
-function _tr_frames(out::AbstractVector, params::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν, nmax, slab, binning, instrument) where {T}
+"The squared norm of an image prior's residuals on a frame (zero without one); `image_prior(img)` returns a vector of scaled residuals, e.g. `img -> [(flux(img) − F)/σ]`."
+_image_penalty(::Nothing, img) = zero(real(eltype(first(img))))
+_image_penalty(image_prior, img) = sum(abs2, image_prior(img); init = zero(real(eltype(first(img)))))
+_image_residuals(::Nothing, img, ::Type{S}) where {S} = S[]
+_image_residuals(image_prior, img, ::Type{S}) where {S} = S.(image_prior(img))
+
+function _tr_frames(out::AbstractVector, params::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν, nmax, slab, binning, instrument, image_prior) where {T}
     total = zero(T)
     for t in frame_times(tr)
         fill!(out, zero(eltype(out)))
@@ -64,6 +74,7 @@ function _tr_frames(out::AbstractVector, params::AbstractMatrix{T}, tr::TimeReso
             s.time == t || continue
             total += scan_loss(img, Δα, L, D, s, instrument)
         end
+        total += _image_penalty(image_prior, img)
     end
     return total
 end
@@ -77,11 +88,11 @@ frame being the sum over its scans; the priors' penalty and gradient are added o
 `params` and `dparams` live on the backend; `dparams` accumulates.
 """
 function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::GeodesicCache{T,N}, L, Δα, D, ν; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, priors = nothing,
-                                instrument = nothing, dinstrument = nothing) where {T,N}
+                                instrument = nothing, dinstrument = nothing, image_prior = nothing) where {T,N}
     total = zero(T)
     for t in frame_times(tr)
         scans = [s for s in tr.scans if s.time == t]
-        loss(img) = sum(scan_loss(img, Δα, L, D, s, instrument) for s in scans)
+        loss(img) = sum(scan_loss(img, Δα, L, D, s, instrument) for s in scans) + _image_penalty(image_prior, img)
         frame = Ref{Any}(nothing)
         total += image_loss_gradient!(dparams, loss, cache, params, t, ν, L; method, kmax, nmax, slab, binning, on_image = img -> (frame[] = img))
         if dinstrument !== nothing
@@ -160,7 +171,7 @@ The scaled residuals of the splat movie against a time-resolved observation, sca
 element type of `params`, so `polish!(params, q -> timeresolved_residuals(q, ...))` runs the
 Levenberg–Marquardt polish and gives the Laplace covariance for VLBI data.
 """
-function timeresolved_residuals(params::AbstractMatrix{S}, tr::TimeResolved, cache::GeodesicCache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, instrument = nothing) where {S}
+function timeresolved_residuals(params::AbstractMatrix{S}, tr::TimeResolved, cache::GeodesicCache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing, instrument = nothing, image_prior = nothing) where {S}
     out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
     R = instrument === nothing ? S : promote_type(S, eltype(instrument[2]), eltype(instrument[3]))
     res = R[]
@@ -172,10 +183,14 @@ function timeresolved_residuals(params::AbstractMatrix{S}, tr::TimeResolved, cac
             s.time == t || continue
             append!(res, scan_residuals(img, Δα, L, D, s, instrument))
         end
+        append!(res, _image_residuals(image_prior, img, R))
     end
     append!(res, _instrument_prior_residuals(instrument, R))
     return res
 end
+
+"Total flux density (Jy) of a screen image of Stokes vectors (cgs) with pixel side `Δα` (M), length unit `L` and distance `D` (cm): the zero-spacing visibility."
+total_flux(img, Δα, L, D) = real(visibilities(img, Δα, L, D, [zero(Δα)], [zero(Δα)])[1][1])
 
 """
     ScanCoverage(time, u, v, s1, s2)
@@ -255,7 +270,7 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     return TimeResolved([scan(c) for c in cov])
 end
 
-export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient
+export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux
 
 # ---- scans compared through the instrument model (self-calibration) --------------------------------
 """
@@ -321,7 +336,7 @@ start of every iteration.
 """
 function selfcal!(sky::AbstractMatrix{T}, gains::AbstractMatrix{T}, dterms::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν;
                   inst::InstrumentModel, masks::Tuple, free = trues(size(sky)), iterations::Integer = 300, η = 0.005, η_end = η / 10, η_inst = 0.01,
-                  nmax = -1, slab = 0, binning = nothing, priors = nothing, method::Symbol = :dual, callback = nothing) where {T}
+                  nmax = -1, slab = 0, binning = nothing, priors = nothing, method::Symbol = :dual, callback = nothing, image_prior = nothing) where {T}
     gm, dm = masks
     backend = cache.backend
     opt = Optimisers.setup(Optimisers.Adam(η), sky)
@@ -334,7 +349,7 @@ function selfcal!(sky::AbstractMatrix{T}, gains::AbstractMatrix{T}, dterms::Abst
         pdev = KernelAbstractions.allocate(backend, T, size(sky)); copyto!(pdev, sky)
         gdev = KernelAbstractions.allocate(backend, T, size(sky)); fill!(gdev, zero(T))
         dg = zeros(T, size(gains)); dd = zeros(T, size(dterms))
-        χ = timeresolved_gradient!(gdev, pdev, tr, cache, L, Δα, D, ν; method, nmax, slab, binning, priors, instrument = (inst, gains, dterms), dinstrument = (dg, dd))
+        χ = timeresolved_gradient!(gdev, pdev, tr, cache, L, Δα, D, ν; method, nmax, slab, binning, priors, instrument = (inst, gains, dterms), dinstrument = (dg, dd), image_prior)
         push!(history, χ)
         opt, sky = Optimisers.update!(opt, sky, Array(gdev) .* T.(free))
         optg, gains = Optimisers.update!(optg, gains, dg .* T.(gm))
