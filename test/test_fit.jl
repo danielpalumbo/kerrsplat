@@ -750,6 +750,15 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         freeq = freeze(q, (:x, :y, :logne, :logTe, :logB))
         qp, hp, covp, idxp = polish!(copy(q), x -> timeresolved_residuals(x, trv, cpu, L, Δα, D, ν); free = freeq, iterations = 3, chunk = 8)
         @test hp[end] < hp[1] && hp[end] ≈ chi2_timeresolved(qp, trv, cpu, L, Δα, D, ν) && all(isfinite, covp) && length(idxp) == count(freeq)
-        @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end])"
+        # scan times in M from UT hours: the scans' mean times relative to the first, in units of GM/c³
+        obs = read_uvfits(joinpath(@__DIR__, "data", "synth_eht2017_noiseless.uvfits"))
+        tM = scan_times(obs, 4.15e6)
+        sc = scan_index(obs); nsc = maximum(sc)
+        @test length(tM) == nsc && tM[1] == 0 && issorted(tM)
+        means = [sum(obs.time[sc .== k]) / count(==(k), sc) for k in 1:nsc]
+        GMc3 = gravitational_radius(4.15e6) / Transfer.CL
+        @test abs(GMc3 - 20.45) < 0.1 && all(abs.(tM .- (means .- means[1]) .* 3600 ./ GMc3) .< 1e-9)
+        @test scan_times(obs, 4.15e6; t_ref = means[1] - 1.0)[1] ≈ 3600 / GMc3
+        @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end]); a Sgr A* night of $(round(means[end] - means[1]; digits = 1)) h is $(round(tM[end]; digits = 0)) M"
     end
 end
