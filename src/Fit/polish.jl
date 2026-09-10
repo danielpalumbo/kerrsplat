@@ -16,8 +16,9 @@ residuals (`model_values .- data_values` and `prior_residuals`) is formed by For
 through the transfer (`chunk` partials at a time, on the CPU cache), the damped normal equations
 `(JᵀJ + λ diag JᵀJ) δ = −Jᵀ r` give the step, and the step is kept when χ² decreases (λ then
 falls by 3, otherwise grows by 10). `history` holds χ² before every iteration and at the end;
-`covariance` is `(JᵀJ)⁻¹` at the final point over the free entries `idx` (the Laplace
-covariance, whose diagonal's square root is the marginal 1σ error of each parameter).
+`covariance` is the pseudo-inverse of `JᵀJ` at the final point over the free entries `idx`
+(the Laplace covariance, whose diagonal's square root is the marginal 1σ error of each
+parameter; exactly singular gauge directions such as a quaternion's norm get zero variance).
 """
 function polish!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), iterations::Integer = 5,
                  λ::Real = 1e-3, chunk::Integer = 8, nmax = -1, slab = 0, binning = nothing, priors = nothing) where {T}
@@ -52,7 +53,9 @@ function polish!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::Geodes
         push!(history, χ)
     end
     params[idx] .= x
-    covariance = inv(Symmetric(J' * J))
+    # the pseudo-inverse: JᵀJ is exactly singular along every parcel's quaternion-norm direction (a gauge, the
+    # rotation is invariant), and those directions get zero variance rather than poisoning the inverse
+    covariance = pinv(Matrix(Symmetric(J' * J)); rtol = 1e-12)
     return params, history, covariance, idx
 end
 

@@ -245,7 +245,7 @@ function run_case(n)
         tP = time()
         q, hist, cov, idx = polish!(copy(q), movie, cache, L; free, iterations = POLISH, chunk = 12, nmax = n, slab = SLAB, binning)
         χ1 = hist[end]
-        σp = sqrt.(diag(cov))
+        σp = sqrt.(max.(diag(cov), 0.0))
         nper = length(freerows)
         laplace = [σp[(i - 1) * nper + findfirst(==(r), freerows)] for r in (13, 14, 15), i in 1:size(truth, 2)]
         @info "Levenberg–Marquardt polish ($POLISH iterations)" chi2 = hist[1] => hist[end] reduced = χ1 / ndata history = round.(hist ./ ndata; digits = 4) minutes = (time() - tP) / 60
