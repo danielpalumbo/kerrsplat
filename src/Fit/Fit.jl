@@ -684,5 +684,6 @@ include("polish.jl")
 include("visibilities.jl")
 include("uvfits.jl")
 include("timeresolved.jl")
+include("instrument.jl")
 
 end
