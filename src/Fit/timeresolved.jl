@@ -193,6 +193,23 @@ end
 total_flux(img, Δα, L, D) = real(visibilities(img, Δα, L, D, [zero(Δα)], [zero(Δα)])[1][1])
 
 """
+    scan_times(obs::Observation, M_solar; t_ref = nothing) -> Vector
+
+The frame time (in units of GM/c³) of every scan of an observation (`scan_index`), from the
+scans' mean UT hours: `(t − t_ref) × 3600 s / (GM/c³)`, with `t_ref` the first scan's mean time
+unless given (hours). GM/c³ = `gravitational_radius(M_solar)` / c: 20.5 s for Sgr A*
+(4.15 × 10⁶ M⊙), so a night of 8 hours spans 1400 M; 9 hours for M87. The input of
+`observed_scans(obs, scan_times(obs, M))` for real time-resolved data.
+"""
+function scan_times(obs::Observation{T}, M_solar; t_ref = nothing) where {T}
+    scans = scan_index(obs); nscans = maximum(scans)
+    means = [sum(obs.time[scans .== k]) / count(==(k), scans) for k in 1:nscans]
+    t0 = t_ref === nothing ? minimum(means) : T(t_ref)
+    tM = gravitational_radius(M_solar) / Transfer.CL                          # seconds per M
+    return [(m - t0) * 3600 / tM for m in means]
+end
+
+"""
     ScanCoverage(time, u, v, s1, s2)
 
 The baselines of one scan of an array (`u`, `v` in wavelengths, station indices `s1`, `s2`)
@@ -270,7 +287,7 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     return TimeResolved([scan(c) for c in cov])
 end
 
-export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux
+export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux, scan_times
 
 # ---- scans compared through the instrument model (self-calibration) --------------------------------
 """

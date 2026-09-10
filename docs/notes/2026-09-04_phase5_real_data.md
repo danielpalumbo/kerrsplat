@@ -244,4 +244,7 @@ prior). The d-terms after 3000 iterations, with their Laplace errors:
 
 PV and the SMT within 1–2% of every published method, the LMT and APEX within 2% (the LMT's
 imaginary part at the upper end of the methods' spread), ALMA on the negative imaginary axis.
-The stations with few scans (SMA, seven; JCMT, nine, one hand) stay unconstrained.
+The stations with few scans (SMA, seven; JCMT, nine, one hand) stay unconstrained. A fresh
+twelve-parcel start (a ring, 400 closure iterations, then the joint fit) reached χ²/N 1.17 and a
+closure χ²/N of 2.78 in the same budget: the run-6 sky, with its history of six fits, remains
+the reference.
