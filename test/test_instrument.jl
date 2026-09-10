@@ -96,7 +96,7 @@ function test_instrument()
         end
         @test chi2_instrument(model, obs, rows, inst, g2, dterms) ≈ χ                  # the reference phases are the gauge
         gm, dm = free_mask(inst, obs)
-        @test all(.!gm[2, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(.!gm[4, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(dm)
+        @test all(.!gm[2, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(.!gm[4, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(dm)   # every station of this file is observed
         other = findfirst(s -> s != inst.ref[1] && (s in obs.s1[inst.seg .== 1] || s in obs.s2[inst.seg .== 1]), 1:nstations(inst))
         g3 = copy(gains); g3[2, gain_column(inst, other, 1)] = 0.3
         @test chi2_instrument(model, obs, rows, inst, g3, dterms) != χ

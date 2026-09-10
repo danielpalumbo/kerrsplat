@@ -66,7 +66,10 @@ function levenberg_marquardt!(x::AbstractVector{T}, residuals; iterations::Integ
     damping = T(λ)
     for it in 1:iterations
         A = Symmetric(J' * J); g = J' * r
-        step = -(A + damping * Diagonal(diag(A))) \ g
+        # Marquardt's scaling with a floor: a parameter the residuals do not see (a zero column of J) would otherwise
+        # leave the damped system singular; the floor keeps its step at zero
+        d = diag(A); floor = 1e-12 * max(maximum(d), eps(T))
+        step = -(A + damping * Diagonal(max.(d, floor))) \ g
         xn = x .+ step
         rn = residuals(xn); χn = sum(abs2, rn)
         if χn < χ

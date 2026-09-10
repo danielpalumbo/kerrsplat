@@ -32,7 +32,7 @@ const EHT_MOUNTS = Dict(
     "JCMT" => Mount(1, 0, 0), "JC" => Mount(1, 0, 0),
     "LMT" => Mount(1, -1, 0), "LM" => Mount(1, -1, 0),
     "PV" => Mount(1, -1, 0),
-    "SMA" => Mount(1, -1, 45), "SM" => Mount(1, -1, 45),
+    "SMA" => Mount(1, -1, 45), "SM" => Mount(1, -1, 45), "SR" => Mount(1, -1, 45),      # SR: the SMA's reference antenna, the same mount
     "SPT" => Mount(1, 0, 0), "SP" => Mount(1, 0, 0),
 )
 
