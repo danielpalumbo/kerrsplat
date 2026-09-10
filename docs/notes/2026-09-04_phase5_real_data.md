@@ -218,11 +218,30 @@ products through this fit to 3e-12, which pins the convention on the simulator's
 
 The instrument fit's amplitude scale is held only by the gain priors around unity; a Gaussian
 prior on the model's total flux density (an `image_prior` of the time-resolved likelihood,
-`total_flux`) anchors it. With the rotation and a 0.6 ± 0.01 Jy prior, 300 iterations give
-χ²/N 1.59 at 0.46 Jy (the sky of run 6 still re-rotating into the absolute frame) and 1000
-iterations 1.14 at 0.56 Jy, with the sky's own closure χ²/N down from 3.86 to 2.50: the sky
-now carries the amplitude and the absolute EVPA. The gain amplitudes settle at 0.74–0.94 (the
-netcal amplitude scale of this file sits some 20% below the prior's flux, within the a-priori
-calibration uncertainties the gain priors allow) and the d-terms move by up to 2%
-(ALMA −0.1 − 3.6i, APEX −6.5 + 3.3i, SMT +2.8 + 9.5i, LMT +1.7 + 4.9i, PV −11.8 + 0.2i for R),
-the SMT and PV within 1% of the published values and the others within 2–3%.
+`total_flux`) anchors it. With the rotation and a 0.6 ± 0.01 Jy prior, from the run-6 sky
+(fitted before the rotation, so its EVPA has 45° to travel):
+
+| joint iterations | χ²/N of the products | closure χ²/N of the sky alone | flux (Jy) | gain amplitudes | fit time |
+|---|---|---|---|---|---|
+| 300 | 1.59 | 3.95 | 0.46 | 0.80–1.00 | 1.6 + 3 min |
+| 1000 | 1.14 | 2.50 | 0.56 | 0.74–0.94 | 5 + 3 min |
+| 3000 | 0.98 | 1.67 | 0.57 | 0.73–0.93 | 10 + 3 min |
+
+The products reach the 2% noise floor and the sky's own closure χ²/N comes down to 1.67 (the
+closure-only fit of 2026-09-04 on the Stokes-I file reached 1.5 with different data selection):
+the sky now carries the amplitude and the absolute EVPA. The gain amplitudes settle 7–27%
+below unity (the netcal amplitude scale of this file sits below the prior's flux, within the
+a-priori calibration uncertainties the gain priors allow; the LMT lowest, under its wide
+prior). The d-terms after 3000 iterations, with their Laplace errors:
+
+| station | D_R (%) | D_L (%) | published (April 11 low band / campaign) |
+|---|---|---|---|
+| AA | +0.4 − 4.0i (±0.7) | +1.8 − 3.6i (±0.6) | along −i, 2.6–7.1 |
+| AP | −7.0 + 2.9i (±1.3) | +2.3 + 5.0i (±1.3) | −8.67 + 2.96i, 4.66 + 4.58i |
+| AZ | +2.6 + 9.5i (±0.5) | −3.2 + 10.0i (±0.6) | 2.9–4.1 + 6.9–8.8i, −3.9 to −5.9 + 9.3–11.0i |
+| LM | +1.9 + 5.1i (±0.5) | −1.4 + 0.3i (±0.6) | 0.7–2.8 + 0.5–4.4i, −0.4 to −1.4 + −0.5–0.9i |
+| PV | −11.5 + 0.2i (±1.3) | +14.7 − 0.2i (±1.4) | −11.3 to −14.2 + −1.2–3.6i, 12.9–16.2 + −1.6–1.6i |
+
+PV and the SMT within 1–2% of every published method, the LMT and APEX within 2% (the LMT's
+imaginary part at the upper end of the methods' spread), ALMA on the negative imaginary axis.
+The stations with few scans (SMA, seven; JCMT, nine, one hand) stay unconstrained.
