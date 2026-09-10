@@ -501,13 +501,14 @@ reverse pass on the backend (the dual sweep, or the chunked Enzyme sweep with
 `method = :enzyme`) turns that seed into ∂loss/∂params, accumulated into `dparams`. This is
 how the visibility, closure and self-calibration χ² of a frame get a GPU gradient without
 differentiating the Fourier transform on the device. With a `binning` the loss receives the
-image integrated over its pixels. Returns the loss value.
+image integrated over its pixels; `on_image`, if given, is called with that image (the frame
+the loss saw, for a caller's own use, e.g. the instrument's gradient). Returns the loss value.
 """
 
 "The screen image as Stokes vectors from its plain-number form, binned over pixels when a `Binning` is given."
 _pixel_image(x, nα, nβ, ::Nothing) = reshape([SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ], nα, nβ)
 _pixel_image(x, nα, nβ, binning::Binning) = bin(binning, [SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ])
-function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) where {T,N}
+function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, on_image = nothing) where {T,N}
     forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab)
     npix = npixels(cache)
     sorted = forward(t_obs, ν_obs)
@@ -518,6 +519,7 @@ function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, 
         screen[s, perm[j]] = sorted[j][s]
     end
     g(x) = loss(_pixel_image(x, nα, nβ, binning))
+    on_image === nothing || on_image(_pixel_image(screen, nα, nβ, binning))
     value = g(screen)
     dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
     seed = [SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]]) for j in 1:npix]

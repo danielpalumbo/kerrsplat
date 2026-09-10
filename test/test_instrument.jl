@@ -166,3 +166,94 @@ function test_feed_rotation()
         @info "feed rotation vs ehtim over $(size(mats, 1)) station-times: elevation to $worst_el, parallactic angle to $worst_par, feed angle to $worst_φ rad (rows: $worst_rows); sidereal time from the IAU 1982 formula against astropy's"
     end
 end
+
+"""
+    test_selfcal(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend")
+
+Self-calibration through the time-resolved likelihood: a synthetic observation of the two-parcel
+truth (three scans, two frames, five stations) corrupted by known gains, R/L ratios, d-terms
+and feed rotation through the model's own Jones matrices plus noise; the χ² with the true
+instrument at the noise level; the sky gradient on `backend` and the instrument gradient on
+the host against host Enzyme and ForwardDiff of `chi2_timeresolved`; the joint residuals
+against the χ²; the instrument recovered by the Levenberg–Marquardt core from unit gains with
+the sky fixed, and a joint sky-plus-instrument polish that lowers χ² with a finite covariance.
+"""
+function test_selfcal(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend")
+    rng = Random.MersenneTwister(23)
+    a = 0.9; θo = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a, θo; marcher = Fused(64))
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar); ν = 230e9
+    p = polarized_test_params()
+    stations = ["AA", "AP", "LM", "PV", "SM"]
+    # three scans at two frame times on the baselines among four of the five stations, as an Observation
+    time = Float64[]; s1 = Int[]; s2 = Int[]; u = Float64[]; v = Float64[]; frame = Float64[]
+    for (k, (t_ut, t_M)) in enumerate(((0.0, 0.0), (0.5, 0.0), (1.0, 20.0)))
+        sts = sort(randperm(rng, 5)[1:4])
+        for i in 1:4, j in i+1:4
+            push!(time, t_ut); push!(s1, sts[i]); push!(s2, sts[j]); push!(u, 3e9 * randn(rng)); push!(v, 3e9 * randn(rng)); push!(frame, t_M)
+        end
+    end
+    n = length(time)
+    frames = Dict(t => polarized_image(cpu, p, t, ν, L) for t in unique(frame))
+    vis = [visibilities(frames[frame[k]], Δα, L, D, [u[k]], [v[k]])[1] for k in 1:n]
+    flux = real(visibilities(frames[0.0], Δα, L, D, [0.0], [0.0])[1][1])
+    σ = 0.01 * flux
+    obs = Observation{Float64}(time, fill(10.0, n), s1, s2, stations, u, v, vis, fill(SVector(σ, σ, σ, σ), n), ν, 2e9, 12.5, 12.4, 57854, "SYNTH")
+    # the true instrument: per-scan R/L gains, d-terms per station, feed angles per row
+    φ1 = 0.3 .* randn(rng, n); φ2 = 0.3 .* randn(rng, n)
+    inst = InstrumentModel(obs; feedangles = (φ1, φ2), reference = SingleReference("AA"))
+    gm, dm = free_mask(inst, obs)
+    gains_true, dterms_true = zero_instrument(inst)
+    gains_true[gm] .= vcat(0.1 .* randn(rng, count(gm)))
+    dterms_true[dm] .= 0.05 .* randn(rng, count(dm))
+    for k in 1:n
+        g = inst.seg[k]
+        J1 = station_jones(inst, gains_true, dterms_true, s1[k], g, φ1[k]); J2 = station_jones(inst, gains_true, dterms_true, s2[k], g, φ2[k])
+        V = products(apply_jones(coherency(vis[k]), J1, J2))
+        obs.coh[k] = V .+ σ .* SVector{4}(complex.(randn(rng, 4), randn(rng, 4)))
+        obs.σ_coh[k] = SVector(σ, σ, σ, σ)
+    end
+    tr = observed_scans(obs, [0.0, 0.0, 20.0])
+    @testset "$label self-calibration through the time-resolved likelihood" begin
+        @test frame_times(tr) == [0.0, 20.0] && ndata(tr) == 8n
+        instrument = (inst, gains_true, dterms_true)
+        χ_true = chi2_timeresolved(p, tr, cpu, L, Δα, D, ν; instrument)
+        @test 0.5 * ndata(tr) < χ_true - penalty_instrument(inst, gains_true, dterms_true) < 1.6 * ndata(tr)
+        # the sky gradient on the backend and the instrument gradient on the host, against host Enzyme and ForwardDiff
+        q = p .+ 0.05 .* randn(rng, size(p))
+        gains = gains_true .+ 0.02 .* (gm .* randn(rng, size(gains_true))); dterms = dterms_true .+ 0.01 .* randn(rng, size(dterms_true))
+        instrument = (inst, gains, dterms)
+        χ_host = chi2_timeresolved(q, tr, cpu, L, Δα, D, ν; instrument)
+        g_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, tr, cpu, L, Δα, D, ν; instrument)), q)[1]
+        gg_ref = ForwardDiff.gradient(g -> chi2_timeresolved(q, tr, cpu, L, Δα, D, ν; instrument = (inst, g, dterms)), gains)
+        gd_ref = ForwardDiff.gradient(d -> chi2_timeresolved(q, tr, cpu, L, Δα, D, ν; instrument = (inst, gains, d)), dterms)
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        regenerate!(cache, a, θo; marcher = Recurrence(64))
+        params = adapt_to(backend, q); dparams = adapt_to(backend, zeros(size(q)))
+        dinst = (zeros(size(gains)), zeros(size(dterms)))
+        χ = timeresolved_gradient!(dparams, params, tr, cache, L, Δα, D, ν; instrument, dinstrument = dinst)
+        @test abs(χ - χ_host) <= 1e-10 * χ_host
+        e = maximum(abs.(Array(dparams) .- g_host)) / maximum(abs.(g_host))
+        eg = maximum(abs.(dinst[1] .- gg_ref)) / maximum(abs.(gg_ref)); ed = maximum(abs.(dinst[2] .- gd_ref)) / maximum(abs.(gd_ref))
+        @test e <= tol && eg <= 1e-10 && ed <= 1e-10
+        # the joint residuals square to the χ²
+        r = timeresolved_residuals(q, tr, cpu, L, Δα, D, ν; instrument)
+        @test abs(sum(abs2, r) - χ_host) <= 1e-12 * χ_host
+        # the instrument recovered from unit gains with the sky fixed at the truth
+        x0 = pack(p, falses(size(p)), zero_instrument(inst)[1], gm, zero_instrument(inst)[2], dm)
+        x, hist, cov = levenberg_marquardt!(x0, x -> (t = unpack(p, falses(size(p)), zeros(size(gains_true)), gm, zeros(size(dterms_true)), dm, x); timeresolved_residuals(p, tr, cpu, L, Δα, D, ν; instrument = (inst, t[2], t[3]))); iterations = 8, chunk = 12)
+        xt = pack(p, falses(size(p)), gains_true, gm, dterms_true, dm)
+        σx = sqrt.(max.(diag(cov), 0))
+        @test hist[end] < hist[1] && hist[end] <= χ_true * 1.05
+        @test maximum(abs.(x .- xt) ./ max.(σx, 1e-3)) < 5
+        # a joint sky-plus-instrument polish from a perturbed sky and unit instrument lowers χ² with a finite covariance
+        free = freeze(p, (:x, :y, :logne, :logB))
+        xj0 = pack(q, free, zeros(size(gains_true)), gm, zeros(size(dterms_true)), dm)
+        xj, hj, covj = levenberg_marquardt!(xj0, x -> (t = unpack(q, free, zeros(size(gains_true)), gm, zeros(size(dterms_true)), dm, x); timeresolved_residuals(t[1], tr, cpu, L, Δα, D, ν; instrument = (inst, t[2], t[3]))); iterations = 3, chunk = 12)
+        @test hj[end] < hj[1] && all(isfinite, covj)
+        @info "$label self-calibration: χ² at the truth $(round(χ_true; digits = 1)) for $(ndata(tr)) values; sky gradient vs host Enzyme $e, gain gradient $eg, d-term gradient $ed; instrument recovered from unit gains: χ² $(round(hist[1]; digits = 1)) → $(round(hist[end]; digits = 1)), worst |Δ|/σ $(round(maximum(abs.(x .- xt) ./ max.(σx, 1e-3)); digits = 2)); joint polish χ² $(round(hj[1]; digits = 1)) → $(round(hj[end]; digits = 1))"
+    end
+end
