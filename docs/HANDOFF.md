@@ -89,10 +89,14 @@ holds every parcel's lensed images.
 
 The time-resolved visibility likelihood (one slow-light frame per scan, needed for Sgr A*) exists
 since 2026-09-09 (`Fit.chi2_timeresolved`, `timeresolved_gradient!`, `synthetic_scans`,
-`coverage`; `validation/winding/winding_vlbi.jl` fits the half-orbit truth to synthetic closure
-data on the EHT 2017 coverage, the plan's gate 7 in the data domain; its note records the
-result). Real observations still need a UT-to-M time mapping and per-scan gains in the
-time-resolved loss (the static self-calibration path has them).
+`coverage`, `timeresolved_residuals` for the polish; `validation/winding/winding_vlbi.jl` fits
+the half-orbit truth to synthetic closure or visibility data on the EHT 2017 coverage, the
+plan's gate 7 in the data domain, `docs/notes/2026-09-09_synthetic_vlbi.md`: closures alone
+leave the likelihood flat at that coverage, calibrated visibilities recover positions and
+motion but not the plasma rows). Real observations still need a UT-to-M time mapping and
+per-scan gains in the time-resolved loss (the static self-calibration path has them); the
+data-domain results call for multiband data, joint gains and denser (ngEHT-class) coverage,
+all reachable with the existing pieces.
 
 Open, roughly in order of value: more parcels in the joint self-calibration update with
 densification; R/L gains and leakage; a smooth background component for extended flux and a
