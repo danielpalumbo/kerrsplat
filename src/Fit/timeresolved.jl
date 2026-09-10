@@ -207,17 +207,16 @@ function closure_scans(obs::Observation{T}, times::AbstractVector; snr = 3) wher
     relnoise(k) = obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1])
     σ_phase = [sqrt(sum(relnoise(k)^2 for k in t)) for t in tri]
     σ_logamp = [sqrt(sum(relnoise(k)^2 for k in q)) for q in quad]
-    out = ScanData{T,ClosureData}[]
-    for k in 1:nscans
+    function scan(k)
         rows = findall(==(k), scans)
         local_index = Dict(r => i for (i, r) in enumerate(rows))
         remap(idx) = sign(idx) * local_index[abs(idx)]
         kt = [i for i in eachindex(tri) if scans[abs(tri[i][1])] == k && σ_phase[i] < 1 / snr]
         kq = [i for i in eachindex(quad) if scans[abs(quad[i][1])] == k && σ_logamp[i] < 1 / snr]
-        data = ClosureData(obs.u[rows], obs.v[rows], [remap.(tri[i]) for i in kt], phases[kt], σ_phase[kt], [remap.(quad[i]) for i in kq], logamps[kq], σ_logamp[kq])
-        push!(out, ScanData(T(times[k]), data))
+        data = ClosureData(obs.u[rows], obs.v[rows], NTuple{3,Int}[remap.(tri[i]) for i in kt], phases[kt], σ_phase[kt], NTuple{4,Int}[remap.(quad[i]) for i in kq], logamps[kq], σ_logamp[kq])
+        return ScanData(T(times[k]), data)
     end
-    return TimeResolved(out)
+    return TimeResolved([scan(k) for k in 1:nscans])                     # one concrete element type for all scans
 end
 
 "Total flux density (Jy) of a screen image of Stokes vectors (cgs) with pixel side `Δα` (M), length unit `L` and distance `D` (cm): the zero-spacing visibility."
