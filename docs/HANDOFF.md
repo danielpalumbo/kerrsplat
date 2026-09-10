@@ -115,7 +115,10 @@ the phases from the reference baselines, `reference_phases!`, and solves them fi
 phase solve from zero strands with amplitudes collapsing; `chi2_products` splits the products'
 χ² into RR, LL, RL, LR; Sgr A*'s model visibilities go through the diffractive scattering
 kernel, `ScatteringKernel` on every `ScanData`, gated against ehtim, found necessary when the
-static sky came out 2–5× too bright on the long baselines), and the
+static sky came out 2–5× too bright on the long baselines; and `scan_quadrangles` now builds
+two quadrangles per four-station set because one per set left the baseline between a scan's
+first and last station out of every log closure amplitude, found the same day when the
+ALMA–SPT amplitude sat 7× off a sky whose closures fit), and the
 real M87 full-polarization file through it (`validation/m87_fit/m87_jones.jl`; the last section of
 `docs/notes/2026-09-04_phase5_real_data.md`: products χ²/N 1.33 with leakage; the d-terms agree
 with Paper VII's station by station once the global 90° RL phase of ALMA's feed offset, which

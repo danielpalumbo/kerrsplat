@@ -124,6 +124,28 @@ run had the same one at iteration 425 (5.0 → 7.9). A parcel row that Adam kick
 threshold (a size or a density) is the likely cause and is worth a per-iteration trace of the
 parameters when the kernel fits are in.
 
-The static closure fit with the kernel, the instrument solve on it and the self-calibration
-from the solved gains are running as this note is written; their results follow in the next
-section when they are in.
+## With the kernel
+
+The static closure fit with the kernel (900 iterations): closure χ²/N with the flux prior
+40.7 → 4.66, the sky's own closures 4.82, and this time a clean trace (8.6 after 100
+iterations, 5.2 after 300, 4.75 after 500, 4.66 at the end) with no spike. Per scan the fit is
+0.2–3.4 everywhere except the same two scans as before, the 12th and 13th (UT 11.45 and
+11.65 h) at 21.6 and 35.2, which now hold almost the whole residual: 11 closures each, so
+about 620 of the 617 closure χ² of the sky sit in that hour and the other nineteen scans fit
+a static ring at the noise. Whatever happens at UT 11.5 h on April 11 (a change of the source,
+or of a station) is where the time-resolved model has to earn its keep.
+
+The instrument solve on this sky still collapsed (χ²/N 219, ALMA at 0.19), and the
+per-baseline table now showed the ALMA–SPT and APEX–SPT amplitudes seven times too faint
+(model 0.017 Jy against 0.178) with the SMA baselines 2–4 times too bright, on a sky whose
+closures fit at 4.8. That is impossible if the closure amplitudes hold those baselines, and
+they did not: `scan_quadrangles` built one quadrangle per four-station set, (ij, kl, ik, jl)
+with the stations sorted, which never contains the il and jk baselines, so the baseline
+between a scan's first and last station in the station order, ALMA–SPT here, entered no log
+closure amplitude of any scan, and APEX–SPT entered none either whenever ALMA was absent from
+the quadruple. The builder now gives two of the three quadrangles per quadruple, (ij, kl, ik,
+jl) and (ik, jl, il, jk), which are independent and between them use all six baselines
+(`test_uvfits` checks both). The M87 closure fits of 2026-09-04 ran with the incomplete set;
+their conclusions rested on the self-calibrated products, not on the closures alone, but their
+closure χ²/N will read differently with the full set. The static fit, the instrument solve
+and the self-calibration are being repeated with it; their results follow.
