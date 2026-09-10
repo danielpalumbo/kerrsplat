@@ -52,8 +52,8 @@ struct VisibilityData{U,V,W,S}
 end
 
 "χ² of a model image against visibility data: Σ |V_model − V_data|² / σ² over baselines and Stokes parameters."
-function chi2_visibilities(image, Δα, L, D, data::VisibilityData)
-    model = visibilities(image, Δα, L, D, data.u, data.v)
+function chi2_visibilities(image, Δα, L, D, data::VisibilityData; kernel = nothing)
+    model = taper(kernel, visibilities(image, Δα, L, D, data.u, data.v), data.u, data.v)
     total = zero(real(eltype(first(model))))
     for k in eachindex(model)
         r = (model[k] .- data.vis[k]) ./ noise(data.σ, k)
@@ -113,8 +113,8 @@ end
 χ² of a model image against closure phases (with the phase difference wrapped to (−π, π])
 and log closure amplitudes; gain-independent, so the usual likelihood for calibrated-free fits.
 """
-function chi2_closures(image, Δα, L, D, data::ClosureData)
-    model = visibilities(image, Δα, L, D, data.u, data.v)
+function chi2_closures(image, Δα, L, D, data::ClosureData; kernel = nothing)
+    model = taper(kernel, visibilities(image, Δα, L, D, data.u, data.v), data.u, data.v)
     total = zero(real(eltype(first(model))))
     if !isempty(data.triangles)
         cp = closure_phases(model, data.triangles)

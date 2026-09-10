@@ -51,7 +51,10 @@ before any performance work.
   `const` or pass them as arguments. A variable assigned both inside a closure Enzyme
   differentiates and elsewhere in the enclosing function is boxed by Julia, and Enzyme then
   treats the box captured by the `Const` closure as constant memory and silently returns a
-  zero gradient: never reuse a closure's local names in the enclosing function.
+  zero gradient: never reuse a closure's local names in the enclosing function. The same
+  scoping rule bites without Enzyme: a closure that assigns a name the enclosing function also
+  assigns writes the enclosing variable (`h = solve()` inside, `history = T[]` outside, and the
+  inner result aliases the outer array), so name a helper closure's locals apart.
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
   with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.
@@ -64,6 +67,9 @@ before any performance work.
   `Fit.rotate_crosshands(obs, π/2)` before any polarimetric fit, or every d-term comes out
   rotated by ∓90° and the sky's EVPA by 45° (found against the published D-terms, 2026-09-10).
 - ehtim's circular representation lists some baselines reversed (conjugate-transposed products).
+- Sgr A* is scatter-broadened: model visibilities must go through the diffractive kernel
+  (`Fit.ScatteringKernel(ν)`, Johnson et al. 2018, as the `kernel` of every `ScanData`), or the
+  sky comes out 2–5× too bright beyond 3 Gλ and self-calibration collapses the gains.
 
 ## Git workflow
 - `main` is changed through pull requests. Work on a branch named `<topic>` (e.g.

@@ -176,6 +176,21 @@ function test_fit_schedule(; res = 8, N = 60)
         @test maximum(abs.(q1 .- q2)) < 1e-12
         @test h1[1] ≈ chi2(p, movie, cache, L)                      # history holds the loss at the start of each iteration
     end
+    @testset "per-row step multipliers" begin
+        # Adam's state after one iteration does not depend on the step, so the first update of a scaled
+        # row is exactly the factor times the unscaled one and the other rows are untouched
+        one = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 1, η = 0.05)]
+        half = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 1, η = 0.05, steps = (; logB = 0.5))]
+        q1, _, _ = Fit.fit!(copy(p), q -> chi2(q, movie, cache, L), one; hygiene = Fit.Hygiene(every = 0))
+        q2, _, _ = Fit.fit!(copy(p), q -> chi2(q, movie, cache, L), half; hygiene = Fit.Hygiene(every = 0))
+        r = Fit.prow(:logB)
+        others = setdiff(1:size(p, 1), r)
+        @test q2[others, :] == q1[others, :]
+        @test maximum(abs.((q2[r, :] .- p[r, :]) .- 0.5 .* (q1[r, :] .- p[r, :]))) < 1e-12
+        @test any(q1[r, :] .!= p[r, :])
+        @test Fit.step_scale(p, (; omega = 0.0))[end, :] == zeros(size(p, 2)) && all(Fit.step_scale(p, (; omega = 0.0))[1:end-1, :] .== 1)
+        @test_throws ArgumentError Fit.step_scale(p, (; nosuchrow = 0.5))
+    end
     @testset "the dual-sweep movie fit follows the Enzyme fit" begin
         # a stored-sample cache on the same Mino grid; a prior so that the host penalty path is exercised too
         stored = GeodesicCache(CPU(), camera, Val(N); store_samples = true)
@@ -731,6 +746,24 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         ev = maximum(abs.(Array(dparams2) .- gv_host)) / maximum(abs.(gv_host))
         @test abs(χv - χv_host) <= 1e-10 * χv_host
         @test ev <= tol
+        # the scattering kernel: synthetic visibilities are the tapered ones, and the χ² and the device gradient go through it
+        kernel = ScatteringKernel(ν)                                        # Sgr A*'s kernel bites at this test's Gλ baselines
+        trk0 = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.0, closures = false, kernel)
+        for (s, c) in zip(trk0.scans, cov)
+            img = polarized_image(cpu, p, c.time, ν, L)
+            @test s.data.vis == taper(kernel, visibilities(img, Δα, L, D, c.u, c.v), c.u, c.v)
+            @test s.kernel === kernel && any(abs(s.data.vis[k][1]) < 0.9 * abs(visibilities(img, Δα, L, D, c.u, c.v)[k][1]) for k in eachindex(c.u))
+        end
+        trk = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = true, rng, kernel)
+        χk_host = chi2_timeresolved(q, trk, cpu, L, Δα, D, ν)
+        @test χk_host != chi2_timeresolved(q, TimeResolved([ScanData(s.time, s.data) for s in trk.scans]), cpu, L, Δα, D, ν)
+        gk_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, trk, cpu, L, Δα, D, ν)), q)[1]
+        dparamsk = adapt_to(backend, zeros(size(q)))
+        χk = timeresolved_gradient!(dparamsk, params, trk, cache, L, Δα, D, ν)
+        ek = maximum(abs.(Array(dparamsk) .- gk_host)) / maximum(abs.(gk_host))
+        @test abs(χk - χk_host) <= 1e-10 * χk_host && ek <= tol
+        rk = timeresolved_residuals(q, trk, cpu, L, Δα, D, ν)
+        @test abs(sum(abs2, rk) - χk_host) <= 1e-12 * χk_host
         # an image prior (a total-flux prior) enters the χ², the device gradient and the residuals alike
         F0 = total_flux(polarized_image(cpu, p, 0.0, ν, L), Δα, L, D)
         fluxprior(img) = [(total_flux(img, Δα, L, D) - 0.9 * F0) / (0.02 * F0)]
@@ -759,6 +792,19 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         GMc3 = gravitational_radius(4.15e6) / Transfer.CL
         @test abs(GMc3 - 20.45) < 0.1 && all(abs.(tM .- (means .- means[1]) .* 3600 ./ GMc3) .< 1e-9)
         @test scan_times(obs, 4.15e6; t_ref = means[1] - 1.0)[1] ≈ 3600 / GMc3
+        # real closure data scan by scan: the sum over scans of the per-scan closure χ² of an image equals the χ² of the
+        # same closures on the whole observation's row set (legs below 3σ dropped in both)
+        cs = closure_scans(obs, tM)
+        @test length(cs) == nsc && all(cs.scans[k].time == tM[k] for k in 1:nsc)
+        img0 = polarized_image(cpu, p, 0.0, ν, L)
+        tri = scan_triangles(obs); quad = scan_quadrangles(obs)
+        rel(k) = obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1])
+        σt = [sqrt(sum(rel(k)^2 for k in t)) for t in tri]; σq = [sqrt(sum(rel(k)^2 for k in q)) for q in quad]
+        kt = σt .< 1 / 3; kq = σq .< 1 / 3
+        whole = ClosureData(obs.u, obs.v, tri[kt], closure_phases(obs.vis, tri)[kt], σt[kt], quad[kq], log_closure_amplitudes(obs.vis, quad)[kq], σq[kq])
+        χwhole = chi2_closures(img0, Δα, L, D, whole)
+        χscans = sum(scan_loss(img0, Δα, L, D, s) for s in cs.scans)
+        @test ndata(cs) == count(kt) + count(kq) && abs(χscans - χwhole) <= 1e-10 * χwhole
         @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end]); a Sgr A* night of $(round(means[end] - means[1]; digits = 1)) h is $(round(tM[end]; digits = 0)) M"
     end
 end

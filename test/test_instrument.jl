@@ -249,6 +249,32 @@ function test_selfcal(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend
         σx = sqrt.(max.(diag(cov), 0))
         @test hist[end] < hist[1] && hist[end] <= χ_true * 1.05
         @test maximum(abs.(x .- xt) ./ max.(σx, 1e-3)) < 5
+        # the instrument-only solve with the model visibilities held is the same LM problem without the renders
+        models = scan_models(p, tr, cpu, L, Δα, D, ν)
+        gC, dC = zero_instrument(inst)
+        gC, dC, histC, covC = calibrate!(gC, dC, tr, models, inst; masks = (gm, dm), iterations = 8, chunk = 12, phases = false, phase_first = false)
+        xC = pack(p, falses(size(p)), gC, gm, dC, dm)
+        @test length(histC) == length(hist) && maximum(abs.(histC .- hist) ./ hist) < 1e-8
+        @test maximum(abs.(xC .- x)) < 1e-8 && maximum(abs.(covC .- cov)) <= 1e-8 * maximum(abs.(cov))
+        @test all(gC[.!gm] .== 0) && all(dC[.!dm] .== 0)
+        # the reference-baseline phase start: from the true amplitudes and d-terms with the phases scrambled, the chained
+        # phases land within the noise of the truth, and the default solve (phase start, phases first) from a scrambled
+        # start reaches the same solution as from zero phases
+        gS = copy(gains_true); gS[2, :] .+= 2.5 .* (gm[2, :] .* randn(rng, size(gS, 2))); gS[4, :] .+= 0.7 .* (gm[4, :] .* randn(rng, size(gS, 2)))
+        reference_phases!(gS, tr, models, inst; dterms = dterms_true)
+        wrap(x) = rem(x, 2π, RoundNearest)
+        @test maximum(abs.(wrap.(gS[2, gm[2, :]] .- gains_true[2, gm[2, :]]))) < 0.3
+        @test maximum(abs.(wrap.(gS[4, gm[4, :]] .- gains_true[4, gm[4, :]]))) < 0.3
+        gD, dD = zero_instrument(inst); gD, dD, histD, _ = calibrate!(gD, dD, tr, models, inst; masks = (gm, dm), iterations = 8, chunk = 12)
+        gE = zeros(size(gD)); gE[2, :] .= 2.5 .* (gm[2, :] .* randn(rng, size(gE, 2))); dE = zeros(size(dD))
+        gE, dE, histE, _ = calibrate!(gE, dE, tr, models, inst; masks = (gm, dm), iterations = 8, chunk = 12)
+        @test histD[end] <= histC[end] * (1 + 1e-6) && abs(histE[end] - histD[end]) <= 1e-6 * histD[end]
+        @test length(histD) == 18 && abs(histD[10] - histD[9]) <= 1e-8 * histD[9]      # the full solve starts where the phase solve ended
+        @test maximum(abs.(wrap.(gE[2, :] .- gD[2, :]))) < 1e-4 && maximum(abs.(gE[1, :] .- gD[1, :])) < 1e-4
+        # the per-product split sums to the instrument χ² and counts every finite product twice (real, imaginary)
+        sC = first(s for s in tr.scans if s.data isa ObservedScan); kC = findfirst(s -> s.data isa ObservedScan, tr.scans)
+        χP, nP = chi2_products(models[kC], sC.data.obs, sC.data.rows, inst, gC, dC)
+        @test sum(χP) ≈ chi2_instrument(models[kC], sC.data.obs, sC.data.rows, inst, gC, dC) && sum(nP) == ndata(sC)
         # a joint sky-plus-instrument polish from a perturbed sky and unit instrument lowers χ² with a finite covariance
         free = freeze(p, (:x, :y, :logne, :logB))
         xj0 = pack(q, free, zeros(size(gains_true)), gm, zeros(size(dterms_true)), dm)
@@ -259,6 +285,12 @@ function test_selfcal(backend; res = 6, N = 16, tol = 1e-9, label = "CPU backend
         skyA = copy(q); gA, dA = zero_instrument(inst)
         skyA, gA, dA, hA = selfcal!(skyA, gA, dA, tr, cache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations = 6, η = 0.02, η_inst = 0.05)
         @test length(hA) == 6 && hA[end] < hA[1] && all(isfinite, gA) && all(gA[.!gm] .== 0)
+        # a per-row step multiplier: the first update of the scaled row is the factor times the plain one
+        s1, _, _, _ = selfcal!(copy(q), zero_instrument(inst)..., tr, cache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations = 1, η = 0.02, η_inst = 0.05)
+        s2, _, _, _ = selfcal!(copy(q), zero_instrument(inst)..., tr, cache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations = 1, η = 0.02, η_inst = 0.05, steps = (; logB = 0.25))
+        r = Fit.prow(:logB); others = setdiff(1:size(q, 1), r)
+        @test s2[others, :] == s1[others, :] && any(s1[r, :] .!= q[r, :])
+        @test maximum(abs.((s2[r, :] .- q[r, :]) .- 0.25 .* (s1[r, :] .- q[r, :]))) < 1e-12
         @info "$label self-calibration: χ² at the truth $(round(χ_true; digits = 1)) for $(ndata(tr)) values; sky gradient vs host Enzyme $e, gain gradient $eg, d-term gradient $ed; instrument recovered from unit gains: χ² $(round(hist[1]; digits = 1)) → $(round(hist[end]; digits = 1)), worst |Δ|/σ $(round(maximum(abs.(x .- xt) ./ max.(σx, 1e-3)); digits = 2)); joint polish χ² $(round(hj[1]; digits = 1)) → $(round(hj[end]; digits = 1)); joint Adam (6 iterations) $(round(hA[1]; digits = 1)) → $(round(hA[end]; digits = 1))"
     end
 end

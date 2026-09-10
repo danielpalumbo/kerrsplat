@@ -106,17 +106,29 @@ EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's
 antenna table (`feed_angles`, ehtim's formulas, to 2.4e-4 rad of ehtim's; the EHT mounts in
 `EHT_MOUNTS`), and the joint sky-plus-instrument fit inside the time-resolved likelihood
 (`selfcal!`, the joint LM polish; `docs/notes/2026-09-09_synthetic_vlbi.md`, self-calibration
-section: the synthetic truth's gains and d-terms come back within their Laplace errors), and the
+section: the synthetic truth's gains and d-terms come back within their Laplace errors; both Adam
+loops take per-row step multipliers, `Stage(steps = (; omega = 0.05))` and `selfcal!(...; steps)`,
+because Adam's step is scale-free and the pattern rates in rad/M cannot move at the positions'
+step; `calibrate!` solves the instrument alone by LM with the sky's model visibilities held,
+`scan_models`, the self-calibration step between sky updates of every imaging pipeline; it starts
+the phases from the reference baselines, `reference_phases!`, and solves them first, because a
+phase solve from zero strands with amplitudes collapsing; `chi2_products` splits the products'
+χ² into RR, LL, RL, LR; Sgr A*'s model visibilities go through the diffractive scattering
+kernel, `ScatteringKernel` on every `ScanData`, gated against ehtim, found necessary when the
+static sky came out 2–5× too bright on the long baselines), and the
 real M87 full-polarization file through it (`validation/m87_fit/m87_jones.jl`; the last section of
 `docs/notes/2026-09-04_phase5_real_data.md`: products χ²/N 1.33 with leakage; the d-terms agree
 with Paper VII's station by station once the global 90° RL phase of ALMA's feed offset, which
 the HOPS netcal products lack, is applied with `rotate_crosshands(obs, π/2)`; a total-flux prior
 through the likelihood's `image_prior` anchors the amplitude scale; 3000 joint iterations from
 the run-6 sky reach the noise floor with the sky's closure χ²/N 1.67 at 0.57 Jy and the
-d-terms on the published values). Next on this path: the SMA's and JCMT's special handling, the
-UT-to-M mapping of scan times for real time-resolved data, and a fresh M87 sky fit in the
-absolute frame with more parcels (the run-6 sky is a six-parcel model fitted before the
-rotation).
+d-terms on the published values). Real time-resolved data run end to end on Sgr A* (`scan_times`, `closure_scans`,
+`validation/sgra_fit/sgra_jones.jl`, `docs/notes/2026-09-10_sgra_timeresolved.md`) but the first
+fits from a ring are far from the data (closures χ²/N 15, products 246): the open problem is the
+optimization protocol for a variable source with everything free (staged closures first, a
+snapshot baseline, longer schedules). Next on this path also: the SMA's and JCMT's special
+handling, and a fresh M87 sky fit in the absolute frame with more parcels (the run-6 sky is a
+six-parcel model fitted before the rotation).
 
 Open, roughly in order of value: the two items above; more parcels in the joint
 self-calibration update with densification; a smooth background component for extended flux and a
