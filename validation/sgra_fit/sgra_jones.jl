@@ -10,13 +10,15 @@
 #
 #     julia -t 8 --project=../.. sgra_jones.jl [--data <file.uvfits>] [--res 32] [--samples 60] [--nsplat 8] [--iterations 600] [--eta 0.005] [--eta-gain 0.02]
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
-#                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal]
+#                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal] [--staged]
 #
 # The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
 # of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
 # products through the per-scan gains jointly with the sky, from `--init` (the closure stage's parameters). A first attempt
 # that self-calibrated straight from the ring stalled at χ²/N 222 with the gains absorbing the sky's wrong flux scale.
-# In both stages the parcels' densities are first scaled so that the model's flux matches the prior.
+# In both stages the parcels' densities are first scaled so that the model's flux matches the prior. `--staged` runs the
+# closure stage as the M87 fits did: the geometry and densities first (pattern rates at zero: a static sky), then the
+# plasma rows, then everything with the pattern rates free, `--iterations` each.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
 using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Optimisers, Krang, CUDA, Adapt, Printf, Statistics
 
@@ -27,7 +29,7 @@ res = getopt("--res", 32); N = getopt("--samples", 60); nsplat = getopt("--nspla
 η = getopt("--eta", 0.005); ηgain = getopt("--eta-gain", 0.02); a = getopt("--spin", 0.94); inc = getopt("--inc", 150.0)
 fluxprior = getopt("--flux", 2.4); σflux = getopt("--sigma-flux", 0.05); fnoise = getopt("--fnoise", 0.02); uvmin = getopt("--uvmin", 0.1)
 nframes = getopt("--frames", 0); seed = getopt("--seed", 1); init = getstr("--init", ""); npolish = getopt("--polish", 0); tag = getstr("--tag", "jones")
-stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal") || error("--stage must be closures or selfcal")
+stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal") || error("--stage must be closures or selfcal"); staged = "--staged" in ARGS
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 4.15e6; D = 8.15e3 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -85,9 +87,13 @@ if stage == "closures"
         χ = timeresolved_gradient!(dp, CuArray(x), tr, gcache, L, Δα, D, ν; binning, image_prior)
         return χ, Array(dp)
     end
-    stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega), iterations, η, η_end = η / 10)]
+    allrows = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega)
+    stages = staged ? [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne), iterations, η = 2η, η_end = η / 2, label = "geometry, static"),
+                       Fit.Stage(; free = (:logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3), iterations, η, η_end = η / 5, label = "plasma"),
+                       Fit.Stage(; free = allrows, iterations, η, η_end = η / 10, label = "everything, pattern rates free")] :
+                      [Fit.Stage(; free = allrows, iterations, η, η_end = η / 10)]
     q, history, _ = Fit.fit!(copy(p), x -> chi2_timeresolved(x, tr, cache, L, Δα, D, ν; binning, image_prior), stages; hygiene = Fit.Hygiene(every = 0), gradient = valgrad,
-                             callback = (si, it, x, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
+                             callback = (si, it, x, v) -> (it % 25 == 0 && @info "stage $si iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
 else
     q, gains, dterms, history = selfcal!(copy(p), gains, dterms, tr, gcache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations, η, η_inst = ηgain, binning, image_prior,
                                          callback = (it, x, g, d, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))

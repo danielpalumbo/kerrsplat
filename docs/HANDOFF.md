@@ -112,10 +112,13 @@ with Paper VII's station by station once the global 90° RL phase of ALMA's feed
 the HOPS netcal products lack, is applied with `rotate_crosshands(obs, π/2)`; a total-flux prior
 through the likelihood's `image_prior` anchors the amplitude scale; 3000 joint iterations from
 the run-6 sky reach the noise floor with the sky's closure χ²/N 1.67 at 0.57 Jy and the
-d-terms on the published values). Next on this path: the SMA's and JCMT's special handling, the
-UT-to-M mapping of scan times for real time-resolved data, and a fresh M87 sky fit in the
-absolute frame with more parcels (the run-6 sky is a six-parcel model fitted before the
-rotation).
+d-terms on the published values). Real time-resolved data run end to end on Sgr A* (`scan_times`, `closure_scans`,
+`validation/sgra_fit/sgra_jones.jl`, `docs/notes/2026-09-10_sgra_timeresolved.md`) but the first
+fits from a ring are far from the data (closures χ²/N 15, products 246): the open problem is the
+optimization protocol for a variable source with everything free (staged closures first, a
+snapshot baseline, longer schedules). Next on this path also: the SMA's and JCMT's special
+handling, and a fresh M87 sky fit in the absolute frame with more parcels (the run-6 sky is a
+six-parcel model fitted before the rotation).
 
 Open, roughly in order of value: the two items above; more parcels in the joint
 self-calibration update with densification; a smooth background component for extended flux and a
