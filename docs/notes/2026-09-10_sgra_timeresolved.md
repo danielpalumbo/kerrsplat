@@ -114,7 +114,6 @@ scale is right and the residual pattern is the sky's, fitted without the kernel'
 (the sky's own closure χ²/N with the kernel is 10.6, from 4.6 without). The instrument solve
 on it still collapses (χ²/N 205). The static closure fit is being repeated with the kernel,
 followed by the instrument solve and a self-calibration that starts from the solved gains.
-KERNEL_RESULT
 
 Motion from the static sky (before the kernel) with the pattern rates moving at a twentieth
 of the common step (`--eta-omega 0.05`, 600 iterations): closure χ²/N 4.83 → 4.45 by
@@ -123,4 +122,8 @@ only to 11.2; the rates stayed within ±0.003 rad/M, a thirtieth of Keplerian at
 small step made the motion harmless and also inert. The spike is not the rates': the static
 run had the same one at iteration 425 (5.0 → 7.9). A parcel row that Adam kicks past a
 threshold (a size or a density) is the likely cause and is worth a per-iteration trace of the
-parameters when the kernel fits are in. MOTION_RESULT
+parameters when the kernel fits are in.
+
+The static closure fit with the kernel, the instrument solve on it and the self-calibration
+from the solved gains are running as this note is written; their results follow in the next
+section when they are in.
