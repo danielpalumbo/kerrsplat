@@ -1,0 +1,45 @@
+Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage selfcal (static), scattering kernel, Stokes I instrument: 202 rows, 21 scans in 21 frames over 865.0 M, 404 data values, 197 gains, 8 parcels, flux prior 2.4 ± 0.5 Jy, noise floor 0.02, uvmin 0.1, 900 iterations, spin 0.94 inclination 150.0, init 'output/sgra_selfcal_i_params.csv'
+chi2 start 2713.3099288903018 (reduced 6.716113685372034) end 1430.147172157478 (reduced 3.53996824791455); closure chi2 of the sky per frame 1091.4479505566253 over 143 (reduced 7.632503150745632)
+pattern rates: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+scan  1  UT  9.003 h  t =    0.0 M   24 products χ²/N   0.03    0 closures χ²/N    NaN  flux 2.530 Jy  stations AA AZ SP
+scan  2  UT  9.024 h  t =    3.6 M   24 products χ²/N   0.00    0 closures χ²/N    NaN  flux 2.530 Jy  stations AA AZ LM SP
+scan  3  UT  9.335 h  t =   58.4 M   48 products χ²/N   0.21    0 closures χ²/N    NaN  flux 2.530 Jy  stations AA AZ LM SP
+scan  4  UT  9.552 h  t =   96.6 M   72 products χ²/N   0.23    7 closures χ²/N   3.24  flux 2.530 Jy  stations AA AP AZ LM SP
+scan  5  UT  9.901 h  t =  158.1 M   40 products χ²/N   0.10    2 closures χ²/N   3.20  flux 2.530 Jy  stations AA AP AZ SP
+scan  6  UT  9.919 h  t =  161.3 M   32 products χ²/N   0.02    0 closures χ²/N    NaN  flux 2.530 Jy  stations AA AP AZ LM SP
+scan  7  UT 10.119 h  t =  196.4 M   72 products χ²/N   0.55    6 closures χ²/N   2.08  flux 2.530 Jy  stations AA AP AZ LM SP
+scan  8  UT 10.302 h  t =  228.6 M   72 products χ²/N   0.08    7 closures χ²/N   2.38  flux 2.530 Jy  stations AA AP AZ LM SP
+scan  9  UT 10.720 h  t =  302.2 M   72 products χ²/N   0.24    3 closures χ²/N   1.19  flux 2.530 Jy  stations AA AP AZ LM SP
+scan 10  UT 10.889 h  t =  332.1 M  112 products χ²/N   0.37    3 closures χ²/N   1.83  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 11  UT 11.103 h  t =  369.7 M  112 products χ²/N   0.24    6 closures χ²/N   0.83  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 12  UT 11.451 h  t =  431.0 M   80 products χ²/N   4.37   15 closures χ²/N  34.28  flux 2.530 Jy  stations AA AZ LM SM SP
+scan 13  UT 11.652 h  t =  466.4 M  112 products χ²/N   0.80    9 closures χ²/N   6.59  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 14  UT 12.269 h  t =  575.1 M  112 products χ²/N   1.09    9 closures χ²/N  14.19  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 15  UT 12.452 h  t =  607.2 M  112 products χ²/N   0.70   25 closures χ²/N   2.32  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 16  UT 12.802 h  t =  668.8 M  112 products χ²/N   0.88   25 closures χ²/N   6.14  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 17  UT 12.986 h  t =  701.3 M  112 products χ²/N   1.35    8 closures χ²/N   5.43  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 18  UT 13.421 h  t =  777.9 M   72 products χ²/N   1.18    7 closures χ²/N   2.13  flux 2.530 Jy  stations AA AP AZ SM SP
+scan 19  UT 13.585 h  t =  806.7 M   72 products χ²/N   0.62    7 closures χ²/N   3.87  flux 2.530 Jy  stations AA AP AZ SM SP
+scan 20  UT 13.615 h  t =  812.0 M   40 products χ²/N   0.00    0 closures χ²/N    NaN  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 21  UT 13.919 h  t =  865.5 M  112 products χ²/N   0.84    4 closures χ²/N   5.25  flux 2.530 Jy  stations AA AP AZ LM SM SP
+per baseline (no gains): |uv| Gλ, median |data| Jy, median |model| Jy, median model/data, number of rows
+  AZ-LM   1.13 Gλ  data 1.629 Jy  model 1.928 Jy  ratio   1.17  rows  17
+  AZ-SM   3.44 Gλ  data 0.178 Jy  model 0.178 Jy  ratio   1.24  rows  11
+  AA-LM   4.04 Gλ  data 0.364 Jy  model 0.342 Jy  ratio   0.90  rows  17
+  AP-LM   4.06 Gλ  data 0.383 Jy  model 0.367 Jy  ratio   0.96  rows  14
+  LM-SM   4.33 Gλ  data 0.167 Jy  model 0.155 Jy  ratio   0.99  rows  10
+  AA-SP   5.05 Gλ  data 0.178 Jy  model 0.169 Jy  ratio   0.85  rows  18
+  AP-SP   5.12 Gλ  data 0.117 Jy  model 0.154 Jy  ratio   0.78  rows  15
+  AA-AZ   5.14 Gλ  data 0.199 Jy  model 0.203 Jy  ratio   1.06  rows  18
+  AP-AZ   5.22 Gλ  data 0.203 Jy  model 0.199 Jy  ratio   1.06  rows  15
+  AA-SM   7.09 Gλ  data 0.020 Jy  model 0.018 Jy  ratio   1.04  rows  11
+  AP-SM   7.10 Gλ  data 0.015 Jy  model 0.019 Jy  ratio   1.51  rows  10
+  LM-SP   7.82 Gλ  data 0.064 Jy  model 0.071 Jy  ratio   0.94  rows  17
+  SM-SP   7.87 Gλ  data 0.059 Jy  model 0.055 Jy  ratio   0.93  rows  11
+  AZ-SP   8.45 Gλ  data 0.034 Jy  model 0.033 Jy  ratio   0.81  rows  18
+AA   scans 21  |gR| 1.121 ± 0.223  phase rms 0.00 rad
+AP   scans 17  |gR| 1.096 ± 0.233  phase rms 0.03 rad
+AZ   scans 21  |gR| 0.887 ± 0.109  phase rms 2.58 rad
+LM   scans 17  |gR| 0.976 ± 0.174  phase rms 2.59 rad
+SM   scans 12  |gR| 0.903 ± 0.371  phase rms 1.01 rad
+SP   scans 21  |gR| 1.031 ± 0.294  phase rms 14.68 rad
