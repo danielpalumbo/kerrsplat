@@ -211,6 +211,20 @@ frozen in every fit so far at an envelope wider than the night) is the natural n
 it, and which baselines and triangles carry the residual of those scans is the first thing to
 look at.
 
+They are the SMA's. On the self-calibrated sky the closure quantities of the scans around
+that hour with pulls beyond 3σ are, in the 12th scan (UT 11.45 h), the triangles ALMA–SMT–SMA
+(model 64°, data 166°, 6° noise: −17σ), ALMA–LMT–SMA (55° against 143°, −12σ) and
+ALMA–SMT–LMT (−6σ); in the 13th (UT 11.65 h) ALMA–SMT–SMA again but the other way (69°
+against 31°, +6σ) and ALMA–SMA–SPT (−4σ); in the 14th (UT 12.27 h) the SMA log closure
+amplitudes at ±6σ and three SMA/SPT triangles at 3–4σ. Nothing beyond 3σ elsewhere in the
+scans before and after. The SMA's baselines are the east–west ones at 3.4–7 Gλ, and the
+closure phases on them, immune to any station's gain, swing by a hundred degrees between two
+scans twelve minutes apart and back: the source's east–west structure on those scales
+changes during that hour, which a static sky of any shape cannot follow and the pattern rates
+did not. The flare experiment (`--flare φ`: a ninth parcel with a temporal envelope of 40 M
+centred on that hour at position angle φ, joint Stokes I self-calibration from the static
+solution) runs for four position angles.
+
 ## Where this stands
 
 The chain that works for Sgr A* on this day is the one every imaging pipeline uses, and every

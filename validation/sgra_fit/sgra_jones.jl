@@ -12,6 +12,7 @@
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
 #                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal|calibrate] [--staged] [--static] [--eta-omega 0.05]
 #                                          [--calibrate 0] [--init-gains gains.csv] [--init-dterms dterms.csv] [--no-scatter] [--stokes-i]
+#                                          [--flare <position angle deg>] [--flare-time 431] [--flare-width 40] [--eta-t0 100]
 #
 # The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
 # of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
@@ -25,7 +26,11 @@
 # `--eta-omega` is the factor of the common step they move with (0.05: 2.5e-4 rad/M per iteration at the default step).
 # The model visibilities go through the diffractive scattering kernel of Sgr A* (`ScatteringKernel`, Johnson et al. 2018)
 # unless `--no-scatter`. `--stokes-i` fits the instrument as one complex gain per station on the Stokes I visibilities
-# (the parallel hands averaged), which leaves the sky's polarization out of the products: the closure stage constrains
+# (the parallel hands averaged), which leaves the sky's polarization out of the products. `--flare φ` adds a parcel on the
+# ring at position angle φ with a temporal envelope (rows t0, logw: a Gaussian in emission time of width `--flare-width` M
+# centred at `--flare-time` M, the hour at UT 11.5 h whose closures no static sky fits) and frees t0 and logw for all
+# parcels (the others' envelopes start wider than the night, so only the flare's moves); t0 in M takes `--eta-t0` times
+# the common step. The Stokes I instrument matters because the closure stage constrains
 # Stokes I alone, so its sky has free Q, U, V that the dual-feed products then misfit. `--stage calibrate` solves the instrument alone by Levenberg–Marquardt with the initial sky held (`calibrate!`, `--calibrate`
 # iterations, 10 by default there); `--calibrate N` before `--stage selfcal` starts the joint loop from that solve instead of
 # unit gains. `--init-gains`/`--init-dterms` start the instrument from a previous run's files.
@@ -42,7 +47,8 @@ nframes = getopt("--frames", 0); seed = getopt("--seed", 1); init = getstr("--in
 stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal", "calibrate") || error("--stage must be closures, selfcal or calibrate"); staged = "--staged" in ARGS; static = "--static" in ARGS
 ncal = getopt("--calibrate", stage == "calibrate" ? 10 : 0); initgains = getstr("--init-gains", ""); initdterms = getstr("--init-dterms", "")
 scatter = !("--no-scatter" in ARGS); stokesI = "--stokes-i" in ARGS
-ηω = getopt("--eta-omega", 0.05); steps = (; omega = ηω)
+flare = getstr("--flare", ""); tflare = getopt("--flare-time", 431.0); wflare = getopt("--flare-width", 40.0); ηt0 = getopt("--eta-t0", 100.0)
+ηω = getopt("--eta-omega", 0.05); steps = (; omega = ηω, t0 = ηt0)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 4.15e6; D = 8.15e3 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -81,8 +87,17 @@ for i in 1:nsplat
                0.0, log(1e9), log(1e6), log(20.0), log(30.0), π / 2, π / 2, 0.0, 0.35, 0.0, 0.0]
 end
 isempty(init) || (p = Matrix{Float64}(readdlm(init, ',')); nsplat = size(p, 2); @info "initialized from $init" nsplat)
-free = freeze(p, static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
-                          (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))
+if !isempty(flare)
+    φf = deg2rad(parse(Float64, flare))
+    col = copy(p[:, argmax(p[13, :])])                       # the brightest parcel's plasma rows, a third of its density
+    col[1:3] .= [5.0 * cos(φf), 5.0 * sin(φf), 0.0]; col[4:6] .= 0.0; col[7:10] .= [1.0, 0.0, 0.0, 0.0]
+    col[11] = tflare; col[12] = log(wflare); col[13] -= log(3.0); col[21] = 0.0
+    global p = hcat(p, col); global nsplat += 1
+    @info "flare parcel added" position_angle_deg = parse(Float64, flare) t0_M = tflare width_M = wflare
+end
+flarerows = isempty(flare) ? () : (:t0, :logw)
+free = freeze(p, (static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
+                            (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))..., flarerows...))
 image_prior = img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]
 # the densities scaled so that the first frame's flux matches the prior (the parcels' emission is linear in nₑ where thin)
 F0 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
