@@ -18,7 +18,8 @@ the code live outside the repository and do not travel.
 - `validation/`: reference tables (symphony, ipole RIAF), the cross-model, GRMHD, M87 and
   half-orbit experiments; each directory's README or script header says how it was run.
 - `test/`: `runtests.jl` is the full suite (≈ 1 h, run through a pipe), `ci.jl` the CPU subset
-  GitHub Actions runs on every push.
+  GitHub Actions runs on every pull request (the repository is public since 2026-09-10; the
+  private plan's 2,000 minutes a month were exhausted by hour-long runs on every push).
 
 ## Setting up
 

@@ -1,0 +1,30 @@
+Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage closures: 202 rows, 21 scans in 21 frames over 865.0 M, 97 data values, 394 gains, 8 parcels, flux prior 2.4 ± 0.05 Jy, noise floor 0.02, uvmin 0.1, 300 iterations, spin 0.94 inclination 150.0, init ''
+chi2 start 4554.521798146759 (reduced 46.95383297058514) end 3127.502137818187 (reduced 32.242290080599865); closure chi2 of the sky per frame 2985.1313250380217 over 128 (reduced 23.321338476859545)
+pattern rates: [-0.012710356078493376, -0.06298352822362208, 0.03148743318849745, -0.043372219788284094, -0.0936978886267429, 0.04909064034452716, -0.09292606688040135, -0.004755655931734335]
+scan  1  UT  9.003 h  t =    0.0 M    0 closures χ²/N   0.00    0 closures χ²/N    NaN  flux 2.418 Jy  stations AA AZ SP
+scan  2  UT  9.024 h  t =    3.6 M    0 closures χ²/N   0.00    0 closures χ²/N    NaN  flux 2.393 Jy  stations AA AZ LM SP
+scan  3  UT  9.335 h  t =   58.4 M    0 closures χ²/N   0.00    0 closures χ²/N    NaN  flux 1.899 Jy  stations AA AZ LM SP
+scan  4  UT  9.552 h  t =   96.6 M    1 closures χ²/N   1.48    6 closures χ²/N   1.89  flux 2.542 Jy  stations AA AP AZ LM SP
+scan  5  UT  9.901 h  t =  158.1 M    2 closures χ²/N  48.62    2 closures χ²/N  48.62  flux 2.461 Jy  stations AA AP AZ SP
+scan  6  UT  9.919 h  t =  161.3 M    0 closures χ²/N   0.00    0 closures χ²/N    NaN  flux 2.506 Jy  stations AA AP AZ LM SP
+scan  7  UT 10.119 h  t =  196.4 M    3 closures χ²/N   2.68    5 closures χ²/N   2.28  flux 2.307 Jy  stations AA AP AZ LM SP
+scan  8  UT 10.302 h  t =  228.6 M    7 closures χ²/N  60.54    7 closures χ²/N  60.54  flux 2.241 Jy  stations AA AP AZ LM SP
+scan  9  UT 10.720 h  t =  302.2 M    4 closures χ²/N  31.39    4 closures χ²/N  31.39  flux 2.652 Jy  stations AA AP AZ LM SP
+scan 10  UT 10.889 h  t =  332.1 M    4 closures χ²/N  24.02    4 closures χ²/N  24.02  flux 2.197 Jy  stations AA AP AZ LM SM SP
+scan 11  UT 11.103 h  t =  369.7 M    2 closures χ²/N   1.86    5 closures χ²/N   2.25  flux 2.656 Jy  stations AA AP AZ LM SM SP
+scan 12  UT 11.451 h  t =  431.0 M    5 closures χ²/N  73.26   11 closures χ²/N  37.76  flux 2.509 Jy  stations AA AZ LM SM SP
+scan 13  UT 11.652 h  t =  466.4 M    5 closures χ²/N  19.69   11 closures χ²/N  14.14  flux 2.295 Jy  stations AA AP AZ LM SM SP
+scan 14  UT 12.269 h  t =  575.1 M   10 closures χ²/N  26.54   10 closures χ²/N  26.54  flux 2.610 Jy  stations AA AP AZ LM SM SP
+scan 15  UT 12.452 h  t =  607.2 M   14 closures χ²/N  12.80   19 closures χ²/N  11.59  flux 2.329 Jy  stations AA AP AZ LM SM SP
+scan 16  UT 12.802 h  t =  668.8 M   16 closures χ²/N  28.83   19 closures χ²/N  24.68  flux 1.876 Jy  stations AA AP AZ LM SM SP
+scan 17  UT 12.986 h  t =  701.3 M    8 closures χ²/N  31.49    8 closures χ²/N  31.49  flux 2.530 Jy  stations AA AP AZ LM SM SP
+scan 18  UT 13.421 h  t =  777.9 M    6 closures χ²/N  26.20    6 closures χ²/N  26.20  flux 2.648 Jy  stations AA AP AZ SM SP
+scan 19  UT 13.585 h  t =  806.7 M    5 closures χ²/N  10.90    6 closures χ²/N  18.51  flux 2.312 Jy  stations AA AP AZ SM SP
+scan 20  UT 13.615 h  t =  812.0 M    0 closures χ²/N   0.00    0 closures χ²/N    NaN  flux 2.345 Jy  stations AA AP AZ LM SM SP
+scan 21  UT 13.919 h  t =  865.5 M    5 closures χ²/N  32.57    5 closures χ²/N  32.57  flux 2.298 Jy  stations AA AP AZ LM SM SP
+AA   scans 21  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
+AP   scans 17  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
+AZ   scans 21  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
+LM   scans 17  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
+SM   scans 12  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
+SP   scans 21  |gR| 1.000 ± 0.000  phase rms 0.00 rad  L/R amp 1.000
