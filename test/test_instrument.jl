@@ -35,18 +35,24 @@ function test_instrument()
         @test C[1, 1] == s[1] + s[4] && C[2, 2] == s[1] - s[4] && C[1, 2] == s[2] + im * s[3] && C[2, 1] == s[2] - im * s[3]
     end
     obs = read_uvfits(joinpath(dir, "synth_eht2017_noiseless.uvfits"))
-    rowof(f, k) = findfirst(i -> abs(obs.time[i] - f.time[k]) < 1e-6 && obs.stations[obs.s1[i]] == f.t1[k] && obs.stations[obs.s2[i]] == f.t2[k], 1:length(obs))
+    # ehtim's circular representation lists a baseline with its stations in the array table's order, so some rows are the
+    # reverse of the file's (and the reader's): the reversed baseline has the conjugate-transposed coherency, (RR*, LL*, LR*, RL*)
+    rowof(f, k) = (r = findfirst(i -> abs(obs.time[i] - f.time[k]) < 1e-6 && obs.stations[obs.s1[i]] == f.t1[k] && obs.stations[obs.s2[i]] == f.t2[k], 1:length(obs));
+                   r !== nothing ? (r, false) : (findfirst(i -> abs(obs.time[i] - f.time[k]) < 1e-6 && obs.stations[obs.s1[i]] == f.t2[k] && obs.stations[obs.s2[i]] == f.t1[k], 1:length(obs)), true))
+    reversed(p) = SVector(conj(p[1]), conj(p[2]), conj(p[4]), conj(p[3]))
     @testset "the reader's products equal ehtim's" begin
         f = _jones_fixture(dir, "corrected")
-        worst = 0.0
+        worst = 0.0; nrev = 0
         for k in eachindex(f.time)
-            r = rowof(f, k)
+            r, rev = rowof(f, k)
             @test r !== nothing
-            worst = max(worst, maximum(abs.(obs.coh[r] .- f.clean[k])) / maximum(abs.(f.clean[k])))
+            ref = rev ? reversed(f.clean[k]) : f.clean[k]
+            nrev += rev
+            worst = max(worst, maximum(abs.(obs.coh[r] .- ref)) / maximum(abs.(ref)))
             @test all(isfinite, obs.σ_coh[r])
         end
         @test worst < 2e-7
-        @info "correlation products vs ehtim's circular parse: worst relative difference $worst (float32 file)"
+        @info "correlation products vs ehtim's circular parse: worst relative difference $worst (float32 file; $nrev of $(length(f.time)) baselines listed reversed by ehtim)"
     end
     for label in ("corrected", "raw")
         @testset "Jones corruption vs ehtim ($label)" begin
@@ -75,30 +81,30 @@ function test_instrument()
         end
     end
     @testset "instrument model: χ², gauge, priors, duals" begin
-        im = InstrumentModel(obs)
-        @test im.polarized && im.leakage && im.corrected && im.nseg == maximum(scan_index(obs))
-        gains, dterms = zero_instrument(im)
+        inst = InstrumentModel(obs)
+        @test inst.polarized && inst.leakage && inst.corrected && inst.nseg == maximum(scan_index(obs))
+        gains, dterms = zero_instrument(inst)
         rows = 1:length(obs)
         model = [obs.vis[r] .* (1 + 0.1im) .+ SVector(0.01, 0.0, 0.0, 0.0) for r in rows]
-        χ = chi2_instrument(model, obs, rows, im, gains, dterms)
+        χ = chi2_instrument(model, obs, rows, inst, gains, dterms)
         χs = sum(sum(abs2, (model[k] .- obs.vis[r]) ./ obs.σ[r]) for (k, r) in enumerate(rows))      # σ_V = σ_I, σ_U = σ_Q here
         @test abs(χ - χs) <= 1e-10 * χs
-        @test abs(sum(abs2, instrument_residuals(model, obs, rows, im, gains, dterms)) - χ) <= 1e-10 * χ
+        @test abs(sum(abs2, instrument_residuals(model, obs, rows, inst, gains, dterms)) - χ) <= 1e-10 * χ
         g2 = copy(gains)
-        for g in 1:im.nseg
-            c = gain_column(im, im.ref[g], g); g2[2, c] = 1.0; g2[4, c] = 0.5
+        for g in 1:inst.nseg
+            c = gain_column(inst, inst.ref[g], g); g2[2, c] = 1.0; g2[4, c] = 0.5
         end
-        @test chi2_instrument(model, obs, rows, im, g2, dterms) ≈ χ                  # the reference phases are the gauge
-        gm, dm = free_mask(im, obs)
-        @test all(.!gm[2, [gain_column(im, im.ref[g], g) for g in 1:im.nseg]]) && all(.!gm[4, [gain_column(im, im.ref[g], g) for g in 1:im.nseg]]) && all(dm)
-        other = findfirst(s -> s != im.ref[1] && (s in obs.s1[im.seg .== 1] || s in obs.s2[im.seg .== 1]), 1:nstations(im))
-        g3 = copy(gains); g3[2, gain_column(im, other, 1)] = 0.3
-        @test chi2_instrument(model, obs, rows, im, g3, dterms) != χ
+        @test chi2_instrument(model, obs, rows, inst, g2, dterms) ≈ χ                  # the reference phases are the gauge
+        gm, dm = free_mask(inst, obs)
+        @test all(.!gm[2, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(.!gm[4, [gain_column(inst, inst.ref[g], g) for g in 1:inst.nseg]]) && all(dm)
+        other = findfirst(s -> s != inst.ref[1] && (s in obs.s1[inst.seg .== 1] || s in obs.s2[inst.seg .== 1]), 1:nstations(inst))
+        g3 = copy(gains); g3[2, gain_column(inst, other, 1)] = 0.3
+        @test chi2_instrument(model, obs, rows, inst, g3, dterms) != χ
         gains .= 0.1; dterms .= 0.05
-        pen = penalty_instrument(im, gains, dterms)
-        expected = sum((0.1 / im.σ_lg[s])^2 + (0.1 / im.σ_lgrat)^2 + (0.1 / im.σ_gprat)^2 for s in 1:nstations(im)) * im.nseg + 4 * nstations(im) * (0.05 / im.σ_d)^2
+        pen = penalty_instrument(inst, gains, dterms)
+        expected = sum((0.1 / inst.σ_lg[s])^2 + (0.1 / inst.σ_lgrat)^2 + (0.1 / inst.σ_gprat)^2 for s in 1:nstations(inst)) * inst.nseg + 4 * nstations(inst) * (0.05 / inst.σ_d)^2
         @test pen ≈ expected
-        @test im.σ_lg[findfirst(==("LM"), obs.stations)] == 1.0 && im.σ_lg[findfirst(==("AA"), obs.stations)] == 0.2
+        @test inst.σ_lg[findfirst(==("LM"), obs.stations)] == 1.0 && inst.σ_lg[findfirst(==("AA"), obs.stations)] == 0.2
         # Stokes I only: the scalar gain g1 conj(g2) of `apply_gains`
         im1 = InstrumentModel(obs; polarized = false)
         g1 = 0.2 .* randn(rng, 2, nstations(im1) * im1.nseg)
@@ -112,9 +118,9 @@ function test_instrument()
         @test abs(χ1 - χ1s) <= 1e-10 * χ1s
         # duals through the residuals (the Levenberg–Marquardt polish and the Laplace covariance of the instrument)
         gains .= 0.0; dterms .= 0.0
-        Jg = ForwardDiff.jacobian(x -> instrument_residuals(model, obs, rows, im, reshape(x, size(gains)), dterms), vec(gains))
-        Jd = ForwardDiff.jacobian(x -> instrument_residuals(model, obs, rows, im, gains, reshape(x, size(dterms))), vec(dterms))
+        Jg = ForwardDiff.jacobian(x -> instrument_residuals(model, obs, rows, inst, reshape(x, size(gains)), dterms), vec(gains))
+        Jd = ForwardDiff.jacobian(x -> instrument_residuals(model, obs, rows, inst, gains, reshape(x, size(dterms))), vec(dterms))
         @test all(isfinite, Jg) && all(isfinite, Jd) && any(!=(0), Jg) && any(!=(0), Jd)
-        @info "instrument model: $(im.nseg) scans, $(nstations(im)) stations, $(count(gm)) free gain parameters and $(count(dm)) d-term parts; χ² of the unit instrument matches the Stokes χ² to $(abs(χ - χs) / χs)"
+        @info "instrument model: $(inst.nseg) scans, $(nstations(inst)) stations, $(count(gm)) free gain parameters and $(count(dm)) d-term parts; χ² of the unit instrument matches the Stokes χ² to $(abs(χ - χs) / χs)"
     end
 end

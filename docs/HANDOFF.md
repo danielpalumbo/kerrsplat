@@ -98,8 +98,17 @@ per-scan gains in the time-resolved loss (the static self-calibration path has t
 data-domain results call for multiband data, joint gains and denser (ngEHT-class) coverage,
 all reachable with the existing pieces.
 
-Open, roughly in order of value: more parcels in the joint self-calibration update with
-densification; R/L gains and leakage; a smooth background component for extended flux and a
+Gain fitting follows Comrade.jl's structure (Daniel, 2026-09-09): `Fit.InstrumentModel`
+(`src/Fit/instrument.jl`, gated against ehtim's Jones simulator) carries the coherency-basis
+RIME with per-scan complex feed gains, leakage per track, the feed rotation (R† G D R for
+EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's priors. Still
+to come on it: the feed rotation angles from the antenna table (the model takes them as
+input; ehtim's angles are in the fixtures for the gate), and the joint sky-plus-instrument
+fit inside the time-resolved likelihood (the static self-calibration in `validation/m87_fit`
+predates the model).
+
+Open, roughly in order of value: the two items above; more parcels in the joint
+self-calibration update with densification; a smooth background component for extended flux and a
 noise floor; spin and inclination fits on real data; per-ray interval lists for hundreds of
 splats; the dual sweep (`Splats.polarized_gradient!`, the default of `Fit.chi2_gradient!` and
 `Fit.image_loss_gradient!` since 2026-09-06: the adjoint over the compositing from 4-vectors,
