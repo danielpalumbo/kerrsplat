@@ -85,7 +85,7 @@ if stage == "closures"
         χ = timeresolved_gradient!(dp, CuArray(x), tr, gcache, L, Δα, D, ν; binning, image_prior)
         return χ, Array(dp)
     end
-    stages = [Fit.Stage(free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega), iterations, η, η_end = η / 10)]
+    stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega), iterations, η, η_end = η / 10)]
     q, history, _ = Fit.fit!(copy(p), x -> chi2_timeresolved(x, tr, cache, L, Δα, D, ν; binning, image_prior), stages; hygiene = Fit.Hygiene(every = 0), gradient = valgrad,
                              callback = (si, it, x, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
 else
