@@ -81,10 +81,11 @@ Daniel's request of 2026-09-08, done 2026-09-09 (`docs/notes/2026-09-08_half_orb
 section "Multifrequency"): the n ≤ 1 half-orbit self-fit at 86 + 345 GHz, bracketing the
 parcels' turnover (178 GHz), against 230 GHz alone: Θe and B come back to ≲ 1–2% for three of
 the four parcels (single band: 5–18%, 2.5–7%), Fisher σ(ln Θe) 13–20× and σ(ln B) 8–12×
-tighter, densities 2–3× better; a third band adds little. Open from it: a Levenberg–Marquardt
-polish of the parcel parameters from the Adam endpoint (the fits stop Δχ² ≈ 10³ above the
-truth along the nₑ–B valley of an edge parcel; `fisher` forms the Jacobian), and a field of
-view that holds every parcel's lensed images.
+tighter, densities 2–3× better; a third band adds little. The Levenberg–Marquardt polish
+(`Fit.polish!`, 2026-09-09; the script's `--polish N`, `--init file`) finishes the descent the
+Adam fits leave (Δχ² ≈ 10³ above the truth along the nₑ–B valley of an edge parcel) and gives
+the Laplace errors; the note records the polished recoveries. Still open: a field of view that
+holds every parcel's lensed images.
 
 Open, roughly in order of value: the time-resolved visibility likelihood (one slow-light frame
 per scan, needed for Sgr A*); more parcels in the joint self-calibration update with

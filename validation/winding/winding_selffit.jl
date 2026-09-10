@@ -7,8 +7,11 @@
 # information of the spin and inclination at the truth (joint with the free parcel parameters,
 # by ForwardDiff duals through the whole pipeline) quantifies what each order adds.
 #
-#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1] [--fisher fd|duals] [--fisher-only] [--frequencies 230] [--tag name]
+#     julia -t 8 --project=../.. winding_selffit.jl [--case 0|1|2|3] [--iterations 300] [--eta 0.005] [--seed 1] [--frames 2] [--backend cpu|cuda] [--subsamples 1] [--fisher fd|duals] [--fisher-only] [--frequencies 230] [--tag name] [--polish 0] [--init fitted.csv]
 #
+# `--polish N` runs N Levenberg–Marquardt iterations (`Fit.polish!`, CPU Jacobian by duals) from
+# the Adam endpoint and reports the polished recovery with its Laplace errors; `--init file`
+# starts from a saved parameter matrix (with `--iterations 0` the Adam stage is skipped).
 # `--frequencies 86,230,345` fits the movie at several frequencies (GHz) at once, each band with its
 # own noise (1%, 0.5%, 0.5%, 0.2% of that band's peak in I, Q, U, V): the multifrequency test of
 # whether bands on both sides of the parcels' synchrotron turnover (near 180 GHz for the truth;
@@ -44,6 +47,8 @@ const a = 0.94; const θo = deg2rad(17.0)
 const νs = [parse(Float64, v) * 1e9 for v in split((i = findfirst(==("--frequencies"), ARGS); i === nothing ? "230" : ARGS[i+1]), ",")]
 const ν = νs[1]                                              # the band of the printed images and fluxes
 const TAG = (i = findfirst(==("--tag"), ARGS); i === nothing ? "" : "_" * ARGS[i+1])
+const POLISH = getopt("--polish", 0)
+const INIT = (i = findfirst(==("--init"), ARGS); i === nothing ? "" : ARGS[i+1])
 const M_solar = 6.5e9; const L = gravitational_radius(M_solar)
 const SLAB = 0.6                                              # ≥ 4σ_z of the parcels
 const met = Krang.Kerr(a)
@@ -211,6 +216,10 @@ function run_case(n)
         p0[13, i] += 0.2 * randn(rng0); p0[14, i] += 0.1 * randn(rng0); p0[15, i] += 0.15 * randn(rng0)
         p0[19, i] += 0.05 * randn(rng0); p0[21, i] *= 1 + 0.02 * randn(rng0)
     end
+    if !isempty(INIT)
+        p0 = Matrix{Float64}(readdlm(INIT, ','))
+        @info "starting from $INIT"
+    end
     χ0 = loss(p0)
     ndata = 4 * length(data)
     @info "multifrequency" bands = length(νs) data_values = ndata
@@ -231,6 +240,17 @@ function run_case(n)
     end
     χend = loss(q); χend < best[1] && (best = (χend, copy(q)))
     χ1, q = best
+    laplace = nothing
+    if POLISH > 0
+        tP = time()
+        q, hist, cov, idx = polish!(copy(q), movie, cache, L; free, iterations = POLISH, chunk = 12, nmax = n, slab = SLAB, binning)
+        χ1 = hist[end]
+        σp = sqrt.(max.(diag(cov), 0.0))
+        nper = length(freerows)
+        laplace = [σp[(i - 1) * nper + findfirst(==(r), freerows)] for r in (13, 14, 15), i in 1:size(truth, 2)]
+        @info "Levenberg–Marquardt polish ($POLISH iterations)" chi2 = hist[1] => hist[end] reduced = χ1 / ndata history = round.(hist ./ ndata; digits = 4) minutes = (time() - tP) / 60
+        @info "Laplace errors of the emission rows per parcel" ln_ne = round.(laplace[1, :]; sigdigits = 3) ln_Te = round.(laplace[2, :]; sigdigits = 3) ln_B = round.(laplace[3, :]; sigdigits = 3)
+    end
     # recovery metrics
     pos_err = [hypot(q[1, i] - truth[1, i], q[2, i] - truth[2, i], q[3, i] - truth[3, i]) for i in 1:4]
     pos0 = [hypot(p0[1, i] - truth[1, i], p0[2, i] - truth[2, i], p0[3, i] - truth[3, i]) for i in 1:4]
@@ -260,6 +280,7 @@ function run_case(n)
         println(io, "relative errors: ne $(rel(13)) Te $(rel(14)) B $(rel(15)) pattern rate $ωerr; u_phi absolute $uerr")
         println(io, "Fisher at the truth ($FISHER): σ(a) joint $σa_joint alone $σa_alone; σ(θo) joint $(rad2deg(σθ_joint))° alone $(rad2deg(σθ_alone))°")
         println(io, "marginal Fisher errors per parcel: ln ne $(me[1, :]); ln Te $(me[2, :]); ln B $(me[3, :])")
+        laplace === nothing || println(io, "after $POLISH LM iterations, Laplace errors per parcel: ln ne $(laplace[1, :]); ln Te $(laplace[2, :]); ln B $(laplace[3, :])")
         println(io, "cumulative sub-image fluxes on the uniform grid: $fluxes")
     end
     return nothing

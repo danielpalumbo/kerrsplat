@@ -222,25 +222,46 @@ function fisher(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::Geodesi
         for (k, i) in enumerate(idx)
             q[i] = x[k]
         end
-        out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
-        vals = S[]
-        for l in eachindex(movie.νs), k in eachindex(movie.times)
-            ν = movie.νs[l]
-            fill!(out, zero(eltype(out)))
-            polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L); nmax, slab)
-            stokes = pixel_stokes(to_screen(cache, out), S(ν), binning)
-            for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
-                c = CartesianIndex(i, j, k, l)
-                movie.mask[c] || continue
-                st = stokes[i, j] ./ noise(movie.σ, c)
-                append!(vals, st)
-            end
-        end
-        return vals
+        return model_values(q, movie, cache, L; nmax, slab, binning)
     end
     x0 = params[idx]
     J = ForwardDiff.jacobian(model, x0, ForwardDiff.JacobianConfig(model, x0, ForwardDiff.Chunk{min(chunk, length(x0))}()))
     return J' * J, J, idx
+end
+
+"""
+    model_values(params, movie, cache, L; nmax, slab, binning) -> Vector
+
+The model's Stokes values over the movie's masked pixels, frames and frequencies, divided by
+the noise (the order `data_values` uses): the residual vector is `model_values .- data_values`
+and χ² its squared norm. Generic in the element type of `params` (ForwardDiff duals).
+"""
+function model_values(q::AbstractMatrix{S}, movie::StokesMovie, cache::GeodesicCache, L; nmax = -1, slab = 0, binning = nothing) where {S}
+    out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
+    vals = S[]
+    for l in eachindex(movie.νs), k in eachindex(movie.times)
+        ν = movie.νs[l]
+        fill!(out, zero(eltype(out)))
+        polarized_image!(out, cache, q, S(movie.times[k]), S(ν), S(L); nmax, slab)
+        stokes = pixel_stokes(to_screen(cache, out), S(ν), binning)
+        for j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
+            c = CartesianIndex(i, j, k, l)
+            movie.mask[c] || continue
+            append!(vals, stokes[i, j] ./ noise(movie.σ, c))
+        end
+    end
+    return vals
+end
+
+"The movie's data over its masked pixels, frames and frequencies, divided by the noise (the order of `model_values`)."
+function data_values(movie::StokesMovie{T}) where {T}
+    vals = T[]
+    for l in eachindex(movie.νs), k in eachindex(movie.times), j in 1:size(movie.data, 2), i in 1:size(movie.data, 1)
+        c = CartesianIndex(i, j, k, l)
+        movie.mask[c] || continue
+        append!(vals, movie.data[c] ./ noise(movie.σ, c))
+    end
+    return vals
 end
 
 """
@@ -260,7 +281,7 @@ function audit(F::AbstractMatrix, names; nshow = 5)
     return e.values, e.vectors
 end
 
-export fisher, audit
+export fisher, audit, model_values, data_values
 
 # ---- schedules: staged unfreezing, annealing, frequency curriculum, hygiene ----------------------
 """
@@ -627,10 +648,39 @@ function penalty(params::AbstractMatrix{T}, prior::PatternPrior) where {T}
     return total
 end
 
-export Prior, PatternPrior, fluid_pattern_rate, penalty
+"""
+    prior_residuals(params, priors) -> Vector
+
+The priors as residuals `(value − centre)/σ`, so that `sum(abs2, prior_residuals(...))` equals
+`penalty(params, priors)`: a `Prior` contributes one residual per row and splat (about the
+splats' mean for `shrink = true`), a `PatternPrior` one per splat. Used by the
+Levenberg–Marquardt polish, where the priors join the data residuals.
+"""
+prior_residuals(params::AbstractMatrix{T}, ::Nothing) where {T} = T[]
+prior_residuals(params::AbstractMatrix, priors::AbstractVector) = reduce(vcat, (prior_residuals(params, pr) for pr in priors); init = eltype(params)[])
+function prior_residuals(params::AbstractMatrix{T}, prior::Prior) where {T}
+    res = T[]
+    n = size(params, 2)
+    for (k, r) in enumerate(prior.rows)
+        i = r isa Symbol ? findfirst(==(r), POLARIZED_SPLAT_PARAMS) : r
+        σ = prior.σ isa Number ? prior.σ : prior.σ[k]
+        centre = prior.shrink ? sum(params[i, j] for j in 1:n) / n : (prior.μ isa Number ? prior.μ : prior.μ[k])
+        for j in 1:n
+            push!(res, (params[i, j] - centre) / σ)
+        end
+    end
+    return res
+end
+function prior_residuals(params::AbstractMatrix{T}, prior::PatternPrior) where {T}
+    nrow = size(params, 1)
+    return T[(params[nrow, i] - fluid_pattern_rate(params, i, prior.met)) / prior.σ for i in 1:size(params, 2)]
+end
+
+export Prior, PatternPrior, fluid_pattern_rate, penalty, prior_residuals
 
 include("fits.jl")
 include("spacetime.jl")
+include("polish.jl")
 include("visibilities.jl")
 include("uvfits.jl")
 
