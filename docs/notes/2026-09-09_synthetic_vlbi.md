@@ -31,7 +31,7 @@ own synthetic closure quantities or visibilities through the time-resolved likel
 |---|---|---|---|---|---|---|
 | closures, 5 frames (445) | 1.035 | 1.017 → 0.971 | 0.12–0.39 | 11–25%, 5–25%, 4–27% | 1.7–2.8, 1.1–2.3 | 3.7–9.4, 2.1–3.6, 4.0–10 |
 | visibilities, 5 frames (1728) | 1.039 | 1.072 → 1.020 | 0.013–0.19 | 7–18%, 7–14%, 5–19% | 0.036–0.072, 0.023–0.091 | 2.6–3.8, 0.48–0.79, 0.71–1.2 |
-| closures, 22 frames | ROW22 |
+| closures, 22 frames (445) | 0.957 | 0.880 → 0.842 | 0.07–0.45 | 10–22%, 0.8–22%, 4–31% | 0.50–1.5, 0.45–0.97 | 6.3–15, 16–22, 8.0–19 |
 
 (The pattern rates come back to 0.7–1.5% from closures and 0.2–0.6% from visibilities in every
 case: the motion is what the time resolution measures.)
@@ -51,7 +51,12 @@ case: the motion is what the time resolution measures.)
   cent, but nₑ, Θe and B stay unconstrained by factors of two to forty: one band and 216
   baselines cannot separate the emissivity's three ingredients, the same degeneracy the
   single-band movie fits show, now with far fewer data.
-- ROW22_READING
+- **Time resolution helps the geometry, not the plasma.** With every scan at its own frame
+  time (22 frames, the same 445 closure quantities) the Laplace errors in position halve
+  (0.5–1.5 M) and the pattern rates come back to 0.1–0.3% for three parcels, but the emission
+  rows become, if anything, flatter (σ(ln) of 6 to 22: directions the closures do not see at
+  all). The fit costs 78 minutes against 18 for five frames (one dual sweep per frame per
+  iteration).
 - Against the image-domain movie fits of the same truth (99,072 pixel values at one band,
   χ²/N 1.010 and every parcel to 0.002–0.02 M), the data-domain fit at the 2017 coverage is
   a different regime: the array, not the model or the optimizer, sets the limit. What the
