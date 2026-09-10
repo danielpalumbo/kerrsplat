@@ -38,7 +38,7 @@ for (i, (r, φ)) in enumerate(((5.5, 0.3), (6.5, 2.0), (5.0, 3.6), (7.0, 5.2)))
     Ω, u = keplerian(r)
     truth[:, i] = [x, y, 0.0, log(0.7), log(0.7), log(0.15), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e4), log(30.0), log(10.0), π / 2, π / 2, u[1], u[2], u[3], Ω]
 end
-free = trues(size(truth)); free[11, :] .= false; free[12, :] .= false
+const FREE = Tuple(r for r in POLARIZED_SPLAT_PARAMS if r ∉ (:t0, :logw))     # every row but the temporal envelope
 
 # ---- screen: the uniform 48² grid over 16 M (the visibilities need a regular grid; the annulus of the movie fits is not needed
 # here, the (u, v) coverage sets the resolution)
@@ -48,7 +48,7 @@ cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
 regenerate!(cache, a, θo; marcher = Fused(64))
 
 # ---- coverage: the real array's scans, their frame times spread over the movie's span in NFRAMES groups
-obs = read_uvfits(PATH)
+obs = average_scans(read_uvfits(PATH))                     # one row per baseline and scan
 scans = scan_index(obs); nscans = maximum(scans)
 frame_of_scan = [round(Int, (k - 1) / max(nscans - 1, 1) * (NFRAMES - 1)) for k in 1:nscans]
 times = [SPAN * f / max(NFRAMES - 1, 1) for f in frame_of_scan]
@@ -82,7 +82,7 @@ end
 χ0 = value_and_gradient(p0)[1]
 @info "start" chi2 = χ0 reduced = χ0 / ndat
 t0 = time()
-stages = [Fit.Stage(free = free, iterations = ITER, η = ETA, η_end = ETA / 10)]
+stages = [Fit.Stage(free = FREE, iterations = ITER, η = ETA, η_end = ETA / 10)]
 q, history, _ = Fit.fit!(copy(p0), x -> chi2_timeresolved(x, tr, cache, L, Δα, D, ν; nmax = NMAX, slab = SLAB, binning), stages;
                          hygiene = Fit.Hygiene(every = 0), gradient = value_and_gradient,
                          callback = (si, it, x, v) -> (it % 50 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
