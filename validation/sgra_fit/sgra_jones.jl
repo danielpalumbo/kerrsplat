@@ -96,8 +96,8 @@ if !isempty(flare)
     @info "flare parcel added" position_angle_deg = parse(Float64, flare) t0_M = tflare width_M = wflare
 end
 flarerows = isempty(flare) ? () : (:t0, :logw)
-free = freeze(p, (static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
-                            (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))..., flarerows...))
+free = freeze(p, ((static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
+                             (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))..., flarerows...))
 image_prior = img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]
 # the densities scaled so that the first frame's flux matches the prior (the parcels' emission is linear in nₑ where thin)
 F0 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
