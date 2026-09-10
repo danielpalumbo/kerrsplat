@@ -59,6 +59,10 @@ function test_uvfits()
         @info "uvfits: reduced χ² of the noisy observation against its source image $(χ2 / ndata)"
         # closure quantities from the scan structure: consistent with the model on the noiseless data
         tri = scan_triangles(clean); quad = scan_quadrangles(clean)
+        # two quadrangles per four-station set, and between them every baseline of the set
+        legs(q) = Set(abs.(collect(q)))
+        @test iseven(length(quad)) && all(length(union(legs(quad[2m-1]), legs(quad[2m]))) == 6 for m in 1:length(quad)÷2)
+        @test all(length(intersect(legs(quad[2m-1]), legs(quad[2m]))) == 2 for m in 1:length(quad)÷2)   # they share the ik and jl legs
         @test !isempty(tri) && !isempty(quad) && any(t -> any(<(0), t), tri)
         @test maximum(abs.(rem.(closure_phases(clean.vis, tri) .- closure_phases(model, tri), 2π, RoundNearest))) < 1e-5
         @test maximum(abs.(log_closure_amplitudes(clean.vis, quad) .- log_closure_amplitudes(model, quad))) < 1e-5

@@ -255,10 +255,15 @@ end
 Index tuples for [`closure_phases`](@ref) and [`log_closure_amplitudes`](@ref) from the
 simultaneous baselines of an observation: rows within `tol` hours of each other form a scan,
 and every triple (i < j < k) of stations with all three baselines present gives the triangle
-(ij, jk, ki), every quadruple (i < j < k < l) with all six baselines present the quadrangle
-(ij, kl, ik, jl). A negative index means the conjugate of that row's visibility (the stored
+(ij, jk, ki), every quadruple (i < j < k < l) with all six baselines present two of its three
+quadrangles, (ij, kl, ik, jl) and (ik, jl, il, jk), whose log closure amplitudes are
+independent and between them use all six baselines (the first alone never holds the il and jk
+baselines, so with one quadrangle per quadruple the baseline between a scan's first and last
+station entered no closure amplitude at all: on Sgr A* the ALMA–SPT amplitude was free,
+2026-09-10). A negative index means the conjugate of that row's visibility (the stored
 baseline runs the other way). Only the minimal sets of an Nₛ-station scan are not enforced:
-the tuples are all triangles and quadrangles, whose closure quantities are correlated.
+the tuples are all triangles and the two quadrangles per quadruple, whose closure quantities
+are correlated.
 """
 function scan_triangles(o::Observation; tol = 1e-6)
     out = NTuple{3,Int}[]
@@ -283,9 +288,9 @@ function scan_quadrangles(o::Observation; tol = 1e-6)
         n = length(sts)
         for a in 1:n, b in a+1:n, c in b+1:n, d in c+1:n
             i, j, k, l = sts[a], sts[b], sts[c], sts[d]
-            ij = _signed(bl, i, j); kl = _signed(bl, k, l); ik = _signed(bl, i, k); jl = _signed(bl, j, l)
-            (ij == 0 || kl == 0 || ik == 0 || jl == 0) && continue
-            push!(out, (ij, kl, ik, jl))
+            ij = _signed(bl, i, j); kl = _signed(bl, k, l); ik = _signed(bl, i, k); jl = _signed(bl, j, l); il = _signed(bl, i, l); jk = _signed(bl, j, k)
+            (ij == 0 || kl == 0 || ik == 0 || jl == 0 || il == 0 || jk == 0) && continue
+            push!(out, (ij, kl, ik, jl)); push!(out, (ik, jl, il, jk))
         end
     end
     return out
