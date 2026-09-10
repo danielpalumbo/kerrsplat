@@ -105,10 +105,13 @@ EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's
 antenna table (`feed_angles`, ehtim's formulas, to 2.4e-4 rad of ehtim's; the EHT mounts in
 `EHT_MOUNTS`), and the joint sky-plus-instrument fit inside the time-resolved likelihood
 (`selfcal!`, the joint LM polish; `docs/notes/2026-09-09_synthetic_vlbi.md`, self-calibration
-section: the synthetic truth's gains and d-terms come back within their Laplace errors). Next on
-this path: the real M87 full-polarization file (`hops_3601_M87+netcal.uvfits`) through the
-instrument model with its feed rotation (the static self-calibration in `validation/m87_fit`
-predates the model), and the UT-to-M mapping of scan times for real time-resolved data.
+section: the synthetic truth's gains and d-terms come back within their Laplace errors), and the
+real M87 full-polarization file through it (`validation/m87_fit/m87_jones.jl`; the last section of
+`docs/notes/2026-09-04_phase5_real_data.md`: products χ²/N 1.33 with leakage, d-terms of a few to
+ten per cent per station with 0.5–2% Laplace errors). Next on this path: the station-by-station
+comparison of the d-terms with EHT Collaboration 2021 Paper VII, an amplitude reference or flux
+prior for the instrument fits, and the UT-to-M mapping of scan times for real time-resolved
+data.
 
 Open, roughly in order of value: the two items above; more parcels in the joint
 self-calibration update with densification; a smooth background component for extended flux and a

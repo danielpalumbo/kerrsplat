@@ -129,3 +129,56 @@ thousand iterations), so six parcels are the limit of this run rather than the o
 structural next steps are a larger parcel set with densification in the joint update, R/L gains
 and leakage terms, a smooth background component for the extended flux, and a noise model with
 a systematic floor, i.e. the ingredients of the EHT polarimetric analyses.
+
+## The full-polarization data through the instrument model (2026-09-10, `m87_jones.jl`)
+
+The same `hops_3601_M87+netcal.uvfits` file refitted with the instrument model that follows
+Comrade.jl's structure (`docs/STATUS.md`, `Fit.InstrumentModel`; Daniel's request of
+2026-09-09): the data are the four correlation products themselves (RR, LL, RL, LR, kept by
+the reader and averaged on their own over scans, so that the JCMT's single hand enters), the
+model V = J₁ C J₂† with J = R† G D R (per-scan complex R and L gains with ALMA as the phase
+reference, d-terms per station over the track, the feed rotation of the EHT array from the
+antenna table), Comrade's priors (log amplitudes N(0, 0.2), the LMT 1.0; the L/R ratios
+N(0, 0.1); d-term parts N(0, 0.2)) and a 2% fractional noise floor on the products, as Comrade's
+tutorials add. Baselines below 0.1 Gλ are dropped as in the earlier runs (the intra-site
+baselines see the jet's extended flux), leaving 189 rows, 22 scans, 1330 product values,
+372 free gain entries and 28 d-term parts. The sky is the six-parcel model of self-calibration
+run 6 above, its eighteen non-temporal rows free, fitted jointly with the instrument
+(`Fit.selfcal!`, 300 Adam iterations from a unit instrument, one dual sweep per iteration on
+the GPU) and polished by six joint Levenberg–Marquardt iterations with the Laplace covariance.
+
+| variant | χ²/N of the products, start → end | closure χ²/N of the sky alone, start → end (240 quantities) | flux (Jy) |
+|---|---|---|---|
+| leakage, corrected feeds, σ_lg 0.2 (baseline) | 275 → 1.33 | 3.86 → 3.79 | 0.373 |
+| no leakage | 275 → 4.08 | 3.86 → 4.14 | 0.369 |
+| tight amplitude priors, σ_lg 0.05 | 275 → 1.48 | 3.86 → 3.68 | 0.402 |
+| instrument alone, sky fixed | 275 → 2.78 | 3.86 | 0.382 |
+
+The instrument model with leakage is what the data need: without d-terms the products stay at
+χ²/N 4.1, and the fixed-sky variant shows that most of the descent is the instrument's (2.8 with
+the starting sky). The sky's own closure χ² barely moves (3.86 → 3.79; the closure-only fit of
+2026-09-04 on the Stokes-I file, with 4,096 closures rather than 240 scan-averaged ones,
+reached 1.5), so the products are fitted through the instrument rather than by moving the
+parcels, which is the behaviour Comrade's priors are designed to give. The gain amplitudes stay
+near unity (0.89–1.13 per station; the LMT's scatter 0.19 under its wide prior) and the flux is
+the starting sky's; the phases are free (rms 0.4–1.6 rad per station).
+
+The d-terms per station after the polish, with their Laplace errors (baseline):
+
+| station | D_R | D_L |
+|---|---|---|
+| AA | −0.029 − 0.018i (±0.007) | +0.047 − 0.003i (±0.006) |
+| AP | +0.015 + 0.061i (±0.013) | −0.033 + 0.036i (±0.013) |
+| AZ | +0.086 − 0.046i (±0.005) | −0.105 − 0.043i (±0.006) |
+| JC | (no R feed) | −0.139 + 0.037i (±0.022) |
+| LM | +0.028 − 0.022i (±0.005) | −0.001 − 0.008i (±0.007) |
+| PV | +0.006 + 0.112i (±0.012) | +0.028 + 0.123i (±0.016) |
+| SM | +0.092 + 0.066i (±0.06) | −0.173 + 0.014i (±0.022) |
+
+Magnitudes of a few per cent at ALMA and the LMT and of ten per cent at the SMT, Pico Veleta
+and the SMA, with formal errors of 0.5–1.5% (the SMA's R feed 6%), the range of the 2017
+D-terms of EHT Collaboration (2021, Paper VII); the station-by-station comparison with the
+published table, and with the d-terms of the same file under the tight-prior and no-cut
+variants (a run without the 0.1 Gλ cut gave the same pattern with χ²/N 3.3), is the natural
+next check. What this run does not have: an amplitude reference (the flux is fixed only by the
+sky model), and the priors' widths tuned to this data set rather than Comrade's defaults.
