@@ -138,11 +138,26 @@ threefold; the third band changes little. The fourth parcel (r = 7 M, whose dire
 images fall at the edge of the 16 M field and of the annulus) ends 22% off in density and
 26–31% in field in every band set, along the nₑ–B valley: its marginal Fisher errors are
 0.03 and 0.004, so this is the optimizer's residual (the fits end Δχ² ≈ 1000–3000 above the
-truth's χ², the tail of Adam's descent along a shallow valley), not an information limit. A
-Levenberg–Marquardt polish on the parcel parameters from the fitted point, using the Jacobian
-`fisher` already forms, would finish such fits; it is the natural follow-up. The spacetime
-Fisher errors (σ(a) joint 2.0e-4, 1.1e-4, 0.9e-4) tighten only by two with the extra bands,
-and carry the sampling caveat above.
+truth's χ², the tail of Adam's descent along a shallow valley), not an information limit. The
+spacetime Fisher errors (σ(a) joint 2.0e-4, 1.1e-4, 0.9e-4) tighten only by two with the extra
+bands, and carry the sampling caveat above.
+
+**Polished (2026-09-09, `Fit.polish!`, five Levenberg–Marquardt iterations from the Adam
+endpoints, six minutes each on the CPU).** The Jacobian of the scaled residuals by duals
+through the transfer at fixed geodesics (the one `fisher` forms), damped Gauss–Newton steps
+kept when χ² falls:
+
+| bands (GHz) | χ²/N Adam → polished | nₑ errors | Θe errors | B errors | Laplace σ(ln nₑ), σ(ln Θe), σ(ln B) |
+|---|---|---|---|---|---|
+| 230 | 1.0097 → 1.0048 | 2.7%, 5.8%, 15%, 6.0% | 0.4%, 1.1%, 0.5%, 0.3% | 0.1%, 5.7%, 4.4%, 1.5% | 0.06–0.10, 0.016–0.029, 0.025–0.049 |
+| 86 + 345 | 1.0152 → 1.0005 | 0.1%, 2.4%, 5.1%, 7.1% | 0.08%, 0.06%, 0.35%, 0.06% | 0.15%, 0.15%, 0.28%, 0.31% | 0.024–0.051, 0.0012–0.0018, 0.0031–0.0044 |
+
+The polish finishes what Adam left: the fourth parcel's field comes back to 0.3% at two bands
+(from 26%), every parcel's temperature to better than 0.4%, and the errors now sit within one
+to two Laplace σ, which in turn agree with the Fisher errors at the truth to a few per cent.
+The answer to the multifrequency question is therefore clean: bracketing the turnover pins
+Θe and B to a few tenths of a per cent and nₑ to a few per cent, an order of magnitude beyond
+the single band, with the second band worth far more than a third.
 
 ## Cost
 
