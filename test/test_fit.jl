@@ -665,6 +665,10 @@ function test_polish(; res = 8, N = 40)
         # with priors the polish keeps χ² + penalty going down and the residual norm matches
         q2, h2, _, _ = polish!(copy(p0), movie, cache, L; free, iterations = 2, chunk = 8, priors)
         @test h2[end] <= h2[1] && h2[end] ≈ chi2(q2, movie, cache, L; priors)
+        # with the quaternion rows free JᵀJ is singular along their norm: the step and the covariance stay finite
+        freeq = freeze(p_true, (:x, :y, :q1, :q2, :q3, :q4, :logne))
+        q3, h3, cov3, idx3 = polish!(copy(p0), movie, cache, L; free = freeq, iterations = 2, chunk = 8)
+        @test h3[end] <= h3[1] && all(isfinite, q3) && all(isfinite, cov3) && all(>=(-1e-12 * maximum(abs.(cov3))), diag(cov3))
         @info "polish: χ² $χ0 → $χ1 (truth $χ_true) in 4 LM iterations; worst |Δ|/σ_Laplace $(round(maximum(z); digits = 2)); with priors $(h2[1]) → $(h2[end])"
     end
 end
