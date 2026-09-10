@@ -19,7 +19,7 @@ using KernelAbstractions
 
 const KA = KernelAbstractions
 
-export StokesMovie, chi2, fit!, freeze
+export StokesMovie, chi2, fit!, freeze, step_scale
 
 """
     StokesMovie(data, times, νs, σ; mask = trues(size(data)))
@@ -87,6 +87,31 @@ function freeze(params::AbstractMatrix, rows)
     end
     return free
 end
+
+"""
+    step_scale(params, steps) -> Matrix{T}
+
+Per-entry multipliers of the Adam step: ones everywhere except the rows named in `steps`
+(pairs or a named tuple of row name or index => factor, e.g. `(; omega = 0.05)`), which get
+their factor. Adam's update is invariant to the gradient's scale, so a row that must move more
+slowly than the others (the pattern rates, in rad/M, next to positions in M) needs a smaller
+step, not a smaller gradient: the fitting loops apply the scaled step as
+`old + scale * (new - old)`, which is Adam with a per-entry learning rate since its state does
+not depend on the step.
+"""
+function step_scale(params::AbstractMatrix{T}, steps) where {T}
+    scale = ones(T, size(params))
+    steps === nothing && return scale
+    for (r, f) in pairs(steps)
+        i = r isa Symbol ? findfirst(==(r), POLARIZED_SPLAT_PARAMS) : r
+        i === nothing && throw(ArgumentError("unknown parameter $r"))
+        scale[i, :] .= T(f)
+    end
+    return scale
+end
+
+"Adam's update `new` of `old`, taken with the per-entry step multipliers `scale` (`nothing`: as is)."
+_scaled_update!(new, old, scale) = scale === nothing ? new : (new .= old .+ scale .* (new .- old))
 
 """
     fit!(params, movie, cache, L; free = trues(size(params)), iterations = 100, η = 0.02,
@@ -285,13 +310,14 @@ export fisher, audit, model_values, data_values
 
 # ---- schedules: staged unfreezing, annealing, frequency curriculum, hygiene ----------------------
 """
-    Stage(; free = nothing, iterations = 100, η = 0.02, η_end = η, batch = nothing, freqs = nothing, label = "")
+    Stage(; free = nothing, iterations = 100, η = 0.02, η_end = η, batch = nothing, freqs = nothing, steps = nothing, label = "")
 
 One stage of a fitting schedule: the parameter rows to free (names or indices; `nothing` frees
 all), the number of Adam iterations, the learning rate annealed from `η` to `η_end` (cosine), the
-minibatch `(nframes, nfreqs)` or `nothing` for full batches, and the frequency indices of the
+minibatch `(nframes, nfreqs)` or `nothing` for full batches, the frequency indices of the
 movie that enter (`nothing` for all): the frequency curriculum of the addendum starts with the
-optically and Faraday thin channels and adds the thick ones later.
+optically and Faraday thin channels and adds the thick ones later; and `steps`, per-row
+multipliers of the step (`step_scale`) for rows that must move more slowly than the rest.
 """
 Base.@kwdef struct Stage
     free::Any = nothing
@@ -300,6 +326,7 @@ Base.@kwdef struct Stage
     η_end::Float64 = η
     batch::Any = nothing
     freqs::Any = nothing
+    steps::Any = nothing
     label::String = ""
 end
 
@@ -537,6 +564,7 @@ function _fit_loop!(params::AbstractMatrix{T}, make_valgrad, stages::AbstractVec
     for (si, st) in enumerate(stages)
         free = st.free === nothing ? trues(size(params)) : freeze(params, st.free)
         mask = T.(free)
+        scale = st.steps === nothing ? nothing : step_scale(params, st.steps)
         opt = Optimisers.setup(Optimisers.Adam(st.η), params)
         for it in 1:st.iterations
             η = st.η_end + (st.η - st.η_end) * (1 + cos(π * (it - 1) / max(st.iterations - 1, 1))) / 2
@@ -556,11 +584,14 @@ function _fit_loop!(params::AbstractMatrix{T}, make_valgrad, stages::AbstractVec
                     push!(events, (si, it, before, size(params, 2)))
                     free = st.free === nothing ? trues(size(params)) : freeze(params, st.free)
                     mask = T.(free)
+                    scale = st.steps === nothing ? nothing : step_scale(params, st.steps)
                     opt = Optimisers.setup(Optimisers.Adam(η), params)
                     continue
                 end
             end
+            old = scale === nothing ? nothing : copy(params)
             opt, params = Optimisers.update!(opt, params, g .* mask)
+            _scaled_update!(params, old, scale)
             push!(history, value)
             callback === nothing || callback(si, it, params, value)
         end

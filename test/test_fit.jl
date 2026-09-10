@@ -176,6 +176,21 @@ function test_fit_schedule(; res = 8, N = 60)
         @test maximum(abs.(q1 .- q2)) < 1e-12
         @test h1[1] ≈ chi2(p, movie, cache, L)                      # history holds the loss at the start of each iteration
     end
+    @testset "per-row step multipliers" begin
+        # Adam's state after one iteration does not depend on the step, so the first update of a scaled
+        # row is exactly the factor times the unscaled one and the other rows are untouched
+        one = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 1, η = 0.05)]
+        half = [Fit.Stage(free = (:x, :y, :logne, :logB), iterations = 1, η = 0.05, steps = (; logB = 0.5))]
+        q1, _, _ = Fit.fit!(copy(p), q -> chi2(q, movie, cache, L), one; hygiene = Fit.Hygiene(every = 0))
+        q2, _, _ = Fit.fit!(copy(p), q -> chi2(q, movie, cache, L), half; hygiene = Fit.Hygiene(every = 0))
+        r = Fit.prow(:logB)
+        others = setdiff(1:size(p, 1), r)
+        @test q2[others, :] == q1[others, :]
+        @test maximum(abs.((q2[r, :] .- p[r, :]) .- 0.5 .* (q1[r, :] .- p[r, :]))) < 1e-12
+        @test any(q1[r, :] .!= p[r, :])
+        @test Fit.step_scale(p, (; omega = 0.0))[end, :] == zeros(size(p, 2)) && all(Fit.step_scale(p, (; omega = 0.0))[1:end-1, :] .== 1)
+        @test_throws ArgumentError Fit.step_scale(p, (; nosuchrow = 0.5))
+    end
     @testset "the dual-sweep movie fit follows the Enzyme fit" begin
         # a stored-sample cache on the same Mino grid; a prior so that the host penalty path is exercised too
         stored = GeodesicCache(CPU(), camera, Val(N); store_samples = true)

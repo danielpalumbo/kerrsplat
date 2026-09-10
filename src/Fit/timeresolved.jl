@@ -370,7 +370,7 @@ _instrument_prior_residuals(instrument::Tuple, ::Type{S}) where {S} = S.(instrum
 
 """
     selfcal!(sky, gains, dterms, tr, cache, L, Δα, D, ν; inst, masks, free = trues(size(sky)), iterations = 300, η = 0.005, η_end = η / 10,
-             η_inst = 0.01, nmax = -1, slab = 0, binning = nothing, priors = nothing, method = :dual, callback = nothing)
+             η_inst = 0.01, steps = nothing, nmax = -1, slab = 0, binning = nothing, priors = nothing, method = :dual, callback = nothing)
         -> (sky, gains, dterms, history)
 
 Joint self-calibration by Adam (Comrade's joint sky-and-instrument posterior, here its mode):
@@ -378,14 +378,15 @@ every iteration takes the χ² of the time-resolved observation through the inst
 gradients, the sky's from the dual sweep on the backend of `cache` and the instrument's on the
 host (`timeresolved_gradient!` with `dinstrument`), and updates the free sky entries with the
 cosine-decayed step `η` and the free instrument entries (`masks = free_mask(inst, obs)`) with
-`η_inst`. The sky matrix stays on the host. `history` holds the χ² (with the priors) at the
-start of every iteration.
+`η_inst`; `steps` scales the sky's step row by row (`step_scale`). The sky matrix stays on the
+host. `history` holds the χ² (with the priors) at the start of every iteration.
 """
 function selfcal!(sky::AbstractMatrix{T}, gains::AbstractMatrix{T}, dterms::AbstractMatrix{T}, tr::TimeResolved, cache::GeodesicCache{T}, L, Δα, D, ν;
                   inst::InstrumentModel, masks::Tuple, free = trues(size(sky)), iterations::Integer = 300, η = 0.005, η_end = η / 10, η_inst = 0.01,
-                  nmax = -1, slab = 0, binning = nothing, priors = nothing, method::Symbol = :dual, callback = nothing, image_prior = nothing) where {T}
+                  steps = nothing, nmax = -1, slab = 0, binning = nothing, priors = nothing, method::Symbol = :dual, callback = nothing, image_prior = nothing) where {T}
     gm, dm = masks
     backend = cache.backend
+    scale = steps === nothing ? nothing : step_scale(sky, steps)
     opt = Optimisers.setup(Optimisers.Adam(η), sky)
     optg = Optimisers.setup(Optimisers.Adam(η_inst), gains)
     optd = Optimisers.setup(Optimisers.Adam(η_inst), dterms)
@@ -398,7 +399,9 @@ function selfcal!(sky::AbstractMatrix{T}, gains::AbstractMatrix{T}, dterms::Abst
         dg = zeros(T, size(gains)); dd = zeros(T, size(dterms))
         χ = timeresolved_gradient!(gdev, pdev, tr, cache, L, Δα, D, ν; method, nmax, slab, binning, priors, instrument = (inst, gains, dterms), dinstrument = (dg, dd), image_prior)
         push!(history, χ)
+        old = scale === nothing ? nothing : copy(sky)
         opt, sky = Optimisers.update!(opt, sky, Array(gdev) .* T.(free))
+        Fit._scaled_update!(sky, old, scale)
         optg, gains = Optimisers.update!(optg, gains, dg .* T.(gm))
         optd, dterms = Optimisers.update!(optd, dterms, dd .* T.(dm))
         callback === nothing || callback(it, sky, gains, dterms, χ)

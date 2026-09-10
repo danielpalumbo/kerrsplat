@@ -59,5 +59,7 @@ the baselines kept (> 0.1 Gλ) is the next thing to settle.
 
 A static closure fit alone (`--static`, no pattern rates) for the whole budget, then
 self-calibration from it with the pattern rates still frozen and a weaker flux prior; motion
-afterwards with its own, much smaller step; a snapshot baseline to separate the source's
-variability from the model's inability. STATIC_RESULT
+afterwards with its own, much smaller step (`--eta-omega`, a per-row multiplier of the Adam
+step: Adam's step is scale-free, so a slow row needs a smaller step, not a smaller gradient);
+a snapshot baseline to separate the source's variability from the model's inability.
+STATIC_RESULT
