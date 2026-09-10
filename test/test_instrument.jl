@@ -124,3 +124,45 @@ function test_instrument()
         @info "instrument model: $(inst.nseg) scans, $(nstations(inst)) stations, $(count(gm)) free gain parameters and $(count(dm)) d-term parts; χ² of the unit instrument matches the Stokes χ² to $(abs(χ - χs) / χs)"
     end
 end
+
+"""
+    test_feed_rotation()
+
+The feed rotation angles against ehtim's: the antenna positions of the fixture file against the
+station table ehtim used; the elevation, parallactic angle and feed angle of every station and
+time against the values ehtim applied (test/data/jones_*_matrices.csv), with the mount parameters
+of the dump; `feed_angles` over the observation's rows.
+"""
+function test_feed_rotation()
+    dir = joinpath(@__DIR__, "data")
+    st, hs = readdlm(joinpath(dir, "jones_stations.csv"), ','; header = true)
+    scol(name) = st[:, findfirst(==(name), vec(hs))]
+    names = strip.(string.(scol("site")))
+    xyz_ref = Dict(names[i] => SVector(Float64(scol("x")[i]), Float64(scol("y")[i]), Float64(scol("z")[i])) for i in eachindex(names))
+    mounts = Dict(names[i] => Mount(Float64(scol("fr_par")[i]), Float64(scol("fr_elev")[i]), Float64(scol("fr_off_deg")[i])) for i in eachindex(names))   # f_off in degrees, as dumped
+    obs = read_uvfits(joinpath(dir, "synth_eht2017_noiseless.uvfits"))
+    @testset "feed rotation vs ehtim" begin
+        xyz = antenna_positions(joinpath(dir, "synth_eht2017_noiseless.uvfits"))
+        @test sort(collect(keys(xyz))) == sort(names)
+        @test maximum(norm(xyz[n] - xyz_ref[n]) for n in names) < 1e-3
+        mats, hm = readdlm(joinpath(dir, "jones_raw_matrices.csv"), ','; header = true)
+        mcol(name) = mats[:, findfirst(==(name), vec(hm))]
+        worst_el = 0.0; worst_par = 0.0; worst_φ = 0.0
+        for k in 1:size(mats, 1)
+            site = strip(string(mcol("site")[k])); t = Float64(mcol("time_h")[k])
+            e, p = station_angles(xyz[site], obs.ra, obs.dec, t, obs.mjd)
+            worst_el = max(worst_el, abs(e - Float64(mcol("elev")[k])))
+            worst_par = max(worst_par, abs(rem(p - Float64(mcol("parang")[k]), 2π, RoundNearest)))
+            worst_φ = max(worst_φ, abs(rem(feed_angle(mounts[site], e, p) - Float64(mcol("phi")[k]), 2π, RoundNearest)))
+        end
+        @test worst_el < 1e-4 && worst_par < 5e-4 && worst_φ < 5e-4
+        φ1, φ2 = feed_angles(obs, xyz, mounts)
+        keyof(s, t) = (s, round(t; digits = 6))
+        ref = Dict(keyof(strip(string(mcol("site")[k])), Float64(mcol("time_h")[k])) => Float64(mcol("phi")[k]) for k in 1:size(mats, 1))
+        worst_rows = maximum(max(abs(rem(φ1[r] - ref[keyof(obs.stations[obs.s1[r]], obs.time[r])], 2π, RoundNearest)),
+                                 abs(rem(φ2[r] - ref[keyof(obs.stations[obs.s2[r]], obs.time[r])], 2π, RoundNearest))) for r in 1:length(obs))
+        @test worst_rows < 5e-4
+        @test haskey(EHT_MOUNTS, "AA") && EHT_MOUNTS["SM"].f_off_deg == 45 && feed_angle(EHT_MOUNTS["SM"], 0.0, 0.0) ≈ deg2rad(45)
+        @info "feed rotation vs ehtim over $(size(mats, 1)) station-times: elevation to $worst_el, parallactic angle to $worst_par, feed angle to $worst_φ rad (rows: $worst_rows); sidereal time from the IAU 1982 formula against astropy's"
+    end
+end

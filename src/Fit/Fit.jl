@@ -685,5 +685,6 @@ include("visibilities.jl")
 include("uvfits.jl")
 include("timeresolved.jl")
 include("instrument.jl")
+include("feedrotation.jl")
 
 end

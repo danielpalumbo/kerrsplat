@@ -204,6 +204,28 @@ function read_uvfits(path::AbstractString)
 end
 
 """
+    antenna_positions(path) -> Dict{String,SVector{3,Float64}}
+
+The geocentric positions (metres, the STABXYZ column of the AIPS AN table) of the stations of a
+uvfits file by name, for the feed rotation angles (`feed_angles`).
+"""
+function antenna_positions(path::AbstractString)
+    f = FITSIO.FITS(path)
+    try
+        for k in 2:length(f)
+            h = read_header(f[k])
+            uppercase(strip(string(_hkey(h, "EXTNAME", "")))) == "AIPS AN" || continue
+            names = [strip(String(s)) for s in read(f[k], "ANNAME")]
+            xyz = read(f[k], "STABXYZ")
+            return Dict(names[i] => SVector{3,Float64}(xyz[1, i], xyz[2, i], xyz[3, i]) for i in eachindex(names))
+        end
+        throw(ArgumentError("no AIPS AN table in $path"))
+    finally
+        close(f)
+    end
+end
+
+"""
     scan_triangles(o::Observation; tol = 1e-6) -> Vector{NTuple{3,Int}}
     scan_quadrangles(o::Observation; tol = 1e-6) -> Vector{NTuple{4,Int}}
 
@@ -322,4 +344,4 @@ function average_scans(o::Observation{T}; gap = 0.0165) where {T}
     return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source)
 end
 
-export Observation, read_uvfits, scan_index, average_scans, scan_triangles, scan_quadrangles
+export Observation, read_uvfits, antenna_positions, scan_index, average_scans, scan_triangles, scan_quadrangles
