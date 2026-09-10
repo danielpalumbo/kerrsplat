@@ -32,6 +32,20 @@ struct Observation{T}
     dec::T
     mjd::Int
     source::String
+    coh::Vector{SVector{4,Complex{T}}}      # the circular correlation products (RR, LL, RL, LR)
+    σ_coh::Vector{SVector{4,T}}             # their thermal noise (Inf where a product is absent)
+end
+
+"The products (RR, LL, RL, LR) and their noise from Stokes visibilities and noise (RR = I + V, LL = I − V, RL = Q + iU, LR = Q − iU; the noise adds in quadrature)."
+function _products_from_stokes(vis::SVector{4,Complex{T}}, σ::SVector{4,T}) where {T}
+    sP = sqrt(σ[1]^2 + σ[4]^2); sX = sqrt(σ[2]^2 + σ[3]^2)
+    return SVector(vis[1] + vis[4], vis[1] - vis[4], vis[2] + im * vis[3], vis[2] - im * vis[3]), SVector(sP, sP, sX, sX)
+end
+
+"An observation from Stokes visibilities alone: the correlation products derived from them (`Observation(...; coh, σ_coh)` keeps measured products)."
+function Observation{T}(time, tint, s1, s2, stations, u, v, vis, σ, freq, bandwidth, ra, dec, mjd, source) where {T}
+    pr = [_products_from_stokes(vis[k], σ[k]) for k in eachindex(vis)]
+    return Observation{T}(time, tint, s1, s2, stations, u, v, vis, σ, freq, bandwidth, ra, dec, mjd, source, first.(pr), last.(pr))
 end
 
 Base.length(o::Observation) = length(o.u)
@@ -68,7 +82,9 @@ exports): the UU, VV parameters scaled to wavelengths with the reference frequen
 antenna table (or of the FREQ axis when the table lacks one), the baseline codes decoded as
 256 a₁ + a₂, the two DATE parameters summed to a Julian date, the correlation products (RR,
 LL, RL, LR, or a Stokes basis when the STOKES axis says so) averaged over channels and IFs
-where their weights are positive and finite, and converted to Stokes visibilities. Rows with
+where their weights are positive and finite, and converted to Stokes visibilities; the
+circular products themselves are kept in `coh` (RR, LL, RL, LR) with their own noise `σ_coh`
+(infinite where a product is absent), which the instrument model compares against. Rows with
 no parallel-hand data are dropped; a row with only one parallel hand takes it as Stokes I
 without V; missing cross hands leave Q and U with infinite noise.
 """
@@ -126,6 +142,7 @@ function read_uvfits(path::AbstractString)
         nprod = nstokes
         time = Float64[]; tint = Float64[]; s1 = Int[]; s2 = Int[]; u = Float64[]; v = Float64[]
         vis = SVector{4,ComplexF64}[]; σ = SVector{4,Float64}[]; jds = Float64[]
+        coh = SVector{4,ComplexF64}[]; σ_coh = SVector{4,Float64}[]
         mean = zeros(ComplexF64, nprod); sig = zeros(nprod)
         stride_chan = 3 * nstokes; stride_if = iif === nothing ? 0 : 3 * nstokes * prod(dims[3:iif-1])
         for g in 1:ngroups
@@ -159,12 +176,16 @@ function read_uvfits(path::AbstractString)
                 U = hascross ? (mean[rl] - mean[lr]) / (2im) : 0.0im
                 sQ = hascross ? sqrt(sig[rl]^2 + sig[lr]^2) / 2 : Inf
                 push!(vis, SVector(I, Q, U, V)); push!(σ, SVector(sI, sQ, sQ, sV))
+                prod(j) = j === nothing || !isfinite(sig[j]) ? (0.0im, Inf) : (mean[j], sig[j])
+                pRR, sRR = prod(rr); pLL, sLL = prod(ll); pRL, sRL = prod(rl); pLR, sLR = prod(lr)
+                push!(coh, SVector(pRR, pLL, pRL, pLR)); push!(σ_coh, SVector(sRR, sLL, sRL, sLR))
             else
                 si = slot(1)
                 (si !== nothing && isfinite(sig[si])) || continue
                 comp(k) = (j = slot(k); j === nothing || !isfinite(sig[j]) ? (0.0im, Inf) : (mean[j], sig[j]))
                 Q, sQ = comp(2); U, sU = comp(3); V, sV = comp(4)
                 push!(vis, SVector(mean[si], Q, U, V)); push!(σ, SVector(sig[si], sQ, sU, sV))
+                pr = _products_from_stokes(vis[end], σ[end]); push!(coh, pr[1]); push!(σ_coh, pr[2])
             end
             bl = Int(floor(pscal[ibl] * pars[ibl] + pzero[ibl]))
             a1 = bl ÷ 256; a2 = bl - 256 * a1
@@ -176,7 +197,7 @@ function read_uvfits(path::AbstractString)
         isempty(jds) && throw(ArgumentError("no unflagged parallel-hand data in $path"))
         mjd = Int(floor(minimum(jds) - 2400000.5))
         time = (jds .- 2400000.5 .- mjd) .* 24
-        return Observation{Float64}(time, tint, s1, s2, stations, u, v, vis, σ, rf, bandwidth, ra, dec, mjd, String(source))
+        return Observation{Float64}(time, tint, s1, s2, stations, u, v, vis, σ, rf, bandwidth, ra, dec, mjd, String(source), coh, σ_coh)
     finally
         close(f)
     end
