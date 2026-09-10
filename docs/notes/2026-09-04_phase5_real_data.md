@@ -177,8 +177,39 @@ The d-terms per station after the polish, with their Laplace errors (baseline):
 
 Magnitudes of a few per cent at ALMA and the LMT and of ten per cent at the SMT, Pico Veleta
 and the SMA, with formal errors of 0.5–1.5% (the SMA's R feed 6%), the range of the 2017
-D-terms of EHT Collaboration (2021, Paper VII); the station-by-station comparison with the
-published table, and with the d-terms of the same file under the tight-prior and no-cut
-variants (a run without the 0.1 Gλ cut gave the same pattern with χ²/N 3.3), is the natural
-next check. What this run does not have: an amplitude reference (the flux is fixed only by the
-sky model), and the priors' widths tuned to this data set rather than Comrade's defaults.
+D-terms of EHT Collaboration (2021, Paper VII). What this run does not have: an amplitude
+reference (the flux is fixed only by the sky model), and the priors' widths tuned to this data
+set rather than Comrade's defaults.
+
+### Against the published D-terms: the missing ALMA feed phase
+
+Station by station, the d-terms above are the published ones (Paper VII, Tables 3–5) rotated by
+−90° for R and +90° for L at every station: D_R,ours = −i D_R,pub, D_L,ours = +i D_L,pub. This
+is what a global R−L phase of 90° in the data does (RL → −i RL with the sky's EVPA rotated by
+−45°; the algebra is gated in `test_crosshand_rotation`), and Paper VII's Appendix D names the
+phase: ALMA's Band 6 feeds are rotated by 45° with respect to their projection on the focal
+plane, which leaves a phase offset between the post-converted RCP and LCP signals, applied by
+the collaboration as a global phase to the RL (LR*) products "before performing the analysis".
+The HOPS netcal file lacks it; `Fit.rotate_crosshands(obs, π/2)` applies it (the script's
+`--crosshand-phase 90`), and the refit then gives, against the April 11 low-band values of the
+five imaging and posterior-exploration methods of Table 5 (LMT, SMT, PV) and the campaign
+intra-site values of Tables 3–4 (ALMA, APEX):
+
+| station | ours, D_R (%) | published D_R | ours, D_L | published D_L |
+|---|---|---|---|---|
+| AA | +0.5 − 5.8i (±0.8) | along −i, amplitudes 2.6–7.1 over the campaign (Table 3) | −0.5 − 5.1i (±0.7) | along −i, 2.8–6.1 |
+| AP | −8.7 + 3.1i (±1.3) | −8.67 + 2.96i (±0.70) | +4.0 + 3.1i (±1.3) | 4.66 + 4.58i (±1.20) |
+| AZ | +3.0 + 9.4i (±0.6) | 2.9–4.1 + 6.9–8.8i (five methods) | −2.6 + 8.1i (±0.6) | −3.9 to −5.9 + 9.3–11.0i |
+| LM | +0.6 + 3.9i (±0.5) | 0.7–2.8 + 0.5–4.4i | −0.2 + 1.0i (±0.7) | −0.4 to −1.4 + −0.5–0.9i |
+| PV | −12.2 − 2.3i (±1.1) | −11.3 to −14.2 + −1.2–3.6i | +15.9 − 1.5i (±1.5) | 12.9–16.2 + −1.6–1.6i |
+
+ALMA's d-terms come out along the negative imaginary axis with similar amplitudes, as the
+paper says they must (the X–Y phase offset of the linear feeds); APEX's D_R agrees to 0.1%;
+the SMT, PV and LMT agree within 1–3%, the spread between the published methods. The SMA and
+the JCMT are not comparable in this fit (seven and nine scans, the JCMT's single hand, and the
+SMA's extra R–L phase rotation for its own feed offset that the paper applies separately).
+The unrotated fit had the sky's EVPA off by 45°: any polarimetric result from the 2017 HOPS
+netcal products needs this rotation. With it the products' χ²/N is 1.42 (the sky of run 6 was
+fitted in the unrotated frame and has not fully re-rotated in 300 iterations; the closure χ²
+3.90). Gate `test_dterm_recovery`: ehtim's own seeded d-terms are recovered from its corrupted
+products through this fit to 3e-12, which pins the convention on the simulator's side.

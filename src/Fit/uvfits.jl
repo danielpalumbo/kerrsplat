@@ -204,6 +204,29 @@ function read_uvfits(path::AbstractString)
 end
 
 """
+    rotate_crosshands(o::Observation, θ) -> Observation
+
+The observation with the global phase `θ` (radians) added to its RL products and subtracted
+from its LR products, Q + iU → (Q + iU) e^{iθ}: an EVPA rotation by θ/2. This is the
+correction of the R−L phase offset that ALMA's Band 6 feeds, rotated by 45° with respect to
+their projection on the focal plane, leave in the post-converted signals: EHT Collaboration
+(2021, Paper VII, Appendix D) apply a 90° RL phase "to all the visibilities before performing
+the analysis", and the HOPS netcal products lack it (the d-terms of `m87_jones.jl` agree with
+the published ones only after `rotate_crosshands(obs, π/2)`; without it the fitted sky's EVPA
+is off by 45° and every d-term by ∓90°). Noise is unchanged.
+"""
+function rotate_crosshands(o::Observation{T}, θ) where {T}
+    f = cis(T(θ))
+    function rot(v)
+        rl = (v[2] + im * v[3]) * f; lr = (v[2] - im * v[3]) * conj(f)
+        return SVector(v[1], (rl + lr) / 2, (rl - lr) / (2im), v[4])
+    end
+    vis = [rot(v) for v in o.vis]
+    coh = [SVector(c[1], c[2], c[3] * f, c[4] * conj(f)) for c in o.coh]
+    return Observation{T}(o.time, o.tint, o.s1, o.s2, o.stations, o.u, o.v, vis, o.σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source, coh, o.σ_coh)
+end
+
+"""
     antenna_positions(path) -> Dict{String,SVector{3,Float64}}
 
 The geocentric positions (metres, the STABXYZ column of the AIPS AN table) of the stations of a
@@ -350,4 +373,4 @@ function average_scans(o::Observation{T}; gap = 0.0165) where {T}
     return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source, coh, σ_coh)
 end
 
-export Observation, read_uvfits, antenna_positions, scan_index, average_scans, scan_triangles, scan_quadrangles
+export Observation, read_uvfits, antenna_positions, rotate_crosshands, scan_index, average_scans, scan_triangles, scan_quadrangles

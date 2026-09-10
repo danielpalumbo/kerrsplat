@@ -58,6 +58,13 @@ before any performance work.
 - The full test suite writes its progress to stderr and takes over an hour; run it through a
   pipe (`… 2>&1 | tee log`), since output redirected to a file is buffered until exit.
 
+## Data conventions that bit us
+- EHT 2017 HOPS netcal uvfits files carry the four correlation products without the global 90°
+  RL phase of ALMA's 45° feed offset (EHT Collaboration 2021 Paper VII, Appendix D): apply
+  `Fit.rotate_crosshands(obs, π/2)` before any polarimetric fit, or every d-term comes out
+  rotated by ∓90° and the sky's EVPA by 45° (found against the published D-terms, 2026-09-10).
+- ehtim's circular representation lists some baselines reversed (conjugate-transposed products).
+
 ## Git workflow
 - `main` is changed through pull requests. Work on a branch named `<topic>` (e.g.
   `geodesics-skeleton`), commit in small steps with descriptive messages, push the branch and

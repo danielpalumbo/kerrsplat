@@ -19,12 +19,14 @@ for i in range(len(obs.tarr)):
         obs.tarr[i][f] = arr.tarr[k][f]
     print(obs.tarr[i]['site'], '->', arr.tarr[k]['site'], 'fr', arr.tarr[k]['fr_par'], arr.tarr[k]['fr_elev'], arr.tarr[k]['fr_off'])
 circ = obs.switch_polrep('circ')
+# uniform random phases, 10% gain scatter, R/L amplitude ratios of 10% but no R−L phase difference (a reference station's
+# R−L phase is a gauge the recovery gate fixes at zero), d-terms of 10% per part
 opts = dict(add_th_noise=False, opacitycal=True, ampcal=False, phasecal=False, dcal=False, rlgaincal=False,
-            gainp=0.1, gain_offset=0.1, phase_std=-1, dterm_offset=0.1, rlratio_std=0.1, rlphase_std=0.1, seed=42, verbose=False)
+            gainp=0.1, gain_offset=0.1, phase_std=-1, dterm_offset=0.1, rlratio_std=0.1, rlphase_std=0.0, seed=42, verbose=False)
 for label, frcal in (("corrected", True), ("raw", False)):
     data = sim.add_jones_and_noise(obs, frcal=frcal, **opts)
     jm = sim.make_jones(obs, opacitycal=True, ampcal=False, phasecal=False, dcal=False, frcal=frcal, rlgaincal=False,
-                        gainp=0.1, gain_offset=0.1, phase_std=-1, dterm_offset=0.1, rlratio_std=0.1, rlphase_std=0.1, seed=42)
+                        gainp=0.1, gain_offset=0.1, phase_std=-1, dterm_offset=0.1, rlratio_std=0.1, rlphase_std=0.0, seed=42)
     cor = obs.copy(); cor.data = data; cor = cor.switch_polrep('circ')
     rows = []
     for a, b in zip(circ.data, cor.data):
