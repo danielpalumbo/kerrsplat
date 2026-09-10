@@ -22,15 +22,26 @@ parameter; exactly singular gauge directions such as a quaternion's norm get zer
 """
 function polish!(params::AbstractMatrix{T}, movie::StokesMovie{T}, cache::GeodesicCache{T}, L; free = trues(size(params)), iterations::Integer = 5,
                  λ::Real = 1e-3, chunk::Integer = 8, nmax = -1, slab = 0, binning = nothing, priors = nothing) where {T}
-    idx = findall(vec(free))
     data = data_values(movie)
+    return polish!(params, q -> model_values(q, movie, cache, L; nmax, slab, binning) .- data; free, iterations, λ, chunk, priors)
+end
+
+"""
+    polish!(params, residuals; free = trues(size(params)), iterations = 5, λ = 1e-3, chunk = 8, priors = nothing) -> (params, history, covariance, idx)
+
+The same Levenberg–Marquardt for any scaled residual vector `residuals(params)` of the full
+parameter matrix, generic in its element type (ForwardDiff duals form the Jacobian; the priors
+join as residuals): e.g. `q -> timeresolved_residuals(q, tr, cache, L, Δα, D, ν)`.
+"""
+function polish!(params::AbstractMatrix{T}, residuals_of; free = trues(size(params)), iterations::Integer = 5, λ::Real = 1e-3, chunk::Integer = 8, priors = nothing) where {T}
+    idx = findall(vec(free))
     base = copy(params)
     function residuals(x::AbstractVector{S}) where {S}
         q = S.(base)
         for (k, i) in enumerate(idx)
             q[i] = x[k]
         end
-        return vcat(model_values(q, movie, cache, L; nmax, slab, binning) .- data, prior_residuals(q, priors))
+        return vcat(residuals_of(q), prior_residuals(q, priors))
     end
     x = params[idx]
     cfg = ForwardDiff.JacobianConfig(residuals, x, ForwardDiff.Chunk{min(chunk, length(x))}())

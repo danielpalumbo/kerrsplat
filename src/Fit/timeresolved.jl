@@ -92,6 +92,60 @@ function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::Geodes
     return total
 end
 
+"The scaled residuals of one scan against one screen image (real and imaginary parts per Stokes parameter and baseline; wrapped closure phases and log closure amplitudes), whose squared norm is `scan_loss`."
+function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData})
+    model = visibilities(image, Δα, L, D, s.data.u, s.data.v)
+    S = real(eltype(first(model)))
+    res = S[]
+    for k in eachindex(model)
+        r = (model[k] .- s.data.vis[k]) ./ noise(s.data.σ, k)
+        append!(res, real.(r)); append!(res, imag.(r))
+    end
+    return res
+end
+function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:ClosureData})
+    d = s.data
+    model = visibilities(image, Δα, L, D, d.u, d.v)
+    S = real(eltype(first(model)))
+    res = S[]
+    if !isempty(d.triangles)
+        cp = closure_phases(model, d.triangles)
+        for k in eachindex(cp)
+            push!(res, rem(cp[k] - d.phases[k], 2 * oftype(cp[k], π), RoundNearest) / d.σ_phase[k])
+        end
+    end
+    if !isempty(d.quadrangles)
+        la = log_closure_amplitudes(model, d.quadrangles)
+        for k in eachindex(la)
+            push!(res, (la[k] - d.logamps[k]) / d.σ_logamp[k])
+        end
+    end
+    return res
+end
+
+"""
+    timeresolved_residuals(params, tr, cache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing) -> Vector
+
+The scaled residuals of the splat movie against a time-resolved observation, scan by scan
+(`scan_residuals`), whose squared norm is `chi2_timeresolved` without the priors; generic in the
+element type of `params`, so `polish!(params, q -> timeresolved_residuals(q, ...))` runs the
+Levenberg–Marquardt polish and gives the Laplace covariance for VLBI data.
+"""
+function timeresolved_residuals(params::AbstractMatrix{S}, tr::TimeResolved, cache::GeodesicCache, L, Δα, D, ν; nmax = -1, slab = 0, binning = nothing) where {S}
+    out = Vector{accumulator_type(S, nmax)}(undef, npixels(cache))
+    res = S[]
+    for t in frame_times(tr)
+        fill!(out, zero(eltype(out)))
+        polarized_image!(out, cache, params, S(t), S(ν), S(L); nmax, slab)
+        img = pixel_stokes(to_screen(cache, out), S(ν), binning)
+        for s in tr.scans
+            s.time == t || continue
+            append!(res, scan_residuals(img, Δα, L, D, s))
+        end
+    end
+    return res
+end
+
 """
     ScanCoverage(time, u, v, s1, s2)
 
@@ -170,4 +224,4 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     return TimeResolved([scan(c) for c in cov])
 end
 
-export ScanData, TimeResolved, frame_times, scan_loss, ndata, chi2_timeresolved, timeresolved_gradient!, ScanCoverage, coverage, synthetic_scans
+export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans

@@ -6,8 +6,12 @@
 # domain: the head-to-head with PI-DEF's reconstructions from simulated EHT data.
 #
 #     julia -t 8 --project=../.. winding_vlbi.jl --data <file.uvfits> [--frames 5] [--span 25] [--noise 0.01] [--mode closures|visibilities]
-#                                               [--iterations 1000] [--eta 0.005] [--seed 1] [--tag name] [--polish 0]
+#                                               [--iterations 1000] [--eta 0.005] [--seed 1] [--tag name] [--polish 0] [--init fitted.csv]
 #
+# `--polish N` runs N Levenberg–Marquardt iterations on the time-resolved residuals from the Adam
+# endpoint (CPU Jacobian by duals) and reports the polished recovery with the Laplace errors of
+# the positions and emission rows; `--init file` starts from a saved matrix (`--iterations 0`
+# skips Adam).
 # `--frames F` groups the scans into F frame times over the first `--span` M of the movie (a
 # dual sweep per frame per iteration); `--noise` is the thermal noise as a fraction of the frame's
 # total flux density. Writes output/vlbi_tag/: fitted parameters and a summary.
@@ -20,6 +24,7 @@ const PATH = getstr("--data", "/home/daniel/Dropbox/minimal_closures/SR1_M87_201
 const NFRAMES = getopt("--frames", 5); const SPAN = getopt("--span", 25.0); const NOISE = getopt("--noise", 0.01)
 const MODE = getstr("--mode", "closures"); const ITER = getopt("--iterations", 1000); const ETA = getopt("--eta", 0.005); const SEED = getopt("--seed", 1)
 const TAG = getstr("--tag", MODE)
+const POLISH = getopt("--polish", 0); const INIT = getstr("--init", "")
 const a = 0.94; const θo = deg2rad(17.0); const ν = 230e9
 const M_solar = 6.5e9; const D = 16.8e6 * Transfer.PC; const L = gravitational_radius(M_solar)
 const SLAB = 0.6; const NMAX = 1; const N = 160
@@ -79,6 +84,7 @@ for i in 1:4
     p0[13, i] += 0.2 * randn(rng0); p0[14, i] += 0.1 * randn(rng0); p0[15, i] += 0.15 * randn(rng0)
     p0[19, i] += 0.05 * randn(rng0); p0[21, i] *= 1 + 0.02 * randn(rng0)
 end
+isempty(INIT) || (p0 = Matrix{Float64}(readdlm(INIT, ',')); @info "starting from $INIT")
 χ0 = value_and_gradient(p0)[1]
 @info "start" chi2 = χ0 reduced = χ0 / ndat
 t0 = time()
@@ -87,6 +93,17 @@ q, history, _ = Fit.fit!(copy(p0), x -> chi2_timeresolved(x, tr, cache, L, Δα,
                          hygiene = Fit.Hygiene(every = 0), gradient = value_and_gradient,
                          callback = (si, it, x, v) -> (it % 50 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
 χ1 = value_and_gradient(q)[1]
+laplace = nothing
+if POLISH > 0
+    tP = time()
+    freemask = freeze(truth, FREE); freerows = [i for i in 1:NPOLARIZEDPARAMS if freemask[i, 1]]; nper = length(freerows)
+    q, hist, cov, idx = polish!(copy(q), x -> timeresolved_residuals(x, tr, cache, L, Δα, D, ν; nmax = NMAX, slab = SLAB, binning); free = freemask, iterations = POLISH, chunk = 12)
+    χ1 = hist[end]
+    σp = sqrt.(max.(diag(cov), 0.0))
+    laplace = [σp[(i - 1) * nper + findfirst(==(r), freerows)] for r in (1, 2, 13, 14, 15), i in 1:4]
+    @info "Levenberg–Marquardt polish ($POLISH iterations)" chi2 = hist[1] => hist[end] reduced = χ1 / ndat history = round.(hist ./ ndat; digits = 4) minutes = (time() - tP) / 60
+    @info "Laplace errors per parcel" x_M = round.(laplace[1, :]; sigdigits = 3) y_M = round.(laplace[2, :]; sigdigits = 3) ln_ne = round.(laplace[3, :]; sigdigits = 3) ln_Te = round.(laplace[4, :]; sigdigits = 3) ln_B = round.(laplace[5, :]; sigdigits = 3)
+end
 pos_err = [hypot(q[1, i] - truth[1, i], q[2, i] - truth[2, i], q[3, i] - truth[3, i]) for i in 1:4]
 pos0 = [hypot(p0[1, i] - truth[1, i], p0[2, i] - truth[2, i], p0[3, i] - truth[3, i]) for i in 1:4]
 rel(row) = [abs(exp(q[row, i] - truth[row, i]) - 1) for i in 1:4]
@@ -99,4 +116,5 @@ open(joinpath(outdir, "summary.txt"), "w") do io
     println(io, "chi2 truth $χ_truth start $χ0 end $χ1 (reduced $(χ1 / ndat), truth $(χ_truth / ndat))")
     println(io, "position errors (M): start $pos0 end $pos_err")
     println(io, "relative errors: ne $(rel(13)) Te $(rel(14)) B $(rel(15)) pattern rate $ωerr")
+    laplace === nothing || println(io, "after $POLISH LM iterations, Laplace errors per parcel: x $(laplace[1, :]) y $(laplace[2, :]) ln ne $(laplace[3, :]) ln Te $(laplace[4, :]) ln B $(laplace[5, :])")
 end

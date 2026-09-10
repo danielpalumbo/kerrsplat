@@ -731,6 +731,13 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         ev = maximum(abs.(Array(dparams2) .- gv_host)) / maximum(abs.(gv_host))
         @test abs(χv - χv_host) <= 1e-10 * χv_host
         @test ev <= tol
-        @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames"
+        # the residual vectors square to the χ², and the Levenberg–Marquardt polish runs on them
+        rc = timeresolved_residuals(q, tr, cpu, L, Δα, D, ν); rv = timeresolved_residuals(q, trv, cpu, L, Δα, D, ν)
+        @test length(rc) == ndata(tr) && abs(sum(abs2, rc) - χ_host) <= 1e-12 * χ_host
+        @test length(rv) == ndata(trv) && abs(sum(abs2, rv) - chi2_timeresolved(q, trv, cpu, L, Δα, D, ν)) <= 1e-12 * χv_host
+        freeq = freeze(q, (:x, :y, :logne, :logTe, :logB))
+        qp, hp, covp, idxp = polish!(copy(q), x -> timeresolved_residuals(x, trv, cpu, L, Δα, D, ν); free = freeq, iterations = 3, chunk = 8)
+        @test hp[end] < hp[1] && hp[end] ≈ chi2_timeresolved(qp, trv, cpu, L, Δα, D, ν) && all(isfinite, covp) && length(idxp) == count(freeq)
+        @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end])"
     end
 end
