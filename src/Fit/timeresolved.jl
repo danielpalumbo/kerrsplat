@@ -189,6 +189,37 @@ function timeresolved_residuals(params::AbstractMatrix{S}, tr::TimeResolved, cac
     return res
 end
 
+"""
+    closure_scans(obs::Observation, times; snr = 3) -> TimeResolved
+
+The closure phases and log closure amplitudes of a real observation, scan by scan, as
+`ScanData(times[k], ClosureData)` over the rows of scan k (`scan_index`; the triangles and
+quadrangles of `scan_triangles`/`scan_quadrangles` re-indexed into the scan's rows), the
+uncertainties propagated from the Stokes I noise as the real-data path does and closure
+quantities with a leg below `snr` dropped: the gain-free stage of a time-resolved fit
+(`observed_scans` gives the products through the instrument for the self-calibrated stage).
+"""
+function closure_scans(obs::Observation{T}, times::AbstractVector; snr = 3) where {T}
+    scans = scan_index(obs); nscans = maximum(scans)
+    length(times) == nscans || throw(DimensionMismatch("$(length(times)) times for $nscans scans"))
+    tri = scan_triangles(obs); quad = scan_quadrangles(obs)
+    phases = closure_phases(obs.vis, tri); logamps = log_closure_amplitudes(obs.vis, quad)
+    relnoise(k) = obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1])
+    σ_phase = [sqrt(sum(relnoise(k)^2 for k in t)) for t in tri]
+    σ_logamp = [sqrt(sum(relnoise(k)^2 for k in q)) for q in quad]
+    out = ScanData{T,ClosureData}[]
+    for k in 1:nscans
+        rows = findall(==(k), scans)
+        local_index = Dict(r => i for (i, r) in enumerate(rows))
+        remap(idx) = sign(idx) * local_index[abs(idx)]
+        kt = [i for i in eachindex(tri) if scans[abs(tri[i][1])] == k && σ_phase[i] < 1 / snr]
+        kq = [i for i in eachindex(quad) if scans[abs(quad[i][1])] == k && σ_logamp[i] < 1 / snr]
+        data = ClosureData(obs.u[rows], obs.v[rows], [remap.(tri[i]) for i in kt], phases[kt], σ_phase[kt], [remap.(quad[i]) for i in kq], logamps[kq], σ_logamp[kq])
+        push!(out, ScanData(T(times[k]), data))
+    end
+    return TimeResolved(out)
+end
+
 "Total flux density (Jy) of a screen image of Stokes vectors (cgs) with pixel side `Δα` (M), length unit `L` and distance `D` (cm): the zero-spacing visibility."
 total_flux(img, Δα, L, D) = real(visibilities(img, Δα, L, D, [zero(Δα)], [zero(Δα)])[1][1])
 
@@ -287,7 +318,7 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     return TimeResolved([scan(c) for c in cov])
 end
 
-export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux, scan_times
+export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux, scan_times, closure_scans
 
 # ---- scans compared through the instrument model (self-calibration) --------------------------------
 """

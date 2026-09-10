@@ -10,7 +10,13 @@
 #
 #     julia -t 8 --project=../.. sgra_jones.jl [--data <file.uvfits>] [--res 32] [--samples 60] [--nsplat 8] [--iterations 600] [--eta 0.005] [--eta-gain 0.02]
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
-#                                          [--init params.csv] [--polish 0] [--tag jones]
+#                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal]
+#
+# The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
+# of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
+# products through the per-scan gains jointly with the sky, from `--init` (the closure stage's parameters). A first attempt
+# that self-calibrated straight from the ring stalled at χ²/N 222 with the gains absorbing the sky's wrong flux scale.
+# In both stages the parcels' densities are first scaled so that the model's flux matches the prior.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
 using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Optimisers, Krang, CUDA, Adapt, Printf, Statistics
 
@@ -21,6 +27,7 @@ res = getopt("--res", 32); N = getopt("--samples", 60); nsplat = getopt("--nspla
 η = getopt("--eta", 0.005); ηgain = getopt("--eta-gain", 0.02); a = getopt("--spin", 0.94); inc = getopt("--inc", 150.0)
 fluxprior = getopt("--flux", 2.4); σflux = getopt("--sigma-flux", 0.05); fnoise = getopt("--fnoise", 0.02); uvmin = getopt("--uvmin", 0.1)
 nframes = getopt("--frames", 0); seed = getopt("--seed", 1); init = getstr("--init", ""); npolish = getopt("--polish", 0); tag = getstr("--tag", "jones")
+stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal") || error("--stage must be closures or selfcal")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 4.15e6; D = 8.15e3 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -38,7 +45,7 @@ inst = InstrumentModel(obs; leakage = false, reference = SingleReference("AA")) 
 gm, dm = free_mask(inst, obs)
 tscan = scan_times(obs, M_solar)
 times = nframes > 0 ? (edges = range(minimum(tscan), maximum(tscan), length = nframes + 1); [edges[min(searchsortedlast(edges, t), nframes)] + step(edges) / 2 for t in tscan]) : tscan
-tr = observed_scans(obs, times)
+tr = stage == "closures" ? closure_scans(obs, times) : observed_scans(obs, times)
 ndat = ndata(tr)
 @info "data" file = basename(path) rows = length(obs) scans = inst.nseg frames = length(frame_times(tr)) span_M = round(maximum(tscan); digits = 0) stations = obs.stations products = ndat free_gains = count(gm) fractional_noise = fnoise
 
@@ -60,15 +67,35 @@ end
 isempty(init) || (p = Matrix{Float64}(readdlm(init, ',')); nsplat = size(p, 2); @info "initialized from $init" nsplat)
 free = freeze(p, (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))
 image_prior = img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]
+# the densities scaled so that the first frame's flux matches the prior (the parcels' emission is linear in nₑ where thin)
+F0 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
+if isempty(init)
+    p[13, :] .+= log(fluxprior / F0)
+    F1 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
+    @info "densities scaled to the flux prior" flux_before = F0 flux_after = F1
+end
 gains, dterms = zero_instrument(inst)
-χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms), image_prior)
-@info "start" chi2 = χ0 reduced = χ0 / ndat splats = nsplat
+instrument = stage == "closures" ? nothing : (inst, gains, dterms)
+χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument, image_prior)
+@info "start ($stage)" chi2 = χ0 reduced = χ0 / ndat splats = nsplat
 t0 = time()
-q, gains, dterms, history = selfcal!(copy(p), gains, dterms, tr, gcache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations, η, η_inst = ηgain, binning, image_prior,
-                                     callback = (it, x, g, d, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
-χ1 = chi2_timeresolved(q, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms), image_prior)
-@info "after Adam" chi2 = χ1 reduced = χ1 / ndat minutes = (time() - t0) / 60
-if npolish > 0
+if stage == "closures"
+    function valgrad(x)
+        dp = CUDA.zeros(Float64, size(x))
+        χ = timeresolved_gradient!(dp, CuArray(x), tr, gcache, L, Δα, D, ν; binning, image_prior)
+        return χ, Array(dp)
+    end
+    stages = [Fit.Stage(free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega), iterations, η, η_end = η / 10)]
+    q, history, _ = Fit.fit!(copy(p), x -> chi2_timeresolved(x, tr, cache, L, Δα, D, ν; binning, image_prior), stages; hygiene = Fit.Hygiene(every = 0), gradient = valgrad,
+                             callback = (si, it, x, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
+else
+    q, gains, dterms, history = selfcal!(copy(p), gains, dterms, tr, gcache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations, η, η_inst = ηgain, binning, image_prior,
+                                         callback = (it, x, g, d, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
+    instrument = (inst, gains, dterms)
+end
+χ1 = chi2_timeresolved(q, tr, cache, L, Δα, D, ν; binning, instrument, image_prior)
+@info "after Adam ($stage)" chi2 = χ1 reduced = χ1 / ndat minutes = (time() - t0) / 60
+if npolish > 0 && stage == "selfcal"
     tP = time()
     x0 = pack(q, free, gains, gm, dterms, dm)
     resid(x) = (t = unpack(q, free, gains, gm, dterms, dm, x); timeresolved_residuals(t[1], tr, cache, L, Δα, D, ν; binning, instrument = (inst, t[2], t[3]), image_prior))
@@ -86,15 +113,15 @@ keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
 frames = Dict(t => bin(binning, polarized_cube(cache, q, [t], [ν], L))[:, :, 1, 1] for t in frame_times(tr))
 lines = String[]; χtot_c = 0.0; ntot_c = 0
 for (k, s) in enumerate(tr.scans)
-    rows = s.data.rows; img = frames[s.time]
-    χs = scan_loss(img, Δα, L, D, s, (inst, gains, dterms)); ns = ndata(s)
+    rows = findall(==(k), scans_of_rows); img = frames[s.time]
+    χs = stage == "closures" ? scan_loss(img, Δα, L, D, s) : scan_loss(img, Δα, L, D, s, (inst, gains, dterms)); ns = ndata(s)
     kt = [i for i in eachindex(tri) if keep_t[i] && scans_of_rows[abs(tri[i][1])] == k]; kq = [i for i in eachindex(quad) if keep_q[i] && scans_of_rows[abs(quad[i][1])] == k]
     cdata = ClosureData(obs.u, obs.v, tri[kt], phases[kt], σ_phase[kt], quad[kq], logamps[kq], σ_logamp[kq])
     χc = chi2_closures(img, Δα, L, D, cdata); nc = length(kt) + length(kq)
     global χtot_c += χc; global ntot_c += nc
     F = total_flux(img, Δα, L, D)
     sts = join(obs.stations[sort(unique(vcat(obs.s1[rows], obs.s2[rows])))], " ")
-    push!(lines, @sprintf("scan %2d  UT %6.3f h  t = %6.1f M  %3d products χ²/N %6.2f  %3d closures χ²/N %6.2f  flux %.3f Jy  stations %s", k, mean(obs.time[rows]), s.time, ns, χs / max(ns, 1), nc, nc > 0 ? χc / nc : NaN, F, sts))
+    push!(lines, @sprintf("scan %2d  UT %6.3f h  t = %6.1f M  %3d %s χ²/N %6.2f  %3d closures χ²/N %6.2f  flux %.3f Jy  stations %s", k, mean(obs.time[rows]), s.time, ns, stage == "closures" ? "closures" : "products", χs / max(ns, 1), nc, nc > 0 ? χc / nc : NaN, F, sts))
 end
 @info "per scan\n" * join(lines, "\n")
 @info "sky alone" closure_chi2 = χtot_c closures = ntot_c reduced = χtot_c / max(ntot_c, 1) pattern_rates = round.(q[21, :]; sigdigits = 3) flux_range = extrema(total_flux(frames[t], Δα, L, D) for t in frame_times(tr))
@@ -104,7 +131,7 @@ glines = [@sprintf("%-3s  scans %2d  |gR| %.3f ± %.3f  phase rms %.2f rad  L/R 
 @info "gains per station\n" * join(glines, "\n")
 writedlm(joinpath(outdir, "sgra_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "sgra_$(tag)_gains.csv"), gains, ',')
 open(joinpath(outdir, "sgra_$(tag)_summary.txt"), "w") do io
-    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood with per-scan R/L gains: $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat product values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc")
+    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage $stage: $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat data values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc, init '$init'")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky per frame $χtot_c over $ntot_c (reduced $(χtot_c / max(ntot_c, 1)))")
     println(io, "pattern rates: $(q[21, :])")
     foreach(l -> println(io, l), lines); foreach(l -> println(io, l), glines)

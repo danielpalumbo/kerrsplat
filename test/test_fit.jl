@@ -759,6 +759,19 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         GMc3 = gravitational_radius(4.15e6) / Transfer.CL
         @test abs(GMc3 - 20.45) < 0.1 && all(abs.(tM .- (means .- means[1]) .* 3600 ./ GMc3) .< 1e-9)
         @test scan_times(obs, 4.15e6; t_ref = means[1] - 1.0)[1] ≈ 3600 / GMc3
+        # real closure data scan by scan: the sum over scans of the per-scan closure χ² of an image equals the χ² of the
+        # same closures on the whole observation's row set (legs below 3σ dropped in both)
+        cs = closure_scans(obs, tM)
+        @test length(cs) == nsc && all(cs.scans[k].time == tM[k] for k in 1:nsc)
+        img0 = polarized_image(cpu, p, 0.0, ν, L)
+        tri = scan_triangles(obs); quad = scan_quadrangles(obs)
+        rel(k) = obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1])
+        σt = [sqrt(sum(rel(k)^2 for k in t)) for t in tri]; σq = [sqrt(sum(rel(k)^2 for k in q)) for q in quad]
+        kt = σt .< 1 / 3; kq = σq .< 1 / 3
+        whole = ClosureData(obs.u, obs.v, tri[kt], closure_phases(obs.vis, tri)[kt], σt[kt], quad[kq], log_closure_amplitudes(obs.vis, quad)[kq], σq[kq])
+        χwhole = chi2_closures(img0, Δα, L, D, whole)
+        χscans = sum(scan_loss(img0, Δα, L, D, s) for s in cs.scans)
+        @test ndata(cs) == count(kt) + count(kq) && abs(χscans - χwhole) <= 1e-10 * χwhole
         @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end]); a Sgr A* night of $(round(means[end] - means[1]; digits = 1)) h is $(round(tM[end]; digits = 0)) M"
     end
 end
