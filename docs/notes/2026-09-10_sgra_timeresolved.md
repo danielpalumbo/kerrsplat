@@ -33,9 +33,31 @@ variable, low-inclination source that static geometric models fit at χ²/N of a
 failure is the optimization from a ring with nineteen free rows per parcel and motion, in the
 600 iterations a 45-minute budget allows.
 
+## The staged protocol, and what it showed
+
+The closure stage rerun as the M87 fits were staged (`--staged`, 300 iterations each): the
+geometry and densities first with the pattern rates at zero, then the plasma rows, then
+everything. The trace by stage:
+
+| stage | free rows | closure χ²/N (with the flux prior) at iterations 100, 200, 300 |
+|---|---|---|
+| 1, static geometry | centres, sizes, orientations, densities | 8.7, 5.6, 5.1 |
+| 2, plasma | densities, temperatures, fields, field angles, velocities | 5.14, 5.13, 5.12 |
+| 3, everything | all, pattern rates free | 77, 40, 32 |
+
+A static eight-parcel sky fits the closures of the whole track at χ²/N 5.1 (from 47), the
+plasma rows add nothing the closures see, and freeing the pattern rates at the common Adam
+step wrecks the sky within a hundred iterations: 0.005 rad/M per iteration is a Keplerian
+rate after twenty, and the rates ran to ±0.06–0.09 rad/M. That is the failure of the runs
+above too, whose rates started free. The self-calibration from the staged sky (products
+χ²/N 9179 → 229, gains 0.50–0.90 with ALMA and the SPT at 0.56) repeats the earlier one's
+amplitude mismatch: with the model's flux held at 2.4 Jy by the prior, the gains absorb the
+difference between a compact ring's amplitudes and the data's, so the day's compact flux on
+the baselines kept (> 0.1 Gλ) is the next thing to settle.
+
 ## Next
 
-A staged closure protocol as the M87 fits used (geometry and densities with a static sky, then
-the plasma rows, then motion; `--staged`), longer schedules, a snapshot-model baseline (the
-same parcels fitted scan by scan without motion, to separate the source's variability from the
-model's inability), and the flux prior checked against the day's compact flux. STAGED_RESULT
+A static closure fit alone (`--static`, no pattern rates) for the whole budget, then
+self-calibration from it with the pattern rates still frozen and a weaker flux prior; motion
+afterwards with its own, much smaller step; a snapshot baseline to separate the source's
+variability from the model's inability. STATIC_RESULT

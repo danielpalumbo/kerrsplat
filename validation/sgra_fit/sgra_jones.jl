@@ -10,7 +10,7 @@
 #
 #     julia -t 8 --project=../.. sgra_jones.jl [--data <file.uvfits>] [--res 32] [--samples 60] [--nsplat 8] [--iterations 600] [--eta 0.005] [--eta-gain 0.02]
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
-#                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal] [--staged]
+#                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal] [--staged] [--static]
 #
 # The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
 # of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
@@ -18,7 +18,9 @@
 # that self-calibrated straight from the ring stalled at χ²/N 222 with the gains absorbing the sky's wrong flux scale.
 # In both stages the parcels' densities are first scaled so that the model's flux matches the prior. `--staged` runs the
 # closure stage as the M87 fits did: the geometry and densities first (pattern rates at zero: a static sky), then the
-# plasma rows, then everything with the pattern rates free, `--iterations` each.
+# plasma rows, then everything with the pattern rates free, `--iterations` each. `--static` freezes the pattern rates at
+# zero in every stage (the staged run showed the static geometry stage reaching a closure χ²/N of 5 and the pattern rates,
+# freed at the common Adam step of 0.005 rad/M per iteration, wrecking it within a hundred iterations).
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
 using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Optimisers, Krang, CUDA, Adapt, Printf, Statistics
 
@@ -29,7 +31,7 @@ res = getopt("--res", 32); N = getopt("--samples", 60); nsplat = getopt("--nspla
 η = getopt("--eta", 0.005); ηgain = getopt("--eta-gain", 0.02); a = getopt("--spin", 0.94); inc = getopt("--inc", 150.0)
 fluxprior = getopt("--flux", 2.4); σflux = getopt("--sigma-flux", 0.05); fnoise = getopt("--fnoise", 0.02); uvmin = getopt("--uvmin", 0.1)
 nframes = getopt("--frames", 0); seed = getopt("--seed", 1); init = getstr("--init", ""); npolish = getopt("--polish", 0); tag = getstr("--tag", "jones")
-stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal") || error("--stage must be closures or selfcal"); staged = "--staged" in ARGS
+stage = getstr("--stage", "selfcal"); stage in ("closures", "selfcal") || error("--stage must be closures or selfcal"); staged = "--staged" in ARGS; static = "--static" in ARGS
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 4.15e6; D = 8.15e3 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -67,7 +69,8 @@ for i in 1:nsplat
                0.0, log(1e9), log(1e6), log(20.0), log(30.0), π / 2, π / 2, 0.0, 0.35, 0.0, 0.0]
 end
 isempty(init) || (p = Matrix{Float64}(readdlm(init, ',')); nsplat = size(p, 2); @info "initialized from $init" nsplat)
-free = freeze(p, (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))
+free = freeze(p, static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
+                          (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))
 image_prior = img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]
 # the densities scaled so that the first frame's flux matches the prior (the parcels' emission is linear in nₑ where thin)
 F0 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
@@ -87,7 +90,8 @@ if stage == "closures"
         χ = timeresolved_gradient!(dp, CuArray(x), tr, gcache, L, Δα, D, ν; binning, image_prior)
         return χ, Array(dp)
     end
-    allrows = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega)
+    allrows = static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
+                       (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega)
     stages = staged ? [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne), iterations, η = 2η, η_end = η / 2, label = "geometry, static"),
                        Fit.Stage(; free = (:logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3), iterations, η, η_end = η / 5, label = "plasma"),
                        Fit.Stage(; free = allrows, iterations, η, η_end = η / 10, label = "everything, pattern rates free")] :
@@ -137,7 +141,7 @@ glines = [@sprintf("%-3s  scans %2d  |gR| %.3f ± %.3f  phase rms %.2f rad  L/R 
 @info "gains per station\n" * join(glines, "\n")
 writedlm(joinpath(outdir, "sgra_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "sgra_$(tag)_gains.csv"), gains, ',')
 open(joinpath(outdir, "sgra_$(tag)_summary.txt"), "w") do io
-    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage $stage: $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat data values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc, init '$init'")
+    println(io, "Sgr A* 2017 April 11 low band through the time-resolved likelihood, stage $stage$(staged ? " (staged)" : "")$(static ? " (static)" : ""): $(length(obs)) rows, $(inst.nseg) scans in $(length(frame_times(tr))) frames over $(round(maximum(tscan); digits = 0)) M, $ndat data values, $(count(gm)) gains, $nsplat parcels, flux prior $fluxprior ± $σflux Jy, noise floor $fnoise, uvmin $uvmin, $iterations iterations, spin $a inclination $inc, init '$init'")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky per frame $χtot_c over $ntot_c (reduced $(χtot_c / max(ntot_c, 1)))")
     println(io, "pattern rates: $(q[21, :])")
     foreach(l -> println(io, l), lines); foreach(l -> println(io, l), glines)
