@@ -101,11 +101,10 @@ all reachable with the existing pieces.
 Gain fitting follows Comrade.jl's structure (Daniel, 2026-09-09): `Fit.InstrumentModel`
 (`src/Fit/instrument.jl`, gated against ehtim's Jones simulator) carries the coherency-basis
 RIME with per-scan complex feed gains, leakage per track, the feed rotation (R† G D R for
-EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's priors. Still
-to come on it: the feed rotation angles from the antenna table (the model takes them as
-input; ehtim's angles are in the fixtures for the gate), and the joint sky-plus-instrument
-fit inside the time-resolved likelihood (the static self-calibration in `validation/m87_fit`
-predates the model).
+EHT-pipeline products, G D R raw), a reference-station phase gauge and Comrade's priors, and the feed rotation angles from the
+antenna table (`feed_angles`, ehtim's formulas, to 2.4e-4 rad of ehtim's; the EHT mounts in
+`EHT_MOUNTS`). Still to come on it: the joint sky-plus-instrument fit inside the time-resolved
+likelihood (the static self-calibration in `validation/m87_fit` predates the model).
 
 Open, roughly in order of value: the two items above; more parcels in the joint
 self-calibration update with densification; a smooth background component for extended flux and a
