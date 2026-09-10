@@ -11,8 +11,11 @@
 # 2017 D-terms (EHT Collaboration 2021, Paper VII).
 #
 #     julia -t 8 --project=../.. m87_jones.jl [--data <file.uvfits>] [--init params.csv] [--res 32] [--samples 60] [--iterations 300] [--eta 0.005] [--eta-gain 0.02] [--polish 6] [--fnoise 0.02] [--tag jones]
+#                                          [--no-leakage] [--sigma-lg 0.2] [--sigma-lgrat 0.1] [--raw] [--fix-sky]
+# `--no-leakage` drops the d-terms, `--sigma-lg` sets the log-amplitude prior width (Comrade's 0.2; the LMT keeps 1.0 unless it is
+# tighter), `--raw` uses the raw-data Jones chain G D R instead of R† G D R, `--fix-sky` fits the instrument alone on the starting sky.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
-using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Optimisers, Krang, CUDA, Adapt, Printf
+using KernelAbstractions, StaticArrays, LinearAlgebra, Random, DelimitedFiles, Optimisers, Krang, CUDA, Adapt, Printf, Statistics
 
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
 getstr(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : ARGS[i+1])
@@ -21,6 +24,7 @@ init = getstr("--init", joinpath(@__DIR__, "output", "m87_selfcal6_params.csv"))
 res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--iterations", 300)
 η = getopt("--eta", 0.005); ηgain = getopt("--eta-gain", 0.02); npolish = getopt("--polish", 6); fnoise = getopt("--fnoise", 0.02)
 tag = getstr("--tag", "jones"); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
+leakage = !("--no-leakage" in ARGS); σ_lg = getopt("--sigma-lg", 0.2); σ_lgrat = getopt("--sigma-lgrat", 0.1); corrected = !("--raw" in ARGS); fixsky = "--fix-sky" in ARGS
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -33,7 +37,7 @@ end
 xyz = antenna_positions(path)
 mounts = Dict(s => EHT_MOUNTS[s] for s in obs.stations)
 φ1, φ2 = feed_angles(obs, xyz, mounts)
-inst = InstrumentModel(obs; feedangles = (φ1, φ2), reference = SingleReference("AA"))
+inst = InstrumentModel(obs; feedangles = (φ1, φ2), reference = SingleReference("AA"), leakage, corrected, σ_lg, σ_lg_station = Dict("LM" => max(1.0, σ_lg)), σ_lgrat)
 gm, dm = free_mask(inst, obs)
 tr = observed_scans(obs, zeros(inst.nseg))                                # one frame: M87 is static over the night
 ndat = ndata(tr)
@@ -45,8 +49,18 @@ camera, binning = binned_grid((-fov / 2, fov / 2), (-fov / 2, fov / 2), res)
 cache = GeodesicCache(CPU(), camera, Val(N); store_samples = false); regenerate!(cache, a, θo; marcher = Fused(64))
 gcache = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = true); regenerate!(gcache, a, θo; marcher = Recurrence(64))
 p = Matrix{Float64}(readdlm(init, ','))
-free = freeze(p, (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3))
+free = fixsky ? falses(size(p)) : freeze(p, (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3))
 gains, dterms = zero_instrument(inst)
+# the closure quantities of the data (Stokes I, gain-independent) for the sky alone, before and after
+tri = scan_triangles(obs); quad = scan_quadrangles(obs)
+phases = closure_phases(obs.vis, tri); σ_phase = [sqrt(sum((obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1]))^2 for k in t)) for t in tri]
+logamps = log_closure_amplitudes(obs.vis, quad); σ_logamp = [sqrt(sum((obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1]))^2 for k in qd)) for qd in quad]
+keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
+cdata = ClosureData(obs.u, obs.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q])
+nclos = count(keep_t) + count(keep_q)
+closure_chi2(x) = chi2_closures(bin(binning, polarized_cube(cache, x, [0.0], [ν], L))[:, :, 1, 1], Δα, L, D, cdata)
+χc0 = closure_chi2(p)
+@info "starting sky alone" closure_chi2 = χc0 reduced = χc0 / nclos closure_quantities = nclos leakage = leakage corrected = corrected σ_lg = σ_lg fix_sky = fixsky
 χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms))
 @info "start (unit instrument)" chi2 = χ0 reduced = χ0 / ndat splats = size(p, 2)
 t0 = time()
@@ -69,12 +83,7 @@ if npolish > 0
 end
 # the sky alone against the closure quantities (gain-independent), as the earlier runs reported it
 img = bin(binning, polarized_cube(cache, q, [0.0], [ν], L))[:, :, 1, 1]
-tri = scan_triangles(obs); quad = scan_quadrangles(obs)
-phases = closure_phases(obs.vis, tri); σ_phase = [sqrt(sum((obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1]))^2 for k in t)) for t in tri]
-logamps = log_closure_amplitudes(obs.vis, quad); σ_logamp = [sqrt(sum((obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1]))^2 for k in qd)) for qd in quad]
-keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
-cdata = ClosureData(obs.u, obs.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q])
-χc = chi2_closures(img, Δα, L, D, cdata); nclos = count(keep_t) + count(keep_q)
+χc = chi2_closures(img, Δα, L, D, cdata)
 flux = real(visibilities(img, Δα, L, D, [0.0], [0.0])[1][1])
 @info "sky alone" closure_chi2 = χc reduced = χc / nclos flux_Jy = flux
 # the instrument: gain amplitudes and phases per station, the d-terms with their Laplace errors
@@ -92,6 +101,7 @@ end
 writedlm(joinpath(outdir, "m87_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "m87_$(tag)_gains.csv"), gains, ','); writedlm(joinpath(outdir, "m87_$(tag)_dterms.csv"), dterms, ',')
 open(joinpath(outdir, "m87_$(tag)_summary.txt"), "w") do io
     println(io, "M87 2017 full polarization through the instrument model: $(length(obs)) rows, $(inst.nseg) scans, $ndat product values, $(count(gm)) gains, $(count(dm)) d-term parts, fractional noise $fnoise")
-    println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky $χc over $nclos (reduced $(χc / nclos)); flux $flux Jy")
+    println(io, "options: leakage $leakage, corrected $corrected, sigma_lg $σ_lg, fix_sky $fixsky")
+    println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky $χc0 → $χc over $nclos (reduced $(χc0 / nclos) → $(χc / nclos)); flux $flux Jy")
     foreach(l -> println(io, l), lines)
 end
