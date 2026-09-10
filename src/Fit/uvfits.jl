@@ -326,22 +326,28 @@ function average_scans(o::Observation{T}; gap = 0.0165) where {T}
         push!(groups[key], r)
     end
     time = T[]; tint = T[]; s1 = Int[]; s2 = Int[]; u = T[]; v = T[]
-    vis = SVector{4,Complex{T}}[]; σ = SVector{4,T}[]
+    vis = SVector{4,Complex{T}}[]; σ = SVector{4,T}[]; coh = SVector{4,Complex{T}}[]; σ_coh = SVector{4,T}[]
+    # the Stokes parameters and the correlation products are averaged separately, each over the rows where it is
+    # present: a single-polarization station (the JCMT in 2017) keeps its one parallel hand in the products
+    function average(values, noises, rows)
+        vk = zeros(Complex{T}, 4); sk = fill(T(Inf), 4)
+        for k in 1:4
+            present = [r for r in rows if isfinite(noises[r][k])]
+            isempty(present) && continue
+            vk[k] = sum(values[r][k] for r in present) / length(present)
+            sk[k] = sqrt(sum(noises[r][k]^2 for r in present)) / length(present)
+        end
+        return SVector{4}(vk), SVector{4}(sk)
+    end
     for key in order
         rows = groups[key]
         push!(time, minimum(o.time[r] for r in rows)); push!(tint, sum(o.tint[r] for r in rows))
         push!(s1, key[2]); push!(s2, key[3])
         push!(u, sum(o.u[r] for r in rows) / length(rows)); push!(v, sum(o.v[r] for r in rows) / length(rows))
-        vk = zeros(Complex{T}, 4); sk = fill(T(Inf), 4)
-        for k in 1:4
-            present = [r for r in rows if isfinite(o.σ[r][k])]
-            isempty(present) && continue
-            vk[k] = sum(o.vis[r][k] for r in present) / length(present)
-            sk[k] = sqrt(sum(o.σ[r][k]^2 for r in present)) / length(present)
-        end
-        push!(vis, SVector{4}(vk)); push!(σ, SVector{4}(sk))
+        vk, sk = average(o.vis, o.σ, rows); push!(vis, vk); push!(σ, sk)
+        ck, sck = average(o.coh, o.σ_coh, rows); push!(coh, ck); push!(σ_coh, sck)
     end
-    return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source)
+    return Observation{T}(time, tint, s1, s2, o.stations, u, v, vis, σ, o.freq, o.bandwidth, o.ra, o.dec, o.mjd, o.source, coh, σ_coh)
 end
 
 export Observation, read_uvfits, antenna_positions, scan_index, average_scans, scan_triangles, scan_quadrangles
