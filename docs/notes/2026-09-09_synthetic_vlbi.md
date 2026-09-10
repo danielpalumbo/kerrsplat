@@ -66,6 +66,34 @@ case: the motion is what the time resolution measures.)
   All three are within the existing machinery: `synthetic_scans` takes any coverage, the
   self-calibration path has per-scan gains, and the likelihood sums over bands.
 
+## Self-calibration through the instrument model (2026-09-10)
+
+The same truth on the same coverage, but the data are the correlation products RR, LL, RL, LR
+corrupted by a seeded instrument with Comrade's structure (`docs/STATUS.md`, `Fit.InstrumentModel`):
+per-scan complex R and L gains with 0.15 rms in log-amplitude and phase (372 free entries over
+22 scans with a reference station, ALMA), d-terms of 0.05 rms per part (32), and the real feed
+rotation of the EHT array from the antenna table (angles from −3.1 to 3.9 rad); thermal noise
+1% of the flux (1728 real values). Sky and instrument are fitted jointly from the same
+perturbed sky and a unit instrument (`Fit.selfcal!`: 500 Adam iterations, the sky's gradient
+by the dual sweep on the GPU and the instrument's by ForwardDiff on the host, 9 minutes), then
+six joint Levenberg–Marquardt iterations over the 480 parameters (6 minutes) with the Laplace
+covariance (`validation/winding/winding_vlbi.jl --mode selfcal`).
+
+| | χ²/N (truth 1.34) | positions (M) | Laplace σ(x), σ(y) (M) | gains, rms error (worst) | d-terms, rms error (worst) |
+|---|---|---|---|---|---|
+| unit instrument, start | 295 | 0.41–0.75 | | | |
+| after Adam | 1.33 | | | 0.045 | 0.021 |
+| after the polish | 1.20 | 0.09–0.26 | 0.03–0.15 | 0.033 (3.9σ) | 0.020 (2.3σ) |
+
+Against the calibrated-visibility fit above (positions to 0.013–0.19 M, σ 0.02–0.09 M), the
+instrument's freedom costs a factor of two to three in the positions and nothing in the
+pattern rates (0.05–0.75%); the plasma rows stay unconstrained (σ(ln Θe) 0.5–1.2, σ(ln B)
+0.9–1.7, σ(ln nₑ) 1–3.9), as with calibrated data. The gains come back to 0.03 in
+log-amplitude and phase, within their Laplace errors (median 0.018), the d-terms to 0.02
+(median σ 0.003, the worst 2.3σ); with 400 instrument parameters against 1728 values the fit
+sits below the truth's χ², absorbing noise, which is the price Comrade's priors are there to
+limit and which the closure-only and calibrated variants bracket from either side.
+
 ## What the machinery does
 
 `ScanData(time, data)` carries a scan's frame time and its `VisibilityData` or `ClosureData`;
@@ -78,5 +106,11 @@ observation's scans with chosen frame times; `synthetic_scans` renders the frame
 noise. Gate `test_timeresolved`: zero-noise synthetic visibilities equal the frames' DFT, the
 per-scan χ² by hand, the device gradient against host Enzyme (closures 1e-14 CPU / 1.6e-13
 CUDA, visibilities with a prior 4e-15 / 1.3e-14), the residual norms against the χ², and the
-polish on the residuals. Real observations still need the UT-to-M mapping of scan times and
-per-scan gains inside the time-resolved loss (the static self-calibration path has both).
+polish on the residuals. `ObservedScan` carries the rows of an observation compared through the
+instrument (`instrument = (model, gains, dterms)` in the χ², the gradient, which then also
+returns the instrument's gradient through `dinstrument`, and the residuals); `selfcal!` is the
+joint Adam loop, `levenberg_marquardt!` with `pack`/`unpack` the joint polish. Gate
+`test_selfcal`: the sky, gain and d-term gradients against host Enzyme and ForwardDiff to
+1e-16, the instrument recovered from unit gains with the sky fixed within 2.8σ, a joint polish
+and a joint Adam loop lowering χ². Real observations still need the UT-to-M mapping of scan
+times.

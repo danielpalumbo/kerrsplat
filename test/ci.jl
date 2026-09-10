@@ -50,4 +50,5 @@ include("test_fit.jl")
     test_binning(CPU(); res = 4, N = 24, tol = 1e-9, label = "CPU backend")
     test_polish(; res = 6, N = 24)
     test_timeresolved(CPU(); res = 4, N = 12, tol = 1e-9, label = "CPU backend")
+    test_selfcal(CPU(); res = 4, N = 12, tol = 1e-9, label = "CPU backend")
 end

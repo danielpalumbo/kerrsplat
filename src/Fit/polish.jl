@@ -43,7 +43,22 @@ function polish!(params::AbstractMatrix{T}, residuals_of; free = trues(size(para
         end
         return vcat(residuals_of(q), prior_residuals(q, priors))
     end
-    x = params[idx]
+    x, history, covariance = levenberg_marquardt!(params[idx], residuals; iterations, λ, chunk)
+    params[idx] .= x
+    return params, history, covariance, idx
+end
+
+"""
+    levenberg_marquardt!(x, residuals; iterations = 5, λ = 1e-3, chunk = 8) -> (x, history, covariance)
+
+The Levenberg–Marquardt core of `polish!` on a plain parameter vector `x` and a scaled residual
+function `residuals(x)` generic in its element type: the Jacobian by ForwardDiff duals (`chunk`
+partials at a time), damped Gauss–Newton steps kept when the squared norm falls (λ then falls
+by 3, otherwise grows by 10), and the pseudo-inverse of JᵀJ at the end (the Laplace
+covariance; exactly singular gauge directions get zero variance).
+"""
+function levenberg_marquardt!(x::AbstractVector{T}, residuals; iterations::Integer = 5, λ::Real = 1e-3, chunk::Integer = 8) where {T}
+    x = copy(x)
     cfg = ForwardDiff.JacobianConfig(residuals, x, ForwardDiff.Chunk{min(chunk, length(x))}())
     r = residuals(x); χ = sum(abs2, r)
     history = T[χ]
@@ -51,7 +66,10 @@ function polish!(params::AbstractMatrix{T}, residuals_of; free = trues(size(para
     damping = T(λ)
     for it in 1:iterations
         A = Symmetric(J' * J); g = J' * r
-        step = -(A + damping * Diagonal(diag(A))) \ g
+        # Marquardt's scaling with a floor: a parameter the residuals do not see (a zero column of J) would otherwise
+        # leave the damped system singular; the floor keeps its step at zero
+        d = diag(A); floor = 1e-12 * max(maximum(d), eps(T))
+        step = -(A + damping * Diagonal(max.(d, floor))) \ g
         xn = x .+ step
         rn = residuals(xn); χn = sum(abs2, rn)
         if χn < χ
@@ -63,11 +81,26 @@ function polish!(params::AbstractMatrix{T}, residuals_of; free = trues(size(para
         end
         push!(history, χ)
     end
-    params[idx] .= x
-    # the pseudo-inverse: JᵀJ is exactly singular along every parcel's quaternion-norm direction (a gauge, the
-    # rotation is invariant), and those directions get zero variance rather than poisoning the inverse
     covariance = pinv(Matrix(Symmetric(J' * J)); rtol = 1e-12)
-    return params, history, covariance, idx
+    return x, history, covariance
 end
 
-export polish!
+"""
+    pack(sky, free, gains, gm, dterms, dm) -> Vector
+    unpack!(sky, free, gains, gm, dterms, dm, x)
+
+The joint parameter vector of a self-calibration (the free sky entries, then the free gain
+entries, then the free d-term entries; column-major order within each block) and its inverse.
+"""
+pack(sky, free, gains, gm, dterms, dm) = vcat(sky[findall(vec(free))], gains[findall(vec(gm))], dterms[findall(vec(dm))])
+function unpack!(sky, free, gains, gm, dterms, dm, x)
+    i1 = findall(vec(free)); i2 = findall(vec(gm)); i3 = findall(vec(dm))
+    sky[i1] .= x[1:length(i1)]; gains[i2] .= x[length(i1)+1:length(i1)+length(i2)]; dterms[i3] .= x[length(i1)+length(i2)+1:end]
+    return sky, gains, dterms
+end
+"The joint parameters as new matrices of the element type of `x` (for duals)."
+function unpack(sky, free, gains, gm, dterms, dm, x::AbstractVector{S}) where {S}
+    return unpack!(S.(sky), free, S.(gains), gm, S.(dterms), dm, x)
+end
+
+export polish!, levenberg_marquardt!, pack, unpack, unpack!

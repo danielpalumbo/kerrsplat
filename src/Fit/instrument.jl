@@ -124,14 +124,16 @@ zero_instrument(im::InstrumentModel{T}) where {T} = (gains = zeros(T, ngainrows(
     free_mask(im) -> (gains, dterms)
 
 Which instrument parameters a fit moves: the reference station's phases (gp_R and gp_rat) in
-each segment are held at zero (the gauge), and the d-terms only with `leakage`; columns of
-stations absent from a segment are held too.
+each segment are held at zero (the gauge), the d-terms only with `leakage` and only for
+stations that appear in the data; columns of stations absent from a segment are held too.
 """
 function free_mask(im::InstrumentModel, o::Observation)
     gm = falses(ngainrows(im), nstations(im) * im.nseg)
+    present = falses(nstations(im))
     for r in eachindex(im.seg)
         g = im.seg[r]
         for s in (o.s1[r], o.s2[r])
+            present[s] = true
             c = gain_column(im, s, g)
             gm[1, c] = true
             gm[2, c] = s != im.ref[g]
@@ -141,7 +143,9 @@ function free_mask(im::InstrumentModel, o::Observation)
             end
         end
     end
-    return gm, trues(4, nstations(im)) .& im.leakage
+    dm = falses(4, nstations(im))
+    im.leakage && (dm[:, present] .= true)
+    return gm, dm
 end
 
 "The complex gains (g_R, g_L) of station `s` in segment `g` (the reference station's phases forced to zero)."
