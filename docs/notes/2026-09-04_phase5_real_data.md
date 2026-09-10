@@ -213,3 +213,16 @@ netcal products needs this rotation. With it the products' χ²/N is 1.42 (the s
 fitted in the unrotated frame and has not fully re-rotated in 300 iterations; the closure χ²
 3.90). Gate `test_dterm_recovery`: ehtim's own seeded d-terms are recovered from its corrupted
 products through this fit to 3e-12, which pins the convention on the simulator's side.
+
+### With an amplitude anchor (`--flux 0.6 --sigma-flux 0.01`, 2026-09-10)
+
+The instrument fit's amplitude scale is held only by the gain priors around unity; a Gaussian
+prior on the model's total flux density (an `image_prior` of the time-resolved likelihood,
+`total_flux`) anchors it. With the rotation and a 0.6 ± 0.01 Jy prior, 300 iterations give
+χ²/N 1.59 at 0.46 Jy (the sky of run 6 still re-rotating into the absolute frame) and 1000
+iterations 1.14 at 0.56 Jy, with the sky's own closure χ²/N down from 3.86 to 2.50: the sky
+now carries the amplitude and the absolute EVPA. The gain amplitudes settle at 0.74–0.94 (the
+netcal amplitude scale of this file sits some 20% below the prior's flux, within the a-priori
+calibration uncertainties the gain priors allow) and the d-terms move by up to 2%
+(ALMA −0.1 − 3.6i, APEX −6.5 + 3.3i, SMT +2.8 + 9.5i, LMT +1.7 + 4.9i, PV −11.8 + 0.2i for R),
+the SMT and PV within 1% of the published values and the others within 2–3%.
