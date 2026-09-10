@@ -15,6 +15,9 @@
 # `--uvmin` (Gλ) drops the shorter baselines, as the earlier M87 runs did: the intra-site baselines see the jet's extended flux.
 # `--crosshand-phase 90` (degrees) applies the global RL phase of ALMA's 45° feed offset (Paper VII, Appendix D; `rotate_crosshands`)
 # that the HOPS netcal products lack: with it the d-terms come out in the published frame and the sky's EVPA is absolute.
+# `--flux F --sigma-flux σ` (Jy) puts a Gaussian prior on the model's total flux density: the amplitude anchor of the fit,
+# whose gain log-amplitudes are otherwise held only by their priors around unity (the compact flux of the 2017 ring is
+# ~0.5–0.6 Jy; the earlier closure fits used 0.6 ± 0.01).
 # `--no-leakage` drops the d-terms, `--sigma-lg` sets the log-amplitude prior width (Comrade's 0.2; the LMT keeps 1.0 unless it is
 # tighter), `--raw` uses the raw-data Jones chain G D R instead of R† G D R, `--fix-sky` fits the instrument alone on the starting sky.
 using KerrSplat, KerrSplat.Geodesics, KerrSplat.Transfer, KerrSplat.Splats, KerrSplat.Fit
@@ -29,6 +32,7 @@ res = getopt("--res", 32); N = getopt("--samples", 60); iterations = getopt("--i
 tag = getstr("--tag", "jones"); a = getopt("--spin", 0.94); inc = getopt("--inc", 163.0)
 leakage = !("--no-leakage" in ARGS); σ_lg = getopt("--sigma-lg", 0.2); σ_lgrat = getopt("--sigma-lgrat", 0.1); corrected = !("--raw" in ARGS); fixsky = "--fix-sky" in ARGS
 uvmin = getopt("--uvmin", 0.1); crossphase = getopt("--crosshand-phase", 0.0)
+fluxprior = getopt("--flux", 0.0); σflux = getopt("--sigma-flux", 0.01)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 
 M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar)
@@ -62,6 +66,7 @@ gcache = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = true); reg
 p = Matrix{Float64}(readdlm(init, ','))
 free = fixsky ? falses(size(p)) : freeze(p, (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3))
 gains, dterms = zero_instrument(inst)
+image_prior = fluxprior > 0 ? (img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]) : nothing
 # the closure quantities of the data (Stokes I, gain-independent) for the sky alone, before and after
 tri = scan_triangles(obs); quad = scan_quadrangles(obs)
 phases = closure_phases(obs.vis, tri); σ_phase = [sqrt(sum((obs.σ[abs(k)][1] / abs(obs.vis[abs(k)][1]))^2 for k in t)) for t in tri]
@@ -72,18 +77,18 @@ nclos = count(keep_t) + count(keep_q)
 closure_chi2(x) = chi2_closures(bin(binning, polarized_cube(cache, x, [0.0], [ν], L))[:, :, 1, 1], Δα, L, D, cdata)
 χc0 = closure_chi2(p)
 @info "starting sky alone" closure_chi2 = χc0 reduced = χc0 / nclos closure_quantities = nclos leakage = leakage corrected = corrected σ_lg = σ_lg fix_sky = fixsky
-χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms))
+χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms), image_prior)
 @info "start (unit instrument)" chi2 = χ0 reduced = χ0 / ndat splats = size(p, 2)
 t0 = time()
-q, gains, dterms, history = selfcal!(copy(p), gains, dterms, tr, gcache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations, η, η_inst = ηgain, binning,
+q, gains, dterms, history = selfcal!(copy(p), gains, dterms, tr, gcache, L, Δα, D, ν; inst, masks = (gm, dm), free, iterations, η, η_inst = ηgain, binning, image_prior,
                                      callback = (it, x, g, d, v) -> (it % 25 == 0 && @info "iteration $it" chi2 = v reduced = v / ndat minutes = (time() - t0) / 60))
-χ1 = chi2_timeresolved(q, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms))
+χ1 = chi2_timeresolved(q, tr, cache, L, Δα, D, ν; binning, instrument = (inst, gains, dterms), image_prior)
 @info "after Adam" chi2 = χ1 reduced = χ1 / ndat minutes = (time() - t0) / 60
 laplace_d = nothing
 if npolish > 0
     tP = time()
     x0 = pack(q, free, gains, gm, dterms, dm)
-    resid(x) = (t = unpack(q, free, gains, gm, dterms, dm, x); timeresolved_residuals(t[1], tr, cache, L, Δα, D, ν; binning, instrument = (inst, t[2], t[3])))
+    resid(x) = (t = unpack(q, free, gains, gm, dterms, dm, x); timeresolved_residuals(t[1], tr, cache, L, Δα, D, ν; binning, instrument = (inst, t[2], t[3]), image_prior))
     x, hist, covj = levenberg_marquardt!(x0, resid; iterations = npolish, chunk = 12)
     q, gains, dterms = unpack!(copy(q), free, copy(gains), gm, copy(dterms), dm, x)
     χ1 = hist[end]
@@ -112,7 +117,7 @@ end
 writedlm(joinpath(outdir, "m87_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "m87_$(tag)_gains.csv"), gains, ','); writedlm(joinpath(outdir, "m87_$(tag)_dterms.csv"), dterms, ',')
 open(joinpath(outdir, "m87_$(tag)_summary.txt"), "w") do io
     println(io, "M87 2017 full polarization through the instrument model: $(length(obs)) rows, $(inst.nseg) scans, $ndat product values, $(count(gm)) gains, $(count(dm)) d-term parts, fractional noise $fnoise")
-    println(io, "options: leakage $leakage, corrected $corrected, sigma_lg $σ_lg, fix_sky $fixsky, uvmin $uvmin, crosshand phase $(crossphase)°")
+    println(io, "options: leakage $leakage, corrected $corrected, sigma_lg $σ_lg, fix_sky $fixsky, uvmin $uvmin, crosshand phase $(crossphase)°, flux prior $fluxprior ± $σflux Jy")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)) end $χ1 (reduced $(χ1 / ndat)); closure chi2 of the sky $χc0 → $χc over $nclos (reduced $(χc0 / nclos) → $(χc / nclos)); flux $flux Jy")
     foreach(l -> println(io, l), lines)
 end

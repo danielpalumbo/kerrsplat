@@ -731,6 +731,18 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         ev = maximum(abs.(Array(dparams2) .- gv_host)) / maximum(abs.(gv_host))
         @test abs(χv - χv_host) <= 1e-10 * χv_host
         @test ev <= tol
+        # an image prior (a total-flux prior) enters the χ², the device gradient and the residuals alike
+        F0 = total_flux(polarized_image(cpu, p, 0.0, ν, L), Δα, L, D)
+        fluxprior(img) = [(total_flux(img, Δα, L, D) - 0.9 * F0) / (0.02 * F0)]
+        χf_host = chi2_timeresolved(q, trv, cpu, L, Δα, D, ν; image_prior = fluxprior)
+        @test χf_host > chi2_timeresolved(q, trv, cpu, L, Δα, D, ν)
+        gf_host = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(x -> chi2_timeresolved(x, trv, cpu, L, Δα, D, ν; image_prior = fluxprior)), q)[1]
+        dparams3 = adapt_to(backend, zeros(size(q)))
+        χf = timeresolved_gradient!(dparams3, params, trv, cache, L, Δα, D, ν; image_prior = fluxprior)
+        ef = maximum(abs.(Array(dparams3) .- gf_host)) / maximum(abs.(gf_host))
+        @test abs(χf - χf_host) <= 1e-10 * χf_host && ef <= tol
+        rf = timeresolved_residuals(q, trv, cpu, L, Δα, D, ν; image_prior = fluxprior)
+        @test length(rf) == ndata(trv) + 2 && abs(sum(abs2, rf) - χf_host) <= 1e-12 * χf_host     # one residual per frame
         # the residual vectors square to the χ², and the Levenberg–Marquardt polish runs on them
         rc = timeresolved_residuals(q, tr, cpu, L, Δα, D, ν); rv = timeresolved_residuals(q, trv, cpu, L, Δα, D, ν)
         @test length(rc) == ndata(tr) && abs(sum(abs2, rc) - χ_host) <= 1e-12 * χ_host
