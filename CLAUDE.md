@@ -73,6 +73,10 @@ before any performance work.
   (`gh pr edit N --base main`) before deleting the merged branch, otherwise GitHub closes it.
 - Never force-push `main`. Never commit papers (`*.pdf`), logs, or credentials.
 - Run the relevant tests/smoke tests before opening a PR and state in the PR what was run.
+- The repository is public (2026-09-10): GitHub Actions minutes are unlimited on standard
+  runners, and CI runs once per pull request (`pull_request` and manual dispatch only; a run
+  is about an hour). Never commit the data files listed in `docs/HANDOFF.md`, nor anything
+  private, to a public repository.
 
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).
