@@ -4,6 +4,18 @@ Written 2026-09-04 for whoever (or whichever Claude session) continues this work
 repository is the only durable record: session memories of the Claude instance that wrote most of
 the code live outside the repository and do not travel.
 
+## State at the close of 2026-09-10 (resume here)
+
+Direction (Daniel, 2026-09-10 evening): the large-N splat basis, rich synthetic I, Q, U, V
+slow-light movies with n ≤ 2, weak assumptions, near-uniqueness as the result; no 4D plasma
+claims from 2017 EHT data (`docs/notes/2026-09-10_large_n.md`). Branch `large-n-lists` holds
+the per-ray parcel lists for the dual sweep as a WIP commit whose gate `test_ray_lists` has not
+yet run to completion: rerun it first (`test_ray_lists`, `test_polarized_gradient`,
+`test_polarized_gradient_winding` on the CPU backend), then the GPU benchmark at N = 100 and
+1000, fill `LISTS_RESULT` in the note, PR. Branch `sgra-polarization` holds the last Sgr A*
+script changes and the first flare-parcel result; the remaining Sgr A* runs were stopped and
+that line closes with a write-up of what exists.
+
 ## Where things are
 
 - `CLAUDE.md`: working conventions (branches, PRs, tests before PRs, Claude may merge) and the
