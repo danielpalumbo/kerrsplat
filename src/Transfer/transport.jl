@@ -111,10 +111,22 @@ function nelements end
 "Coefficients and frame of one fluid element at a sample; see `RadiativeTransport`."
 function element end
 
+"""
+    ray_model(model, j) -> model
+
+The model as ray `j` sees it: the model itself by default. A model that carries per-ray
+element lists (`Splats.RayLists`) returns the subset of its elements the ray's samples can
+touch (`Splats.RaySubset`), so that every sum over elements runs over that list instead of
+over all of them: the large-N path, where a ray crosses a few parcels out of thousands.
+"""
+@inline ray_model(model, j) = model
+"The transport of ray `j`: the same coefficients over `ray_model(c.model, j)`."
+@inline ray_transport(c::RadiativeTransport, j) = RadiativeTransport(ray_model(c.model, j), c.ν_obs, c.L, c.nmax, c.slab)
+
 @inline function (c::RadiativeTransport)(acc::RadiativeState{T}, j, k, s::GeodesicSample, Δτ, pix) where {T}
     met = Krang.metric(pix)
     (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
-    return transfer_sample(c, acc, s, Δτ, pix)
+    return transfer_sample(ray_transport(c, j), acc, s, Δτ, pix)
 end
 
 """
@@ -127,7 +139,7 @@ beyond the `nmax`-th passage contribute neither emission nor absorption (the ray
     (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
     w = wind(acc, s.r * cos(s.θ), c.slab)
     (c.nmax >= 0 && w.n > c.nmax) && return w
-    return WindingState(transfer_sample(c, w.state, s, Δτ, pix), w.zprev, w.n, w.inside, w.crossed)
+    return WindingState(transfer_sample(ray_transport(c, j), w.state, s, Δτ, pix), w.zprev, w.n, w.inside, w.crossed)
 end
 
 @inline function transfer_sample(c::RadiativeTransport, acc::RadiativeState{T}, s::GeodesicSample, Δτ, pix) where {T}

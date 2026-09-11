@@ -38,13 +38,45 @@ thermal synchrotron coefficients of density e^{logne} × (Gaussian weight at the
 temperature e^{logTe} and field e^{logB} along (thB, phB), seen from the frame of velocity
 (u1, u2, u3); splats with weight below `WEIGHT_CUTOFF` at the sample are skipped.
 """
-struct PolarizedSplats{P,V}
+struct PolarizedSplats{P,V,L}
     params::P
     t_obs::V
+    lists::L
 end
 Adapt.@adapt_structure PolarizedSplats
-PolarizedSplats(params::AbstractMatrix{T}, t_obs::Real) where {T} =
-    PolarizedSplats(params, fill!(similar(params, 1), T(t_obs)))
+PolarizedSplats(params::AbstractMatrix, t_obs::AbstractVector) = PolarizedSplats(params, t_obs, nothing)
+PolarizedSplats(params::AbstractMatrix{T}, t_obs::Real, lists = nothing) where {T} =
+    PolarizedSplats(params, fill!(similar(params, 1), T(t_obs)), lists)
+
+"""
+    RayLists(ids, count)
+
+Per-ray parcel lists on the backend: `ids[s, j]` for `s in 1:count[j]` are the parcels whose
+support ray `j`'s samples enter (`ray_lists`), `ids` being `capacity × npix` with `capacity`
+the largest count. A `PolarizedSplats` carrying lists presents ray `j` with the `RaySubset`
+of those parcels (`Transfer.ray_model`), so the transport and the dual sweep loop over the
+few parcels a ray crosses instead of all of them.
+"""
+struct RayLists{I,C}
+    ids::I
+    count::C
+end
+Adapt.@adapt_structure RayLists
+capacity(l::RayLists) = size(l.ids, 1)
+
+"The parcels of a model that one ray touches, indexed `1…n` through `ids`."
+struct RaySubset{M,I}
+    model::M
+    ids::I
+    n::Int32
+end
+Transfer.nelements(m::RaySubset) = Int(m.n)
+@inline Transfer.element(m::RaySubset, i, pix, s, ν_obs) = Transfer.element(m.model, @inbounds(m.ids[i]), pix, s, ν_obs)
+@inline Transfer.ray_model(m::PolarizedSplats{<:Any,<:Any,Nothing}, j) = m
+@inline function Transfer.ray_model(m::PolarizedSplats, j)
+    @inbounds n = m.lists.count[j]
+    return RaySubset(m, view(m.lists.ids, :, j), n)
+end
 
 const WEIGHT_CUTOFF = 1e-12
 const SUPPORT_RADIUS2 = -2 * log(WEIGHT_CUTOFF)    # (7.43 σ)²: beyond it the weight is below the cutoff for any orientation
@@ -373,7 +405,7 @@ function polarized_reverse_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}
 end
 
 """
-    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1, nmax = -1, slab = 0) -> (dparams, image)
+    polarized_gradient!(dparams, dstokes, cache, params, t_obs, ν_obs, L; method = :dual, kmax = 1, nmax = -1, slab = 0, cull = size(params, 2) > 16) -> (dparams, image)
 
 Gradient of Σⱼ dstokes[j] · observed_stokes(ray j) with respect to the polarized splat parameters,
 inside the kernel over the samples stored in `cache`, one ray per thread. `dstokes` is a vector
@@ -391,14 +423,17 @@ sweep by Enzyme reverse mode inside the kernel: a forward kernel keeps the radia
 each chunk boundary (`chunk_size(N; kmax)` samples per chunk, at most the eight a 64 KB
 per-thread stack can tape), then the chunks are differentiated from the last to the first with
 the adjoint of the incoming state carried along; exact but about fifty times the forward cost
-per sample on the device.
+per sample on the device. `cull` (the default above sixteen parcels) builds the per-ray parcel
+lists first (`ray_lists`) and runs both passes of the dual sweep over them: the same sums, over
+the few parcels each ray crosses.
 """
-function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax::Integer = 1, nmax = -1, slab = 0) where {T,N}
+function polarized_gradient!(dparams, dstokes::AbstractVector{SVector{4,T}}, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax::Integer = 1, nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16) where {T,N}
     if method == :dual
+        lists = cull ? ray_lists(cache, params, t_obs; nmax, slab) : nothing
         tails = KA.allocate(cache.backend, SVector{4,T}, npixels(cache), N + 1)
-        polarized_tails!(tails, cache, params, t_obs, ν_obs, L; nmax, slab)
+        polarized_tails!(tails, cache, params, t_obs, ν_obs, L; nmax, slab, lists)
         image = tail_image(tails, ν_obs)
-        polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax, slab)
+        polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax, slab, lists)
         return dparams, image
     elseif method == :enzyme
         nmax < 0 || throw(ArgumentError("the Enzyme sweep has no half-orbit truncation; use method = :dual"))

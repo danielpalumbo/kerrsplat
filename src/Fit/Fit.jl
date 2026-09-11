@@ -423,7 +423,7 @@ function fit!(params::AbstractMatrix{T}, loss, stages::AbstractVector{Stage}; hy
 end
 
 """
-    sweep_passes(dparams, cache, params, L; method = :dual, kmax = 1, nmax = -1, slab = 0) -> (forward, reverse!)
+    sweep_passes(dparams, cache, params, L; method = :dual, kmax = 1, nmax = -1, slab = 0, cull = size(params, 2) > 16) -> (forward, reverse!)
 
 The two passes of an in-kernel polarized gradient as closures over their work arrays:
 `forward(t, ν)` returns the model image (observed Stokes vectors, sorted pixel order, on the
@@ -433,12 +433,14 @@ host) and leaves the state the reverse pass needs; `reverse!(dstokes, t, ν)` ac
 reverse sweep (`kmax` samples per chunk). `nmax`, `slab` truncate the rays by their half-orbit
 count as in `polarized_image!` (dual sweep only).
 """
-function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0) where {T,N}
+function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16) where {T,N}
     npix = npixels(cache)
     if method == :dual
         tails = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, N + 1)
-        forward = (t, ν) -> (Splats.polarized_tails!(tails, cache, params, t, ν, L; nmax, slab); Array(Splats.tail_image(tails, T(ν))))
-        reverse! = (dstokes, t, ν) -> Splats.polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t, ν, L; nmax, slab)
+        lists = Ref{Any}(nothing)                                # the per-ray parcel lists of the frame, built by the forward pass
+        forward = (t, ν) -> (lists[] = cull ? Splats.ray_lists(cache, params, t; nmax, slab) : nothing;
+                             Splats.polarized_tails!(tails, cache, params, t, ν, L; nmax, slab, lists = lists[]); Array(Splats.tail_image(tails, T(ν))))
+        reverse! = (dstokes, t, ν) -> Splats.polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t, ν, L; nmax, slab, lists = lists[])
         return forward, reverse!
     elseif method == :enzyme
         nmax < 0 || throw(ArgumentError("the Enzyme sweep has no half-orbit truncation; use method = :dual"))
@@ -464,8 +466,8 @@ included; `nmax`, `slab` truncate the rays and `binning` integrates the points o
 in `chi2`. The CPU backend and CUDA give the gradient of `chi2` (gates `test_chi2_gradient`,
 `test_binning`).
 """
-function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) where {T,N}
-    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab)
+function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, cull::Bool = size(params, 2) > 16) where {T,N}
+    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
     npix = npixels(cache)
     dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix)
     seed = Vector{SVector{4,T}}(undef, npix)
@@ -535,8 +537,8 @@ the loss saw, for a caller's own use, e.g. the instrument's gradient). Returns t
 "The screen image as Stokes vectors from its plain-number form, binned over pixels when a `Binning` is given."
 _pixel_image(x, nα, nβ, ::Nothing) = reshape([SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ], nα, nβ)
 _pixel_image(x, nα, nβ, binning::Binning) = bin(binning, [SVector(x[1, i], x[2, i], x[3, i], x[4, i]) for i in 1:nα*nβ])
-function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, on_image = nothing) where {T,N}
-    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab)
+function image_loss_gradient!(dparams, loss, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, on_image = nothing, cull::Bool = size(params, 2) > 16) where {T,N}
+    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
     npix = npixels(cache)
     sorted = forward(t_obs, ν_obs)
     perm = cache.perm_host

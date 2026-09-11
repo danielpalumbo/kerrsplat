@@ -40,6 +40,10 @@ before any performance work.
   `method = :dual`): the reverse over the compositing is written by hand from 4-vectors (tails
   and adjoints) and the per-sample derivatives are ForwardDiff duals, which run in CUDA
   kernels without any of Enzyme's constraints; four times the forward transport per gradient.
+- Large N: the dual sweep and the transport loop over per-ray parcel lists (`Splats.ray_lists`,
+  `Transfer.ray_model`; on by default above sixteen parcels, `cull`), built once per frame from
+  the stored samples; the per-ray gradient slots are gathered parcel by parcel in ray order, so
+  the result stays deterministic. The fused (unstored) forward transport is dense.
 - ForwardDiff ≥ 1: `x == 0` on a dual also requires zero partials, and `sqrt` at a zero value
   has NaN partials. Guard removable singularities on the value (`Transfer.vanishes`,
   `Transfer.safe_sqrt`), never with `==` against a literal.

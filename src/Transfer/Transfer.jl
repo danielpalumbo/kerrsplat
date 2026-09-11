@@ -37,6 +37,6 @@ export transfer_step, step_operator, sample_step, sample_adjoint, RadiativeState
 export LocalFrame, local_frame, boost_zamo_to_fluid, walker_penrose, screen_direction
 export UnpolarizedState, UnpolarizedTransport, unpolarized_coefficients, unpolarized_step, observed_intensity,
        gravitational_radius, pixel_solid_angle
-export RadiativeTransport, nelements, element, observed_stokes, CompositeModel, StaticCount, static_elements, screen_coefficients, seed_duals
+export RadiativeTransport, nelements, element, ray_model, ray_transport, observed_stokes, CompositeModel, StaticCount, static_elements, screen_coefficients, seed_duals
 
 end
