@@ -192,27 +192,62 @@ sky took over the station-like pattern: ALMA 1.01 ± 0.40, APEX 0.94, SMT 0.81, 
 to 9.7, almost all of it in the 12th and 14th scans (45 and 17) again, as the products, not the
 closures, are what the joint fit minimizes.
 
+Another 900 iterations of the same Stokes I self-calibration from that point: products χ²/N
+6.72 → 3.54, flattening (5.9 after 75 iterations, 4.2 after 300, 3.66 after 525, 3.55 after
+750). Per scan 0.00–1.35 except the 12th (UT 11.45 h) at 4.4, and the gains have all come home:
+ALMA 1.12 ± 0.22, APEX 1.10 ± 0.23, SMT 0.89 ± 0.11, LMT 0.98 ± 0.17, SMA 0.90 ± 0.37 (from
+0.49), SPT 1.03 ± 0.29 (from 2.2 after the instrument solve). The sky took over the
+station-like amplitude pattern once the schedule was long enough, and the gain priors did what
+they are for. The sky's own closure χ²/N is 7.6 with the 12th and 14th scans at 34 and 14 and
+the rest at 0.8–6.6; the products' excess over one is concentrated in the same hour, which a
+static sky cannot fit and a moving sky is meant to.
+
+Motion from that point (the pattern rates free at a twentieth of the common step, 600
+iterations): products χ²/N 3.54 → 3.34 with the rates ending within ±2 × 10⁻⁴ rad/M, five
+hundred times below Keplerian, and the 12th scan unchanged at 4.6 (closures 36). The
+residual of that hour is not a rotation of the static pattern; the rates' gradient never
+pushed one way. A brightening (a parcel with a temporal envelope, the `t0` and `logw` rows,
+frozen in every fit so far at an envelope wider than the night) is the natural next model for
+it, and which baselines and triangles carry the residual of those scans is the first thing to
+look at.
+
+They are the SMA's. On the self-calibrated sky the closure quantities of the scans around
+that hour with pulls beyond 3σ are, in the 12th scan (UT 11.45 h), the triangles ALMA–SMT–SMA
+(model 64°, data 166°, 6° noise: −17σ), ALMA–LMT–SMA (55° against 143°, −12σ) and
+ALMA–SMT–LMT (−6σ); in the 13th (UT 11.65 h) ALMA–SMT–SMA again but the other way (69°
+against 31°, +6σ) and ALMA–SMA–SPT (−4σ); in the 14th (UT 12.27 h) the SMA log closure
+amplitudes at ±6σ and three SMA/SPT triangles at 3–4σ. Nothing beyond 3σ elsewhere in the
+scans before and after. The SMA's baselines are the east–west ones at 3.4–7 Gλ, and the
+closure phases on them, immune to any station's gain, swing by a hundred degrees between two
+scans twelve minutes apart and back: the source's east–west structure on those scales
+changes during that hour, which a static sky of any shape cannot follow and the pattern rates
+did not. The flare experiment (`--flare φ`: a ninth parcel with a temporal envelope of 40 M
+centred on that hour at position angle φ, joint Stokes I self-calibration from the static
+solution) runs for four position angles.
+
 ## Where this stands
 
 The chain that works for Sgr A* on this day is the one every imaging pipeline uses, and every
 piece of it had to be put in today: the scattering kernel on the model visibilities, closure
 amplitudes over every baseline, a Stokes I closure fit, an instrument solve on Stokes I with
 the phases started from the reference baselines, and a joint Stokes I self-calibration from
-the solved gains. From a ring of eight parcels it reaches Stokes I products at χ²/N 6.7 with
-gains near their priors, where the morning's runs sat at 230 and 80 with the gains collapsed.
+the solved gains. From a ring of eight parcels it reaches Stokes I products at χ²/N 3.5 after 1500
+iterations of self-calibration, with every station's amplitude gain within 12% of one on
+average (the SMA's 0.90 ± 0.37 the loosest), where the morning's runs sat at 230 and 80 with
+the gains collapsed. What is left sits in the hour around UT 11.5 h.
 
 Open, in the order to take them:
 
-1. The SMA's amplitude gain of 0.49 is not physical (its a priori calibration in 2017 was
-   good to 10–20%); the model is still twice too bright on the SMA baselines. Whether this is
-   the sky (an east–west structure the parcels cannot make) or the data (the SMA's a priori
-   amplitudes on this day) is checkable against the published gain solutions.
-2. The hour around UT 11.5 h holds the closure residual in every fit; a moving sky (the pattern
-   rates at their own step) from the Stokes I self-calibrated sky, and a look at the
-   per-station data of those scans.
-3. The polarization: with the Stokes I sky and gains held, the parcels' field rows against the
+1. The hour around UT 11.5 h holds the closure residual in every fit and the products' excess
+   in the self-calibrated one, and the pattern rates do not answer it. Which baselines and
+   triangles carry it, then a parcel with a temporal envelope (`t0`, `logw`) started in that
+   hour, from the Stokes I self-calibrated sky and gains.
+2. The polarization: with the Stokes I sky and gains held, the parcels' field rows against the
    dual-feed products (the L/R ratios and d-terms of the instrument model), then everything
    jointly. The closure stage constrains Stokes I alone; the dual-feed products from a
    closure-only sky are unusable, as the morning showed.
-4. A longer Stokes I self-calibration (the trace has not flattened) and the joint LM polish
-   for the Laplace errors.
+3. The joint LM polish for the Laplace errors of the static Stokes I fit, and the pattern-rate
+   spike at iteration ~400 of the closure fits (a parcel row past a threshold) to trace.
+4. The closure stage's SNR cut leaves the faint east–west SMA baselines out; a lower cut, or
+   the visibility amplitudes with amplitude gains, would let the closure stage see the
+   high-frequency power the compact parcels put there.

@@ -118,7 +118,11 @@ kernel, `ScatteringKernel` on every `ScanData`, gated against ehtim, found neces
 static sky came out 2–5× too bright on the long baselines; and `scan_quadrangles` now builds
 two quadrangles per four-station set because one per set left the baseline between a scan's
 first and last station out of every log closure amplitude, found the same day when the
-ALMA–SPT amplitude sat 7× off a sky whose closures fit), and the
+ALMA–SPT amplitude sat 7× off a sky whose closures fit; and the chain that works for Sgr A*,
+closures → Stokes I instrument solve → joint Stokes I self-calibration, `sgra_jones.jl
+--stokes-i`, because a closure-only sky's free Q, U, V make the dual-feed products unusable:
+the last section of `docs/notes/2026-09-10_sgra_timeresolved.md`, "Where this stands", lists
+the open items in order), and the
 real M87 full-polarization file through it (`validation/m87_fit/m87_jones.jl`; the last section of
 `docs/notes/2026-09-04_phase5_real_data.md`: products χ²/N 1.33 with leakage; the d-terms agree
 with Paper VII's station by station once the global 90° RL phase of ALMA's feed offset, which
