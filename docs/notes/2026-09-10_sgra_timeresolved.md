@@ -225,6 +225,21 @@ did not. The flare experiment (`--flare φ`: a ninth parcel with a temporal enve
 centred on that hour at position angle φ, joint Stokes I self-calibration from the static
 solution) runs for four position angles.
 
+## A parcel with a temporal envelope
+
+The first of them, the flare parcel started at position angle 0 (600 iterations of the
+joint Stokes I self-calibration from the static solution and its gains): products χ²/N
+3.54 → 2.57 and the sky's own closures 7.6 → 3.9. The 12th scan goes from 4.4 to 0.57 in the
+products and from 36 to 3.5 in the closures, the 13th from 5.7 to 4.2, and the 14th (UT
+12.27 h) stays at 11.5. The parcel settled at (4.5, 0.2, 1.2) M, a fifth of a gravitational
+radius out of the plane, with its envelope centred at 396 M (UT 11.25 h) and a width of 22 M
+(7.5 minutes; the envelope's full width at half maximum is 18 minutes), at half a ring
+parcel's density; the eight ring parcels moved by less than 0.08 M and their densities by
+less than 3%, so the static solution stayed put and the new parcel did the work. Every gain
+tightened (the SMA's to 0.99 ± 0.31). So one brightening of a quarter of an hour on the ring
+answers the SMA closure phases of that hour; the 14th scan's residual, an hour later, asks
+for another. FLARE_GRID
+
 ## Where this stands
 
 The chain that works for Sgr A* on this day is the one every imaging pipeline uses, and every

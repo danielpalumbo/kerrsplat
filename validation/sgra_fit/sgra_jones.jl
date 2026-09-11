@@ -12,7 +12,7 @@
 #                                          [--spin 0.94] [--inc 150] [--flux 2.4] [--sigma-flux 0.05] [--fnoise 0.02] [--uvmin 0.1] [--frames 0] [--seed 1]
 #                                          [--init params.csv] [--polish 0] [--tag jones] [--stage closures|selfcal|calibrate] [--staged] [--static] [--eta-omega 0.05]
 #                                          [--calibrate 0] [--init-gains gains.csv] [--init-dterms dterms.csv] [--no-scatter] [--stokes-i]
-#                                          [--flare <position angle deg>] [--flare-time 431] [--flare-width 40] [--eta-t0 100]
+#                                          [--flare <position angle deg>] [--flare-time 431] [--flare-width 40] [--eta-t0 100] [--free rows]
 #
 # The protocol of the real-data pipelines: `--stage closures` fits the sky to the closure phases and log closure amplitudes
 # of every scan (gain-free, `closure_scans`) with the flux prior, from the ring; `--stage selfcal` (the default) fits the
@@ -30,7 +30,9 @@
 # ring at position angle φ with a temporal envelope (rows t0, logw: a Gaussian in emission time of width `--flare-width` M
 # centred at `--flare-time` M, the hour at UT 11.5 h whose closures no static sky fits) and frees t0 and logw for all
 # parcels (the others' envelopes start wider than the night, so only the flare's moves); t0 in M takes `--eta-t0` times
-# the common step. The Stokes I instrument matters because the closure stage constrains
+# the common step. `--free logB,thB,phB` replaces the free rows with the ones named (the polarization stage: the field rows
+# against the dual-feed products with the Stokes I sky and gains held; a Stokes I gains file given to the dual-feed
+# instrument is padded with zero L/R ratios). The Stokes I instrument matters because the closure stage constrains
 # Stokes I alone, so its sky has free Q, U, V that the dual-feed products then misfit. `--stage calibrate` solves the instrument alone by Levenberg–Marquardt with the initial sky held (`calibrate!`, `--calibrate`
 # iterations, 10 by default there); `--calibrate N` before `--stage selfcal` starts the joint loop from that solve instead of
 # unit gains. `--init-gains`/`--init-dterms` start the instrument from a previous run's files.
@@ -96,8 +98,10 @@ if !isempty(flare)
     @info "flare parcel added" position_angle_deg = parse(Float64, flare) t0_M = tflare width_M = wflare
 end
 flarerows = isempty(flare) ? () : (:t0, :logw)
+freerows = getstr("--free", "")
 free = freeze(p, ((static ? (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3) :
                              (:x, :y, :z, :s1, :s2, :s3, :q1, :q2, :q3, :q4, :logne, :logTe, :logB, :thB, :phB, :u1, :u2, :u3, :omega))..., flarerows...))
+isempty(freerows) || (free = freeze(p, Tuple(Symbol.(split(freerows, ",")))); @info "free rows" rows = freerows)
 image_prior = img -> [(total_flux(img, Δα, L, D) - fluxprior) / σflux]
 # the densities scaled so that the first frame's flux matches the prior (the parcels' emission is linear in nₑ where thin)
 F0 = total_flux(bin(binning, polarized_cube(cache, p, [times[1]], [ν], L))[:, :, 1, 1], Δα, L, D)
@@ -107,7 +111,12 @@ if isempty(init)
     @info "densities scaled to the flux prior" flux_before = F0 flux_after = F1
 end
 gains, dterms = zero_instrument(inst)
-isempty(initgains) || (gains = Matrix{Float64}(readdlm(initgains, ',')); size(gains) == size(zero_instrument(inst)[1]) || error("the gains file does not match the instrument"); @info "gains from $initgains")
+if !isempty(initgains)
+    gains = Matrix{Float64}(readdlm(initgains, ','))
+    size(gains, 1) == 2 && inst.polarized && (gains = vcat(gains, zeros(2, size(gains, 2))))        # Stokes I gains for the dual-feed instrument
+    size(gains) == size(zero_instrument(inst)[1]) || error("the gains file does not match the instrument")
+    @info "gains from $initgains"
+end
 isempty(initdterms) || (dterms = Matrix{Float64}(readdlm(initdterms, ',')); size(dterms) == size(zero_instrument(inst)[2]) || error("the d-terms file does not match the instrument"); @info "d-terms from $initdterms")
 instrument = stage == "closures" ? nothing : (inst, gains, dterms)
 χ0 = chi2_timeresolved(p, tr, cache, L, Δα, D, ν; binning, instrument, image_prior)
