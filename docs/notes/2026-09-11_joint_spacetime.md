@@ -274,4 +274,20 @@ the information about the geometry sits. A second frequency roughly matched the
 single-frequency discrimination on the high side and raised it by half on the low side,
 again as far as this schedule goes; the multifrequency self-fits of 2026-09-08 showed the
 second band's gain to be in the plasma rows rather than the geometry, which is consistent.
-UNIQUENESS3
+
+At 160 iterations (the same two rows, rerun):
+
+| data | χ²/N at 0.7 | at 0.9 | at 0.98 | Δχ² for +0.08 | Δχ² for −0.2 |
+|---|---|---|---|---|---|
+| two frames (51,200 values) | 1.828 | 1.586 | 1.580 | −280 | 12,400 |
+| 230 and 345 GHz (307,200 values) | 1.325 | 1.242 | 1.273 | 9,500 | 25,400 |
+
+With two frames the profile no longer separates 0.9 from 0.98 (the point at 0.98 ends 280
+units below the truth's), the inclination sits at 52–54° at every spin, and the fits stay far
+from the floor (1.59 against 1.01): two frames of this movie do not determine the geometry,
+and the fit finds a worse basin as well. Six frames do. The second frequency settles at the
+single-frequency discrimination on the high side (9,500 against 8,600) and a fifth more on
+the low side, still 24% above the floor: what it adds is on the plasma side, as the 2026-09-08
+self-fits found. That closes the first table: on this movie, the motion (frames) and the
+polarization carry the spin, the n = 2 ring a third of it, a second band little, and Stokes I
+alone still resolves it.
