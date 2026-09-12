@@ -50,6 +50,11 @@ of a two-parcel image with respect to (a, θo[, ln L]) agree with the CPU's to e
 digit, and cost 0.17 and 0.21 s per evaluation on the 2080 SUPER after compilation (the
 Float64 pass 0.07 s). The per-thread stack sizing already scaled with the dual width.
 
+The dual cache can also store its samples: the recurrence marcher runs once on dual scalars
+and every frame then renders through the tails kernel (`render_frame!`), so the spacetime
+block costs one dual march per visit instead of one per frame. Same derivatives to the digit
+(the gates below), and the CPU joint test runs 2.3 times faster with two frames.
+
 ## The schedule decides
 
 The CPU test case (two parcels, 8² pixels at 2.25 M, 40 samples, two frames at 230 GHz, the
@@ -80,4 +85,19 @@ from 0.8 and 52° in 60 iterations (168 spacetime steps accepted); at the CI siz
 
 ## Results at scale
 
-JOINT_RESULT
+The GPU self-fit (`validation/joint/joint_selffit.jl`): six parcels on orbits at 4–7 M with
+Keplerian pattern rates, at a = 0.9 and θo = 60°, rendered with the n ≤ 2 sub-images
+(40² pixels over 20 M, 160 samples, four frames over 60 M at 230 GHz, 25600 values, noise at
+2% of the peak in I), fitted from a = 0.5 and θo = 45° with the truth perturbed by 0.1 in
+every row. The first run (150 iterations, η = 0.02, 35 minutes) went to θo = 54.7° by
+iteration 20 and then froze at 53.0° and a = 0.49 while χ²/N crept from 2.4 to 1.92 through
+the splats (1.01 at the truth). Two things were wrong. The Levenberg–Marquardt damping was
+carried from one visit of the spacetime block to the next, so once a few rejections had
+grown it, every later step was accepted and microscopic: it now restarts at every visit. And
+a sky perturbed by 0.1 in every row (positions, log sizes, orientations, log densities,
+angles) is far from the truth, far enough that the χ² at the true spacetime with that sky
+(164k) is above the χ² at the wrong one (129k), so nothing pulls the spacetime home until
+the sky has improved, by which time it has adapted. The joint problem from a rough sky is
+the fresh-start problem, and it has two honest answers: the spacetime leading with a slow
+sky (a small η early), and several spacetime starts compared by their final χ², which here
+are well separated (1.9 against 1.0). JOINT_RESULT2

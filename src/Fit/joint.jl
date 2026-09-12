@@ -16,14 +16,13 @@ propagate through the march and the transport to the value) and in the backend (
 rendered on the backend and compared on the host). No priors.
 """
 function spacetime_chi2(cache::GeodesicCache{S}, params, movie::StokesMovie, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), nmax = -1, slab = 0, binning = nothing) where {S}
-    out = KernelAbstractions.allocate(cache.backend, accumulator_type(S, nmax), npixels(cache))
+    out = KernelAbstractions.allocate(cache.backend, SVector{4,S}, npixels(cache))
     nα, nβ = size(movie.data, 1), size(movie.data, 2)
     total = zero(S)
     for l in freqs, k in frames
         ν = movie.νs[l]
-        fill!(out, zero(eltype(out)))
-        polarized_image!(out, cache, params, S(movie.times[k]), S(ν), S(L); nmax, slab)
-        stokes = pixel_stokes(Array(to_screen(cache, out)), S(ν), binning)
+        render_frame!(out, cache, params, movie.times[k], ν, L; nmax, slab)
+        stokes = _screen_stokes(cache, out, binning)
         for j in 1:nβ, i in 1:nα
             idx = CartesianIndex(i, j, k, l)
             movie.mask[idx] || continue
@@ -34,10 +33,33 @@ function spacetime_chi2(cache::GeodesicCache{S}, params, movie::StokesMovie, L; 
     return total
 end
 
+"""
+    render_frame!(out, cache, params, t, ν, L; nmax = -1, slab = 0)
+
+One frame's Stokes vectors (sorted pixel order, cgs) on the cache's backend: through the tails
+kernel over the stored samples when the cache has them (one march per cache, the transport
+per frame), through the fused march otherwise. Generic in the cache's element type, so a
+dual-typed cache gives dual images either way; the stored form makes the spacetime block's
+Jacobian cost one dual march per visit instead of one per frame.
+"""
+function render_frame!(out, cache::GeodesicCache{S,N}, params, t, ν, L; nmax = -1, slab = 0) where {S,N}
+    if Geodesics.has_samples(cache)
+        tails = KernelAbstractions.allocate(cache.backend, SVector{4,S}, npixels(cache), N + 1)
+        Splats.polarized_tails!(tails, cache, params, t, ν, L; nmax, slab)
+        copyto!(out, Splats.tail_image(tails, S(ν)))
+    else
+        acc = KernelAbstractions.allocate(cache.backend, accumulator_type(S, nmax), npixels(cache))
+        fill!(acc, zero(eltype(acc)))
+        polarized_image!(acc, cache, params, S(t), S(ν), S(L); nmax, slab)
+        copyto!(out, map(st -> observed_stokes(st, S(ν)), acc))
+    end
+    return out
+end
+
 struct SpacetimeTag end
 
 """
-    spacetime_valgrad(loss, x, camera, backend; N) -> (value, gradient)
+    spacetime_valgrad(loss, x, camera, backend; N, stored = true) -> (value, gradient)
 
 The value and the gradient of `loss(cache, L)` with respect to the spacetime block
 `x = (a, θo, ln L)` by forward-mode duals: a `GeodesicCache` of the `camera` with `N` samples
@@ -45,17 +67,23 @@ per ray and three-partial dual scalars is built on `backend` and regenerated wit
 marcher at the dual spin and inclination, and `loss` renders on it with the dual `L` (e.g.
 `(cache, L) -> spacetime_chi2(cache, q, movie, L)` with `q` the splat matrix converted to the
 cache's element type on the backend, see `spacetime_movie_loss`). Three partials cost about
-four forward passes; nothing is stored.
+four forward passes. With `stored` (the default) the dual cache stores its samples, so the
+march runs once and every frame renders through the tails kernel (`render_frame!`); without
+it each frame re-marches.
 """
-function spacetime_valgrad(loss, x::AbstractVector{T}, camera::Geodesics.Camera, backend; N::Integer) where {T}
+function spacetime_valgrad(loss, x::AbstractVector{T}, camera::Geodesics.Camera, backend; N::Integer, stored::Bool = true) where {T}
     S = ForwardDiff.Dual{SpacetimeTag,T,3}
     xd = SVector{3,S}(ntuple(i -> S(x[i], ForwardDiff.Partials(ntuple(q -> q == i ? one(T) : zero(T), Val(3)))), Val(3)))
-    cache = GeodesicCache(backend, Geodesics.Camera(S.(camera.αs), S.(camera.βs), camera.size), Val(Int(N)); store_samples = false)
-    regenerate!(cache, xd[1], xd[2]; marcher = Fused(64))
+    cache = GeodesicCache(backend, Geodesics.Camera(S.(camera.αs), S.(camera.βs), camera.size), Val(Int(N)); store_samples = stored)
+    regenerate!(cache, xd[1], xd[2]; marcher = stored ? Recurrence(64) : Fused(64))
     v = loss(cache, exp(xd[3]))
     g = ForwardDiff.partials(v)
     return ForwardDiff.value(v), T[g[1], g[2], g[3]]
 end
+
+"Observed Stokes vectors (sorted order, on the backend) to the screen on the host, integrated over the pixels of a `Binning` when one is given."
+_screen_stokes(cache, out, ::Nothing) = Array(to_screen(cache, out))
+_screen_stokes(cache, out, binning::Binning) = bin(binning, vec(Array(to_screen(cache, out))))
 
 "The movie loss of a splat matrix for `spacetime_valgrad`: `params` converted to the cache's element type on its backend at every call."
 function spacetime_movie_loss(params::AbstractMatrix, movie::StokesMovie; frames = eachindex(movie.times), freqs = eachindex(movie.νs), nmax = -1, slab = 0, binning = nothing)
@@ -72,14 +100,13 @@ The scaled residuals (model − data)/σ of the movie rendered on `cache`, gener
 element type and backend like `spacetime_chi2` (whose value is their squared norm).
 """
 function spacetime_movie_residuals(cache::GeodesicCache{S}, params, movie::StokesMovie, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), nmax = -1, slab = 0, binning = nothing) where {S}
-    out = KernelAbstractions.allocate(cache.backend, accumulator_type(S, nmax), npixels(cache))
+    out = KernelAbstractions.allocate(cache.backend, SVector{4,S}, npixels(cache))
     nα, nβ = size(movie.data, 1), size(movie.data, 2)
     res = S[]
     for l in freqs, k in frames
         ν = movie.νs[l]
-        fill!(out, zero(eltype(out)))
-        polarized_image!(out, cache, params, S(movie.times[k]), S(ν), S(L); nmax, slab)
-        stokes = pixel_stokes(Array(to_screen(cache, out)), S(ν), binning)
+        render_frame!(out, cache, params, movie.times[k], ν, L; nmax, slab)
+        stokes = _screen_stokes(cache, out, binning)
         for j in 1:nβ, i in 1:nα
             idx = CartesianIndex(i, j, k, l)
             movie.mask[idx] || continue
@@ -90,19 +117,19 @@ function spacetime_movie_residuals(cache::GeodesicCache{S}, params, movie::Stoke
 end
 
 """
-    spacetime_jacobian(residuals, x, camera, backend; N) -> (r, J)
+    spacetime_jacobian(residuals, x, camera, backend; N, stored = true) -> (r, J)
 
 The residual vector of `residuals(cache, L)` and its Jacobian with respect to the spacetime
 block `x` (length 2, `(a, θo)`, or 3 with `ln L`) by one forward-mode dual pass through the
 fused march and the transport, as `spacetime_valgrad` does for a scalar loss.
 """
-function spacetime_jacobian(residuals, x::AbstractVector{T}, camera::Geodesics.Camera, backend; N::Integer) where {T}
+function spacetime_jacobian(residuals, x::AbstractVector{T}, camera::Geodesics.Camera, backend; N::Integer, stored::Bool = true) where {T}
     n = length(x)
     n in (2, 3) || throw(ArgumentError("the spacetime block is (a, θo) or (a, θo, ln L)"))
     S = ForwardDiff.Dual{SpacetimeTag,T,n}
     xd = [S(x[i], ForwardDiff.Partials(ntuple(q -> q == i ? one(T) : zero(T), n))) for i in 1:n]
-    cache = GeodesicCache(backend, Geodesics.Camera(S.(camera.αs), S.(camera.βs), camera.size), Val(Int(N)); store_samples = false)
-    regenerate!(cache, xd[1], xd[2]; marcher = Fused(64))
+    cache = GeodesicCache(backend, Geodesics.Camera(S.(camera.αs), S.(camera.βs), camera.size), Val(Int(N)); store_samples = stored)
+    regenerate!(cache, xd[1], xd[2]; marcher = stored ? Recurrence(64) : Fused(64))
     Ld = n == 3 ? exp(xd[3]) : S(T(NaN))
     rd = residuals(cache, Ld)
     r = ForwardDiff.value.(rd)
@@ -132,7 +159,10 @@ Levenberg–Marquardt steps on the spacetime with the splats held: the residual 
 respect to `x` by forward duals through a fused march (`spacetime_jacobian`, a few marches'
 worth of work independent of the pixel count), the damped Gauss–Newton step clipped to
 `bounds`, accepted when the χ² at the new spacetime (one Float64 fused pass) falls, the damping
-divided by 3 on acceptance and multiplied by 10 otherwise. Gauss–Newton is the right optimizer
+divided by 3 on acceptance and multiplied by 10 otherwise within a visit, and reset to `λ` at
+the next (the splats move between visits, so a damping grown large by rejections at one visit
+would only freeze the spacetime at the next: the first GPU self-fit stalled that way after
+thirty iterations with every later step accepted and microscopic). Gauss–Newton is the right optimizer
 for a block of two or three parameters whose curvature comes for free from the duals, where a
 gradient step of any fixed size either stalls or overshoots. The defaults, no warmup and three
 inner steps, come from the schedule experiment of `docs/notes/2026-09-11_joint_spacetime.md`:
@@ -180,6 +210,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
         push!(history, vcat(χ, x))
         if it > warmup && (it - warmup - 1) % every == 0
             χx = χ
+            damping = T(λ)                        # the damping restarts every visit: the sky has moved under the spacetime block since the last one
             for _ in 1:inner
                 residuals = (c, Lc) -> vcat(spacetime_movie_residuals(c, _on_backend(c, params), movie, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning), eltype(c.αs).(prior_residuals(x)))
                 r, J = spacetime_jacobian(residuals, x, camera, backend; N)
@@ -220,8 +251,8 @@ end
 "The χ² at a trial spacetime by one Float64 fused pass (a non-storing cache regenerated at `xn`)."
 function _spacetime_chi2_at(xn, params, movie, camera, backend, N, L, n, frames, freqs, nmax, slab, binning)
     T = eltype(xn)
-    c = GeodesicCache(backend, camera, Val(Int(N)); store_samples = false)
-    regenerate!(c, xn[1], xn[2]; marcher = Fused(64))
+    c = GeodesicCache(backend, camera, Val(Int(N)); store_samples = true)
+    regenerate!(c, xn[1], xn[2]; marcher = Recurrence(64))
     return spacetime_chi2(c, _on_backend(c, params), movie, n == 3 ? exp(xn[3]) : T(L); frames, freqs, nmax, slab, binning)
 end
 

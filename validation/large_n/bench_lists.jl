@@ -1,13 +1,13 @@
 # The large-N dual sweep with and without per-ray parcel lists on the GPU: time and agreement of the tails image and
 # the gradient for parcel counts from 32 to 2048 on a 64² screen with 60 stored samples (defaults). Usage:
-#     julia -t 8 --project=../.. bench_lists.jl [--res 64] [--samples 60] [--counts 32,128,512,2048] [--dense-max 512] [--tag bench]
-# Parcels of two sizes (0.15 and 0.6 M scales) scattered over 3–8 M; the dense path is timed up to --dense-max parcels
-# (its per-ray gradient buffer is npix × 21 × N doubles). Output: output/bench_<tag>.txt.
+#     julia -t 8 --project=../.. bench_lists.jl [--res 64] [--samples 60] [--counts 32,128,512,2048] [--dense-max 512] [--size 0] [--tag bench]
+# Parcels scattered over 3–8 M, of two sizes (0.15 and 0.6 M scales) by default or all of scale --size M; the dense path
+# is timed up to --dense-max parcels (its per-ray gradient buffer is npix × 21 × N doubles). Output: output/bench_<tag>.txt.
 using KerrSplat, KerrSplat.Fit, KerrSplat.Splats, KerrSplat.Geodesics, KerrSplat.Transfer
 using KernelAbstractions, CUDA, StaticArrays, Random, Printf
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
 getstr(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : ARGS[i+1])
-res = getopt("--res", 64); N = getopt("--samples", 60); counts = parse.(Int, split(getstr("--counts", "32,128,512,2048"), ",")); densemax = getopt("--dense-max", 512); tag = getstr("--tag", "bench")
+res = getopt("--res", 64); N = getopt("--samples", 60); counts = parse.(Int, split(getstr("--counts", "32,128,512,2048"), ",")); densemax = getopt("--dense-max", 512); size0 = getopt("--size", 0.0); tag = getstr("--tag", "bench")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 a, θo = 0.94, deg2rad(60.0); t_obs = 12.0; ν = 230e9; L = gravitational_radius(4e6)
 camera = Geodesics.Camera((-10.0, 10.0), (-10.0, 10.0), res)
@@ -18,14 +18,14 @@ rng = MersenneTwister(11)
 function parcels(n)
     p = zeros(NPOLARIZEDPARAMS, n)
     for i in 1:n
-        φ = 2π * rand(rng); r0 = 3.0 + 5.0 * rand(rng); sz = i % 3 == 0 ? 0.15 : 0.6
+        φ = 2π * rand(rng); r0 = 3.0 + 5.0 * rand(rng); sz = size0 > 0 ? size0 : (i % 3 == 0 ? 0.15 : 0.6)
         p[:, i] = [r0 * cos(φ), r0 * sin(φ), 0.8 * randn(rng), log(sz), log(sz * 1.3), log(sz * 0.7), 1.0, 0.1 * randn(rng), 0.1 * randn(rng), 0.0,
                    0.0, log(1e9), log(2e4 * 48 / n), log(30.0), log(10.0), π / 2 + 0.3 * randn(rng), 0.5 * randn(rng), 0.2 * randn(rng), 0.3 + 0.1 * randn(rng), 0.1 * randn(rng), 0.02 * randn(rng)]
     end
     return p
 end
 w = CuArray([SVector{4}(randn(rng, 4)) for _ in 1:npix])
-lines = String[@sprintf("per-ray lists on the GPU: %d² pixels, %d samples, RTX 2080 SUPER", res, N)]
+lines = String[@sprintf("per-ray lists on the GPU: %d² pixels, %d samples, parcel scales %s M, RTX 2080 SUPER", res, N, size0 > 0 ? string(size0) : "0.15 and 0.6")]
 for n in counts
     params = CuArray(parcels(n))
     tl = @elapsed lists = ray_lists(cache, params, t_obs); CUDA.synchronize()
