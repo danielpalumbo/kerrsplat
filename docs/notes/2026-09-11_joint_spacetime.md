@@ -112,7 +112,26 @@ dual path was the pitch angle, `acos(clamp(cos θB, −1, 1))`, whose partials a
 the clamp engages; it is now `safe_acos`, and the guard writes the state to a file when it
 fires so that the next occurrence can be replayed. The basin question is the 3 × 3 grid of
 spacetime starts, a ∈ {0.3, 0.6, 0.9} × θo ∈ {45°, 60°, 75°}, each fitted for 60 iterations
-from the same perturbed sky and compared by its final χ². GRID_RESULT
+from the same perturbed sky and compared by its final χ².
+
+| start a, θo | end a | end θo | χ²/N after 60 iterations |
+|---|---|---|---|
+| 0.3, 45° | 0.19 | 56.2° | 1.64 |
+| 0.3, 60° | 0.30 | 57.5° | 1.61 |
+| 0.3, 75° | 0.38 | 57.7° | 1.74 |
+| 0.6, 45° | 0.55 | 57.0° | 1.38 |
+| 0.6, 60° | 0.62 | 56.9° | 1.68 |
+| 0.6, 75° | 0.66 | 58.0° | 1.67 |
+| 0.9, 45° | 0.80 | 59.8° | 1.28 |
+| 0.9, 60° | 0.89 | 60.5° | 1.42 |
+| 0.9, 75° | 0.94 | 59.4° | 1.62 |
+
+The inclination is found from every start (56–60° for 60°, nearer the truth when the spin
+is). The spin ends within 0.1 of where it started, whatever the inclination, and the final
+χ² orders the spins only faintly (1.3–1.6 at a ≈ 0.9 against 1.6–1.7 at a ≈ 0.3, with the
+fits not converged at 60 iterations). So on this movie the joint fit with free pattern rates
+is nearly blind to the spin, and the multi-start does not rescue it because the basins are
+not separated in χ²: the sky mimics the spin.
 
 ## Where the spin lives
 
@@ -127,4 +146,6 @@ of its fluid at the current spin, and `fit_joint!(...; pattern = σ)` now rebuil
 iteration, feeds it to the splat gradient through the priors and to the spacetime block as
 residuals whose partials with respect to the spin come through the metric (gated against
 finite differences in `test_joint_fit`). With it the spin is constrained by the motion as the
-inclination is by the shape. PATTERN_RESULT
+inclination is by the shape. The two self-fits with the prior at σ = 0.02 rad/M from
+(0.5, 45°) and (0.6, 60°) are running as this is written; their result follows in the next
+note.
