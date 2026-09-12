@@ -189,6 +189,33 @@ end
 flux_density(img, Δα, L, D) = img .* (Transfer.pixel_solid_angle(Δα, L, D) / Transfer.JY)
 
 """
+    shell_parcels(n; rin = 3.0, rout = 7.0, height = 0.5, scale = 0.2, logne = log(1e4), logTe = log(30.0), logB = log(20.0),
+                  spin = 0.0, keplerian = true, rng = Random.default_rng()) -> Matrix
+
+The large-N starting point: `n` parcels of one small scale filling a shell of radii `rin` to
+`rout` and half-thickness `height` (uniform in the shell's volume), with random orientations,
+a common low density (chosen so that the total emission measure does not depend on `n`: the
+density is `logne` minus ln n), the fluid rows at rest with a Keplerian pattern rate about the
+spin axis (`keplerian`, rate 1/(r^{3/2} + a)) or at zero, and unit temporal envelopes wider
+than any movie. The fit then moves, brightens, prunes, merges and densifies them: an
+over-complete basis rather than a hypothesis about their number.
+"""
+function shell_parcels(n::Integer; rin = 3.0, rout = 7.0, height = 0.5, scale = 0.2, logne = log(1e4), logTe = log(30.0), logB = log(20.0),
+                       spin = 0.0, keplerian::Bool = true, rng = Random.default_rng())
+    p = zeros(NPOLARIZEDPARAMS, n)
+    for i in 1:n
+        r = cbrt(rin^3 + (rout^3 - rin^3) * rand(rng))                # uniform in volume
+        φ = 2π * rand(rng)
+        z = height * (2 * rand(rng) - 1)
+        q = normalize(SVector(randn(rng), randn(rng), randn(rng), randn(rng)))
+        p[:, i] = [r * cos(φ), r * sin(φ), z, log(scale), log(scale), log(scale), q[1], q[2], q[3], q[4],
+                   0.0, log(1e9), logne - log(n), logTe, logB, π / 2, 0.0, 0.0, 0.0, 0.0, keplerian ? 1 / (r * sqrt(r) + spin) : 0.0]
+        p[16, i] = acos(2 * rand(rng) - 1); p[17, i] = 2π * rand(rng)       # a random field direction per parcel
+    end
+    return p
+end
+
+"""
     fields(params, t, x, y, z) -> (ne, Θe, B)
 
 Field-level view of a set of polarized splats at an event (addendum §5.2.3): the total electron

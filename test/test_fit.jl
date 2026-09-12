@@ -808,3 +808,46 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         @info "$label time-resolved likelihood: closure χ² gradient vs host Enzyme $e, visibility (with a prior) $ev; $(ndata(tr)) closure quantities over $(length(tr)) scans and $(length(frame_times(tr))) frames; polish on visibilities χ² $(hp[1]) → $(hp[end]); a Sgr A* night of $(round(means[end] - means[1]; digits = 1)) h is $(round(tM[end]; digits = 0)) M"
     end
 end
+
+"""
+    test_large_n_init(; res = 12, N = 16, n = 60, iterations = 12, prune_fraction = 0.05)
+
+The large-N starting point and the hygiene at that size: `shell_parcels` fills a shell with `n`
+small parcels (radii in range, one scale, unit quaternions, Keplerian rates), whose image on a
+small screen is finite and positive; a staged fit of a three-parcel truth from that start with
+hygiene every few iterations lowers χ² and ends with fewer parcels than it began with.
+"""
+function test_large_n_init(; res = 12, N = 16, n = 60, iterations = 12, prune_fraction = 0.05)
+    rng = Random.MersenneTwister(5)
+    a = 0.9; θo = deg2rad(60.0); L = gravitational_radius(4e6); ν = 230e9
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = true)
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    p0 = shell_parcels(n; rin = 3.0, rout = 7.0, height = 0.5, scale = 0.25, spin = a, rng)
+    @testset "large-N starting point and hygiene ($n parcels)" begin
+        @test size(p0) == (NPOLARIZEDPARAMS, n)
+        r = hypot.(p0[1, :], p0[2, :])
+        @test all(3.0 .<= r .<= 7.0) && all(abs.(p0[3, :]) .<= 0.5) && all(p0[4, :] .== log(0.25))
+        @test all(abs.(sqrt.(sum(abs2, p0[7:10, :]; dims = 1)) .- 1) .< 1e-12)
+        @test all(abs.(p0[21, :] .- 1 ./ (r .^ 1.5 .+ a)) .< 1e-12)
+        img = polarized_image(cache, p0, 0.0, ν, L)
+        @test all(x -> all(isfinite, x), img) && maximum(x -> x[1], img) > 0
+        # a three-parcel truth, fitted from the shell with hygiene
+        pt = zeros(NPOLARIZEDPARAMS, 3)
+        for (i, (x, y)) in enumerate(((5.0, 0.0), (-3.0, 4.0), (-2.0, -4.5)))
+            pt[:, i] = [x, y, 0.1, log(0.8), log(0.8), log(0.6), 1.0, 0.0, 0.0, 0.0, 0.0, log(1e9), log(3e5), log(30.0), log(20.0), π / 2, 0.3, 0.0, 0.3, 0.0, 1 / (hypot(x, y)^1.5 + a)]
+        end
+        clean = polarized_cube(cache, pt, [0.0, 15.0], [ν], L)
+        σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+        movie = StokesMovie([clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)], [0.0, 15.0], [ν], σ)
+        q0 = copy(p0); q0[13, :] .= log(3e5 * 3 / n)                    # the shell at the truth's emission measure
+        χ0 = chi2(q0, movie, cache, L)
+        stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations, η = 0.05, η_end = 0.02)]
+        q, history, events = Fit.fit!(copy(q0), movie, cache, L, stages; hygiene = Fit.Hygiene(every = 4, prune_fraction = prune_fraction, merge_position = 0.3), gradient = :dual)
+        χ1 = chi2(q, movie, cache, L)
+        @test χ1 < χ0 && size(q, 2) < n && size(q, 2) >= 3 && !isempty(events)
+        @info "large-N start: $n parcels of 0.25 M in a 3–7 M shell; fit of a 3-parcel truth: χ² $(round(χ0)) → $(round(χ1)) in $iterations iterations, parcels $n → $(size(q, 2)) through hygiene events $events"
+    end
+end
+
