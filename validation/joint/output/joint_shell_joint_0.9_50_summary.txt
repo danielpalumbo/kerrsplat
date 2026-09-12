@@ -1,0 +1,27 @@
+joint spacetime-and-splat self-fit: 64² pixels, fov 16.0 M, 160 samples, nmax 2 slab 0.5, 4 frames over 60.0 M, frequencies [230.0] GHz, 65536 values; parcels at 2.5–5.0 M; 240 iterations, eta 0.02, warmup 0, inner 3, every 1, pattern prior σ = 0.005, Keplerian fluid prior σ = 0.05, Stokes IQUV, shell of 300 with hygiene every 25; start a 0.9 inc 50.0, truth perturbed by 0.1, seed 1
+truth: a 0.9 inc 60.0; chi2 at truth 65749.7421359244 (reduced 1.0032614461658387); chi2 at start 329880.67113134474; with the start sky at the true spacetime 330332.16952461173
+end: a 0.918461680828635 inc 55.704771656706015 chi2 67894.40224313135 (reduced 1.035986362352468) accepted spacetime steps 404 parcels 71 events [(50, 300, 251), (75, 251, 130), (100, 130, 99), (125, 99, 84), (150, 84, 79), (175, 79, 74), (200, 74, 73), (225, 73, 71)] minutes 116.35993423461915
+iteration  10  chi2   197149.1  a 0.9266  inc 48.91°  9.5 min
+iteration  20  chi2   142454.8  a 0.9282  inc 48.70°  16.3 min
+iteration  30  chi2   111360.6  a 0.9283  inc 48.67°  22.7 min
+iteration  40  chi2    97819.3  a 0.9282  inc 48.44°  29.1 min
+iteration  50  chi2    86133.5  a 0.9286  inc 48.40°  34.9 min
+iteration  60  chi2   108528.9  a 0.9291  inc 50.57°  40.6 min
+iteration  70  chi2    87233.1  a 0.9323  inc 50.23°  46.1 min
+iteration  80  chi2   133101.7  a 0.9104  inc 54.35°  50.6 min
+iteration  90  chi2    88074.7  a 0.9118  inc 54.00°  55.2 min
+iteration 100  chi2    78610.7  a 0.9115  inc 54.02°  59.5 min
+iteration 110  chi2    92609.1  a 0.8904  inc 59.32°  63.9 min
+iteration 120  chi2    82350.5  a 0.8978  inc 59.18°  68.2 min
+iteration 130  chi2    88567.7  a 0.9251  inc 56.97°  72.1 min
+iteration 140  chi2    74450.8  a 0.9121  inc 57.36°  76.3 min
+iteration 150  chi2    71638.4  a 0.9086  inc 57.75°  80.2 min
+iteration 160  chi2    75000.4  a 0.9252  inc 55.00°  84.3 min
+iteration 170  chi2    72726.7  a 0.9182  inc 55.74°  88.5 min
+iteration 180  chi2    75569.9  a 0.9228  inc 55.42°  92.4 min
+iteration 190  chi2    71307.9  a 0.9185  inc 55.71°  96.3 min
+iteration 200  chi2    70159.2  a 0.9195  inc 55.62°  100.2 min
+iteration 210  chi2    70064.5  a 0.9176  inc 56.17°  104.2 min
+iteration 220  chi2    69225.0  a 0.9155  inc 56.46°  108.4 min
+iteration 230  chi2    70416.6  a 0.9116  inc 56.19°  112.2 min
+iteration 240  chi2    69003.4  a 0.9185  inc 55.70°  116.3 min
