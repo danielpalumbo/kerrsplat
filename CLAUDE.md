@@ -40,9 +40,16 @@ before any performance work.
   `method = :dual`): the reverse over the compositing is written by hand from 4-vectors (tails
   and adjoints) and the per-sample derivatives are ForwardDiff duals, which run in CUDA
   kernels without any of Enzyme's constraints; four times the forward transport per gradient.
+- Large N: the dual sweep and the transport loop over per-ray parcel lists (`Splats.ray_lists`,
+  `Transfer.ray_model`; on by default above sixteen parcels, `cull`), built once per frame from
+  the stored samples; the per-ray gradient slots are gathered parcel by parcel in ray order, so
+  the result stays deterministic. The fused (unstored) forward transport is dense.
 - ForwardDiff ≥ 1: `x == 0` on a dual also requires zero partials, and `sqrt` at a zero value
   has NaN partials. Guard removable singularities on the value (`Transfer.vanishes`,
-  `Transfer.safe_sqrt`), never with `==` against a literal.
+  `Transfer.safe_sqrt`), never with `==` against a literal. `acos(clamp(x, -1, 1))` on a dual
+  is NaN when the clamp engages (zero partials times the rule's −∞): `Transfer.safe_acos`.
+  Such measure-zero events do occur over the 1e8 sample evaluations of a GPU fit (the first
+  joint self-fit died of one after eighty iterations).
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
@@ -54,7 +61,9 @@ before any performance work.
   zero gradient: never reuse a closure's local names in the enclosing function. The same
   scoping rule bites without Enzyme: a closure that assigns a name the enclosing function also
   assigns writes the enclosing variable (`h = solve()` inside, `history = T[]` outside, and the
-  inner result aliases the outer array), so name a helper closure's locals apart.
+  inner result aliases the outer array), so name a helper closure's locals apart, and never
+  give a local closure the name of a module function (the local one shadows every method of
+  the global, so a two-argument call to the global becomes a MethodError on the closure).
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
   with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.
@@ -83,6 +92,14 @@ before any performance work.
   runners, and CI runs once per pull request (`pull_request` and manual dispatch only; a run
   is about an hour). Never commit the data files listed in `docs/HANDOFF.md`, nor anything
   private, to a public repository.
+
+## Fitting conventions that bit us
+- Joint fits of two blocks where one can mimic the other (splats and spacetime): the block
+  that cannot be mimicked leads. `fit_joint!` takes its Levenberg–Marquardt spacetime steps
+  from the first iteration, three per iteration; any warmup of the splats on the wrong
+  spacetime parks the fit in a local minimum the spacetime never leaves.
+- Adam's step is invariant to the gradient's scale: a row that must move slowly (the pattern
+  rates in rad/M) needs a smaller step (`steps`), not a smaller gradient.
 
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).

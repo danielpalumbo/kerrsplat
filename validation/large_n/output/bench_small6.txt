@@ -1,0 +1,4 @@
+per-ray lists on the GPU: 64² pixels, 60 samples, parcel scales 0.2 M, RTX 2080 SUPER
+N =   512  lists 0.116 s (capacity  94, mean length  11.6)  tails 0.147 s  gradient 0.675 s  | dense: tails 0.361 s  gradient 1.067 s  (image agrees to 0.0e+00, gradient to 2.6e-16)
+N =  2048  lists 0.474 s (capacity 380, mean length  47.3)  tails 0.568 s  gradient 2.360 s  | dense: tails 1.422 s  gradient 3.884 s  (image agrees to 0.0e+00, gradient to 2.1e-16)
+N =  8192  lists 1.898 s (capacity 1401, mean length 190.0)  tails 2.282 s  gradient 10.272 s

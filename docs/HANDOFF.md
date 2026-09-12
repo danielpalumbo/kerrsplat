@@ -4,6 +4,37 @@ Written 2026-09-04 for whoever (or whichever Claude session) continues this work
 repository is the only durable record: session memories of the Claude instance that wrote most of
 the code live outside the repository and do not travel.
 
+## The joint spacetime-and-splat fit (2026-09-11)
+
+`Fit.fit_joint!` (`src/Fit/joint.jl`, `docs/notes/2026-09-11_joint_spacetime.md`) fits spin
+and inclination (and optionally the mass through ln L) in the same loop as the splats:
+Adam on the splats from the dual sweep over Float64 samples regenerated every iteration,
+Levenberg–Marquardt on the spacetime block from `spacetime_jacobian`, the residual Jacobian
+by forward duals through a fused march on a dual-typed cache (which runs on CUDA too). The
+schedule is the whole story: the spacetime must move from the first iteration with three
+inner LM steps, because the splats adapt to a wrong spacetime within a few iterations and
+then hold it there (a warmup of five iterations left the inclination 6° off; none recovered
+it to 0.4°). Mass through ln L is degenerate with the densities where the emission is thin.
+At scale the joint fit has basins: from a spacetime far off (0.5, 45° for a truth at 0.9, 60°)
+it settles at a wrong one with χ²/N 1.56 against 1.01, so several spacetime starts compared by
+their final χ² are part of the method (the 3 × 3 grid of `joint_selffit.jl`). The weight cutoff
+is now 1e-6 (`WEIGHT_CUTOFF`, a 5.3σ support sphere; 1.7× on the large-N gradient, the fit's χ²
+within 4e-4), and the pitch angle goes through `Transfer.safe_acos`, because a clamped acos on
+a dual is NaN at the boundary and such measure-zero events do occur over a GPU fit's 1e8
+sample evaluations.
+
+## State at the close of 2026-09-10 (resume here)
+
+Direction (Daniel, 2026-09-10 evening): the large-N splat basis, rich synthetic I, Q, U, V
+slow-light movies with n ≤ 2, weak assumptions, near-uniqueness as the result; no 4D plasma
+claims from 2017 EHT data (`docs/notes/2026-09-10_large_n.md`). Branch `large-n-lists` holds
+the per-ray parcel lists for the dual sweep as a WIP commit whose gate `test_ray_lists` has not
+yet run to completion: rerun it first (`test_ray_lists`, `test_polarized_gradient`,
+`test_polarized_gradient_winding` on the CPU backend), then the GPU benchmark at N = 100 and
+1000, fill `LISTS_RESULT` in the note, PR. Branch `sgra-polarization` holds the last Sgr A*
+script changes and the first flare-parcel result; the remaining Sgr A* runs were stopped and
+that line closes with a write-up of what exists.
+
 ## Where things are
 
 - `CLAUDE.md`: working conventions (branches, PRs, tests before PRs, Claude may merge) and the

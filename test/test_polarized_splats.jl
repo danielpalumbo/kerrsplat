@@ -361,3 +361,57 @@ function test_polarized_gradient(backend; res::Int, N::Int, tol::Float64, label:
         end
     end
 end
+
+"""
+    test_ray_lists(backend; res = 8, N = 40, tol = 1e-12, label = "CPU backend")
+
+The large-N path: per-ray parcel lists (`ray_lists`) against the dense sums. Forty-eight
+parcels of mixed sizes; the lists are sorted, duplicate-free and much shorter than the parcel
+count; the tails image over the lists equals the dense one, the dual-sweep gradient over the
+lists equals the dense one to `tol`, with and without the half-orbit truncation, and
+`polarized_gradient!(...; cull = true)` equals `cull = false`.
+"""
+function test_ray_lists(backend; res::Int = 8, N::Int = 40, tol::Float64 = 1e-12, label::String = "CPU backend")
+    a, θo = 0.94, deg2rad(60.0); t_obs = 12.0; ν = 230e9; L = gravitational_radius(4e6)
+    camera = Geodesics.Camera((-10.0, 10.0), (-10.0, 10.0), res)
+    rng = MersenneTwister(11)
+    n = 48
+    p = zeros(NPOLARIZEDPARAMS, n)
+    for i in 1:n
+        φ = 2π * rand(rng); r0 = 3.0 + 5.0 * rand(rng); size = i % 3 == 0 ? 0.15 : 0.6
+        p[:, i] = [r0 * cos(φ), r0 * sin(φ), 0.8 * randn(rng), log(size), log(size * 1.3), log(size * 0.7), 1.0, 0.1 * randn(rng), 0.1 * randn(rng), 0.0,
+                   0.0, log(1e9), log(2e4), log(30.0), log(10.0), π / 2 + 0.3 * randn(rng), 0.5 * randn(rng), 0.2 * randn(rng), 0.3 + 0.1 * randn(rng), 0.1 * randn(rng), 0.02 * randn(rng)]
+    end
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    params = adapt_to(backend, p)
+    w = [SVector{4}(randn(rng, 4)) for _ in 1:npixels(cache)]
+    dstokes = adapt_to(backend, w)
+    @testset "$label per-ray parcel lists" begin
+        for (nmax, slab) in ((-1, 0.0), (1, 0.5))
+            lists = ray_lists(cache, params, t_obs; nmax, slab)
+            ids = Array(lists.ids); count = Array(lists.count)
+            @test all(0 .<= count .<= size(ids, 1)) && maximum(count) == size(ids, 1)
+            @test all(issorted(ids[1:count[j], j]) && allunique(ids[1:count[j], j]) && all(1 .<= ids[1:count[j], j] .<= n) for j in eachindex(count))
+            @test sum(count) < 0.5 * n * length(count)                       # the lists cull most parcels on most rays
+            tails_d = adapt_to(backend, zeros(SVector{4,Float64}, npixels(cache), N + 1)); tails_l = adapt_to(backend, zeros(SVector{4,Float64}, npixels(cache), N + 1))
+            polarized_tails!(tails_d, cache, params, t_obs, ν, L; nmax, slab)
+            polarized_tails!(tails_l, cache, params, t_obs, ν, L; nmax, slab, lists)
+            img_d = Array(tail_image(tails_d, ν)); img_l = Array(tail_image(tails_l, ν))
+            scale = maximum(x -> maximum(abs, x), img_d)
+            @test maximum(maximum.(abs, img_l .- img_d)) <= 1e-14 * scale
+            g_d = adapt_to(backend, zeros(size(p))); g_l = adapt_to(backend, zeros(size(p)))
+            polarized_dual_sweep!(g_d, dstokes, tails_d, cache, params, t_obs, ν, L; nmax, slab)
+            polarized_dual_sweep!(g_l, dstokes, tails_l, cache, params, t_obs, ν, L; nmax, slab, lists)
+            e = maximum(abs.(Array(g_l) .- Array(g_d))) / maximum(abs.(Array(g_d)))
+            @test e <= tol
+            @info "$label per-ray lists (nmax = $nmax): capacity $(size(ids, 1)) of $n parcels, mean list length $(round(sum(count) / length(count); digits = 1)); image identical to $(maximum(maximum.(abs, img_l .- img_d)) / scale), gradient to $e"
+        end
+        g_c = adapt_to(backend, zeros(size(p))); g_n = adapt_to(backend, zeros(size(p)))
+        _, img_c = polarized_gradient!(g_c, dstokes, cache, params, t_obs, ν, L; cull = true)
+        _, img_n = polarized_gradient!(g_n, dstokes, cache, params, t_obs, ν, L; cull = false)
+        @test maximum(abs.(Array(g_c) .- Array(g_n))) / maximum(abs.(Array(g_n))) <= tol
+        @test Array(img_c) == Array(img_n)
+    end
+end
+
