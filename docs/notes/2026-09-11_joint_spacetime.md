@@ -244,8 +244,18 @@ fitted jointly; 153,600 values in every row so the χ² are comparable):
 |---|---|---|---|---|---|
 | I, Q, U, V with the n ≤ 2 images | 1.169 | 1.030 | 1.086 | 8,600 | 21,400 |
 | I, Q, U, V with the n ≤ 1 images | 1.130 | 1.025 | 1.060 | 5,400 | 16,200 |
+| I, Q, U (no V), n ≤ 2 | 1.225 | 1.070 | 1.114 | 5,100 | 17,800 |
+| I alone, n ≤ 2 | 1.223 | 1.049 | 1.113 | 2,400 | 6,700 |
+
+(In the last two rows the χ²/N is per value the fit sees, 115,200 and 38,400; the excluded
+Stokes parameters get infinite noise and the movie is otherwise the same.)
 
 Removing the n = 2 ring takes away a third of the spin's discrimination on the high side and
-a quarter on the low side; the spin is still determined to a few hundredths from the direct
-and the n = 1 images alone at this resolution and with the dynamics. The next rows, the
-Stokes parameters removed in turn (`--stokes IQU`, `--stokes I`), are running. UNIQUENESS
+a quarter on the low side. Removing Stokes V takes away four tenths on the high side and a
+sixth on the low. Removing the polarization altogether leaves Stokes I with less than a
+third of the full discrimination, and the spin still determined: 2,400 units of χ² for 0.08
+of spin is decisive for a correct model at this noise. So on this movie the ranking of the
+data is polarization first, the lensed ring second, and Stokes I alone would still do, which
+is the answer the program was built to get: rich enough data determine the plasma and the
+spacetime together, and the table says how rich. The rows for fewer frames and for a second
+frequency follow. UNIQUENESS2
