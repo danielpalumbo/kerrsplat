@@ -3,6 +3,7 @@
 # transport used in Krang's polarized images) on random rays, samples, velocities and fields; the
 # pitch angle against an explicit construction; and the same routine inside a kernel on the backend.
 
+using ForwardDiff
 using StaticArrays
 using LinearAlgebra
 using KerrSplat.Geodesics
@@ -76,3 +77,54 @@ function test_frames(backend; N = 400, label = "")
         @test maximum(abs.(rem2pi.(O[:, 3] .- M[17, :], RoundNearest))) < 1e-12
     end
 end
+
+"""
+    test_turning_point_frame()
+
+`Transfer.momentum_bl_d` equals Krang's `p_bl_d` away from the turning points, and at a radial
+turning point (the root of the radial potential, found by bisection on a ray with η above the
+photon-orbit value) its partials with respect to the spin are finite where Krang's are NaN,
+and so are the local frame's redshift, pitch angle and polarization angle.
+"""
+function test_turning_point_frame()
+    met = Krang.Kerr(0.4)
+    @testset "momentum at a radial turning point" begin
+        rng = Random.MersenneTwister(3)
+        for _ in 1:20
+            r = 2.5 + 8 * rand(rng); θ = 0.2 + 2.7 * rand(rng); η = 10 + 30 * rand(rng); λ = -5 + 10 * rand(rng)
+            Krang.r_potential(met, η, λ, r) > 0 && Krang.θ_potential(met, η, λ, θ) > 0 || continue
+            @test Transfer.momentum_bl_d(met, r, θ, η, λ, true, false) == Krang.p_bl_d(met, r, θ, η, λ, true, false)
+        end
+        # a ray with a radial turning point: η = 30, λ = 0 (the photon orbit needs η ≈ 27 at a = 0); the root outside 3 M
+        η = 30.0; λ = 0.0
+        f(r) = Krang.r_potential(met, η, λ, r)
+        lo, hi = 3.0, 12.0
+        @test f(lo) < 0 < f(hi)
+        for _ in 1:200
+            mid = (lo + hi) / 2
+            f(mid) < 0 ? (lo = mid) : (hi = mid)
+        end
+        r0 = hi
+        @test abs(f(r0)) < 1e-9
+        D = ForwardDiff.Dual{:a}
+        metd = Krang.Kerr(D(0.4, 1.0))
+        # a hair inside the turning point the potential is negative: Krang's √max(0, R) is a constant zero whose
+        # square-root rule gives NaN partials, safe_sqrt gives zero with zero partials; the values agree
+        rin = r0 - 1e-6
+        @test f(rin) < 0
+        pk = Krang.p_bl_d(metd, D(rin, 0.0), D(1.2, 0.0), D(η, 0.0), D(λ, 0.0), true, false)
+        pm = Transfer.momentum_bl_d(metd, D(rin, 0.0), D(1.2, 0.0), D(η, 0.0), D(λ, 0.0), true, false)
+        @test !isfinite(ForwardDiff.partials(pk[2], 1))
+        @test all(x -> isfinite(ForwardDiff.partials(x, 1)), pm)
+        @test all(abs.(ForwardDiff.value.(pm) .- ForwardDiff.value.(pk)) .< 1e-12) && ForwardDiff.value(pm[2]) == 0
+        # at the root itself both are finite and equal
+        pk0 = Krang.p_bl_d(metd, D(r0, 0.0), D(1.2, 0.0), D(η, 0.0), D(λ, 0.0), true, false)
+        pm0 = Transfer.momentum_bl_d(metd, D(r0, 0.0), D(1.2, 0.0), D(η, 0.0), D(λ, 0.0), true, false)
+        @test all(abs.(ForwardDiff.value.(pm0) .- ForwardDiff.value.(pk0)) .< 1e-12) && all(x -> isfinite(ForwardDiff.partials(x, 1)), pm0)
+        fr = Transfer.local_frame(metd, D(rin, 0.0), D(1.2, 0.0), D(η, 0.0), D(λ, 0.0), true, false, D(0.0, 0.0), D(5.477, 0.0), D(1.0, 0.0),
+                                  SVector(D(0.1, 0.0), D(0.5, 0.0), D(0.0, 0.0)), SVector(D(1.0, 0.0), D(0.3, 0.0), D(0.2, 0.0)))
+        @test isfinite(ForwardDiff.partials(fr.g, 1)) && isfinite(ForwardDiff.partials(fr.cosθB, 1)) && isfinite(ForwardDiff.partials(fr.χ, 1))
+        @info "turning-point frame: root at r = $r0 for η = $η; a hair inside it the momentum values agree with Krang's and the frame's partials are finite ($(ForwardDiff.partials(fr.g, 1)) for the redshift) where Krang's radial momentum has $(ForwardDiff.partials(pk[2], 1))"
+    end
+end
+

@@ -142,7 +142,7 @@ end
 
 """
     fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2,
-               free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing,
+               free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing)
         -> (params, x, history, accepted)
@@ -174,7 +174,9 @@ parcel's pattern rate to the Keplerian rate of its fluid at the current spin (`P
 rebuilt every iteration): the penalty enters the splat gradient through the priors and its
 residuals enter the spacetime block with their dependence on the spin, so the dynamics
 constrain the spin as the lensing does; without it free pattern rates absorb the spin's
-effect on the motion. `history` holds `(χ², x...)` at
+effect on the motion. `keplerian = σ_u` does the same for the fluid velocity rows
+(`KeplerianPrior`: the ZAMO velocity of the circular orbit at the parcel's radius), which is
+where the spin enters the dynamics strongly. `history` holds `(χ², x...)` at
 the start of every iteration, the χ² of the stored-sample pass; `accepted` counts the
 spacetime steps taken.
 
@@ -185,7 +187,7 @@ this movie form in M units does not carry. Fit `[a, θo]` on M-unit movies.
 """
 function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, camera::Geodesics.Camera;
                     L::Real = NaN, iterations::Integer = 100, η = 0.02, η_end = η / 10, warmup::Integer = 0, every::Integer = 1, inner::Integer = 3, λ::Real = 1e-2,
-                    free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing,
+                    free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                     bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                     frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing) where {T,N}
     backend = cache.backend
@@ -206,7 +208,11 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
         return T[(y[i] - μ[i]) / σ[i] for i in 1:n if isfinite(σ[i])]
     end
     pattern_prior(a) = PatternPrior(Geodesics.Krang.Kerr(a), pattern)
-    priors_at(a) = pattern === nothing ? priors : vcat(priors === nothing ? [] : collect(priors), [pattern_prior(a)])
+    keplerian_prior(a) = KeplerianPrior(Geodesics.Krang.Kerr(a), keplerian)
+    dynamic_priors(a) = vcat(pattern === nothing ? [] : [pattern_prior(a)], keplerian === nothing ? [] : [keplerian_prior(a)])
+    priors_at(a) = isempty(dynamic_priors(a)) ? priors : vcat(priors === nothing ? [] : collect(priors), dynamic_priors(a))
+    dynamic_residuals(q, a) = vcat((prior_residuals(q, pr) for pr in dynamic_priors(a))...)
+    ndynamic = (pattern === nothing ? 0 : size(params, 2)) + (keplerian === nothing ? 0 : 3 * size(params, 2))
     for it in 1:iterations
         ηt = η_end + (η - η_end) * (1 + cos(π * (it - 1) / max(iterations - 1, 1))) / 2
         Optimisers.adjust!(opt, ηt)
@@ -221,14 +227,13 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
             for _ in 1:inner
                 residuals = (c, Lc) -> vcat(spacetime_movie_residuals(c, _on_backend(c, params), movie, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning),
                                             eltype(c.αs).(spacetime_prior_residuals(x)),
-                                            pattern === nothing ? eltype(c.αs)[] : prior_residuals(eltype(c.αs).(params), pattern_prior(c.spin)))
+                                            ndynamic == 0 ? eltype(c.αs)[] : dynamic_residuals(eltype(c.αs).(params), c.spin))
                 r, J = spacetime_jacobian(residuals, x, camera, backend; N)
                 if spacetime_priors !== nothing
                     μ, σ = spacetime_priors
                     rows = [i for i in 1:n if isfinite(σ[i])]
-                    npat = pattern === nothing ? 0 : size(params, 2)
                     for (k, i) in enumerate(rows)
-                        J[end - npat - length(rows) + k, i] = 1 / σ[i]
+                        J[end - ndynamic - length(rows) + k, i] = 1 / σ[i]
                     end
                 end
                 if !(all(isfinite, J) && all(isfinite, r))
@@ -247,7 +252,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
                 step = -(A + damping * Diagonal(max.(d, floor))) \ gx
                 xn = [clamp(x[i] + step[i], bounds[i]...) for i in 1:n]
                 χn = _spacetime_chi2_at(xn, params, movie, camera, backend, N, Lfix, n, frames, freqs, nmax, slab, binning) + sum(abs2, spacetime_prior_residuals(xn); init = zero(T)) +
-                     (pattern === nothing ? zero(T) : penalty(params, pattern_prior(xn[1])))
+                     sum(penalty(params, pr) for pr in dynamic_priors(xn[1]); init = zero(T))
                 if χn < χx
                     x = xn; χx = χn
                     damping = max(damping / 3, T(1e-8))

@@ -31,14 +31,15 @@ using StaticArrays
 using KernelAbstractions
 using Enzyme
 using ForwardDiff
-using LinearAlgebra: dot
+using LinearAlgebra: dot, normalize
+using Random
 
 const KA = KernelAbstractions
 
 export SPLAT_PARAMS, NSPLATPARAMS, splat_emissivity, pattern_offset, ThinRenderer, thin_image!, thin_image, thin_gradient!
 export POLARIZED_SPLAT_PARAMS, NPOLARIZEDPARAMS, PolarizedSplats, splat_weight, polarized_image!, polarized_image, polarized_cube, flux_density, accumulator_type, polarized_gradient!, polarized_forward_states!, polarized_reverse_sweep!, chunk_size, polarized_tails!, polarized_dual_sweep!, tail_image, splat_coefficients, winding_cutoff!, RayLists, RaySubset, ray_lists, frame_lists, framed, flattened
 export trajectory_knots, KnotSplats, boyer_lindquist, coordinate_velocity
-export fields, field_grid, recovery_metrics
+export fields, field_grid, recovery_metrics, shell_parcels
 export POWERLAW_SPLAT_PARAMS, NPOWERLAWPARAMS, KAPPA_SPLAT_PARAMS, NKAPPAPARAMS, PowerLawSplats, KappaSplats
 
 """
