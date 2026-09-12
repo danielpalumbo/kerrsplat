@@ -35,10 +35,15 @@ point `shell_parcels`. The scientific state: on a six-parcel n ≤ 2 movie at 0.
 with parcels at 2.5–5 M, the joint fit finds the inclination to a degree from any start and the
 spin from none (a joint local minimum), while the spin profile (`--fix-spin`) has its minimum
 at the truth with 8,600 units of χ² per 0.08 of spin: `docs/notes/2026-09-11_joint_spacetime.md`.
-Next: the uniqueness table proper (the same profile with the data degraded: n ≤ 1, no V, no
-Q/U, fewer frames, one frequency), the large-N fits at scale with hygiene on the GPU, the
-replay of the non-finite Jacobian at a = 0.3, and the FP32-transport question for the
-workstation purchase.
+The first uniqueness table is in the same note (the motion and the polarization carry the
+spin, the n = 2 ring a third of it, a second band little, Stokes I alone still resolves it,
+two frames do not determine the geometry). The large-N program's first instances are in
+`docs/notes/2026-09-10_large_n.md`: from over-complete shells of 300 and 600 parcels with
+hygiene the fits reach the noise floor and agree with each other on the fields closer than
+with the truth (the one-band plasma degeneracy), and with the spacetime free as well the fit
+lands within 4% of the floor with the spin to 0.02 and the inclination to 4°. Next: the spin
+profile from the shell start, the multifrequency large-N fit (to lift the plasma degeneracy),
+the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
 
 ## State at the close of 2026-09-10 (resume here)
 
