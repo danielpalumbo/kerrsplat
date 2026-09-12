@@ -124,20 +124,25 @@ end
 
 # the backward pass: tails[j, k] is the invariant Stokes vector arriving from samples k…N (tails[j, 1] the image);
 # samples from the cutoff on contribute nothing
+# the kernels run over (ray, frame) pairs: index j = ray + (frame − 1)·npix, the frame's time tvec[f] and lists,
+# the ray's pixel, samples and cutoff; batching frames into one launch fills a large card
 @kernel function polarized_tails_kernel!(tails, kstop, params, tvec, lists, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
     j = @index(Global, Linear)
-    pix = build_pixel(pc, j, met, θo)
+    npix = size(tails, 1)
+    f = (j - 1) ÷ npix + 1
+    r = j - (f - 1) * npix
+    pix = build_pixel(pc, r, met, θo)
     Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
-    c = RadiativeTransport(Transfer.ray_model(PolarizedSplats(params, tvec, lists), j), ν, L)
+    c = RadiativeTransport(Transfer.ray_model(PolarizedSplats(params, view(tvec, f:f), frame_lists(lists, f)), r), ν, L)
     R = zero(SVector{4,typeof(ν)})
-    @inbounds stop = kstop[j]
-    @inbounds tails[j, N + 1] = R
+    @inbounds stop = kstop[r]
+    @inbounds tails[r, N + 1, f] = R
     for k in N:-1:1
         if k < stop
-            O, E, on = Transfer.sample_step(c, _stored_sample(S, j, k), Δτ, pix)
+            O, E, on = Transfer.sample_step(c, _stored_sample(S, r, k), Δτ, pix)
             on && (R = E + O * R)
         end
-        @inbounds tails[j, k] = R
+        @inbounds tails[r, k, f] = R
     end
 end
 
@@ -146,21 +151,24 @@ end
 @kernel function polarized_dual_kernel!(grad, dstokes, tails, kstop, params, tvec, lists, S, pc, met::Krang.Kerr, θo, ν, L, ::Val{N}) where {N}
     j = @index(Global, Linear)
     T = typeof(ν)
-    pix = build_pixel(pc, j, met, θo)
+    npix = size(tails, 1)
+    f = (j - 1) ÷ npix + 1
+    r = j - (f - 1) * npix
+    pix = build_pixel(pc, r, met, θo)
     Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
-    m = Transfer.ray_model(PolarizedSplats(params, tvec, lists), j)
+    m = Transfer.ray_model(PolarizedSplats(params, view(tvec, f:f), frame_lists(lists, f)), r)
     c = RadiativeTransport(m, ν, L)
     hor = Krang.horizon(met) * (1 + T(1e-3))
-    @inbounds w = dstokes[j] * ν^3
-    @inbounds stop = kstop[j]
+    @inbounds w = dstokes[r, f] * ν^3
+    @inbounds stop = kstop[r]
     for k in 1:min(stop - 1, N)
-        s = _stored_sample(S, j, k)
+        s = _stored_sample(S, r, k)
         (s.ok && s.r > hor) || continue
         j4, α4, ρ3, active = Transfer.accumulate_elements(c, s, pix, nothing)
         active || continue
         Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
         Δ = L / ν * Σ * Δτ
-        @inbounds R = tails[j, k + 1]
+        @inbounds R = tails[r, k + 1, f]
         O, E, j̄, ᾱ, ρ̄ = Transfer.sample_adjoint(j4, α4, ρ3, Δ, w, R)
         for i in 1:nelements(m)
             element_adjoint!(grad, m, i, j, pix, s, ν, j̄, ᾱ, ρ̄)
@@ -179,20 +187,28 @@ is `npix × (N + 1)` of `SVector{4}` on the backend. With `nmax ≥ 0` the rays 
 after their `nmax`-th passage through the slab |z| < `slab`, as `polarized_image!` does
 (`winding_cutoff!`). With `lists` (`ray_lists`) every ray loops over its own parcels.
 """
-function polarized_tails!(tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
+function polarized_tails!(tails::AbstractArray{<:Any,3}, cache::GeodesicCache{T,N}, params, times::AbstractVector, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
     backend = cache.backend
+    npix = npixels(cache); nf = length(times)
     nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
-    size(tails) == (npixels(cache), N + 1) || throw(ArgumentError("tails must be npix × (N + 1)"))
+    size(tails) == (npix, N + 1, nf) || throw(ArgumentError("tails must be npix × (N + 1) × nframes"))
+    lists === nothing || nframes(framed(lists)) == nf || throw(ArgumentError("the lists hold $(nframes(framed(lists))) frames for $nf times"))
     prepare_backend!(backend)
-    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    tvec = KA.allocate(backend, T, nf); copyto!(tvec, T.(times))
     kstop = _cutoffs(cache, nmax, slab)
-    polarized_tails_kernel!(backend, 64)(tails, kstop, params, tvec, lists, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npixels(cache))
+    polarized_tails_kernel!(backend, 64)(tails, kstop, params, tvec, framed(lists), cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npix * nf)
     KA.synchronize(backend)
     return tails
 end
+"One frame: `tails` is `npix × (N + 1)` (the batched form with one frame, no copy)."
+function polarized_tails!(tails::AbstractMatrix, cache::GeodesicCache{T,N}, params, t_obs::Real, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
+    polarized_tails!(reshape(tails, size(tails, 1), size(tails, 2), 1), cache, params, [T(t_obs)], ν_obs, L; nmax, slab, lists)
+    return tails
+end
 
-"The observed Stokes vectors (sorted pixel order, cgs) from the tails of [`polarized_tails!`](@ref)."
-tail_image(tails, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1])
+"The observed Stokes vectors (sorted pixel order, cgs) from the tails of [`polarized_tails!`](@ref): a vector for one frame, `npix × nframes` for a batch."
+tail_image(tails::AbstractMatrix, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1])
+tail_image(tails::AbstractArray{<:Any,3}, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1, :])
 
 """
     polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax = -1, slab = 0, lists = nothing) -> dparams
@@ -206,23 +222,30 @@ result does not depend on the order of the threads). `nmax`, `slab` and `lists` 
 the tails; with `lists` the per-ray sums go into the slots of the ray's list (`capacity`
 slots per ray instead of one per parcel) and are gathered parcel by parcel in ray order.
 """
-function polarized_dual_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}, tails, cache::GeodesicCache{T,N}, params, t_obs, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
+function polarized_dual_sweep!(dparams, dstokes::AbstractMatrix{SVector{4,T}}, tails::AbstractArray{<:Any,3}, cache::GeodesicCache{T,N}, params, times::AbstractVector, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
     backend = cache.backend
-    npix = npixels(cache)
-    size(tails) == (npix, N + 1) || throw(ArgumentError("tails must be npix × (N + 1)"))
+    npix = npixels(cache); nf = length(times)
+    size(tails) == (npix, N + 1, nf) || throw(ArgumentError("tails must be npix × (N + 1) × nframes"))
+    size(dstokes) == (npix, nf) || throw(ArgumentError("dstokes must be npix × nframes"))
+    fl = framed(lists)
+    fl === nothing || nframes(fl) == nf || throw(ArgumentError("the lists hold $(nframes(fl)) frames for $nf times"))
     prepare_backend!(backend)
-    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    tvec = KA.allocate(backend, T, nf); copyto!(tvec, T.(times))
     kstop = _cutoffs(cache, nmax, slab)
-    slots = lists === nothing ? size(params, 2) : capacity(lists)
-    grad = KA.allocate(backend, T, npix, size(params, 1), slots); fill!(grad, zero(T))
-    polarized_dual_kernel!(backend, 64)(grad, dstokes, tails, kstop, params, tvec, lists, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npix)
+    slots = fl === nothing ? size(params, 2) : capacity(fl)
+    grad = KA.allocate(backend, T, npix * nf, size(params, 1), slots); fill!(grad, zero(T))
+    polarized_dual_kernel!(backend, 64)(grad, dstokes, tails, kstop, params, tvec, fl, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, T(ν_obs), T(L), Val(N); ndrange = npix * nf)
     KA.synchronize(backend)
-    if lists === nothing
+    if fl === nothing
         dparams .+= reshape(sum(grad; dims = 1), size(params))
     else
-        gather_slots!(dparams, grad, lists, backend)
+        gather_slots!(dparams, grad, flattened(fl), backend)
     end
     return dparams
+end
+"One frame: `dstokes` a vector and `tails` `npix × (N + 1)` (the batched form with one frame, no copy)."
+function polarized_dual_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}, tails::AbstractMatrix, cache::GeodesicCache{T,N}, params, t_obs::Real, ν_obs, L; nmax = -1, slab = 0, lists = nothing) where {T,N}
+    return polarized_dual_sweep!(dparams, reshape(dstokes, :, 1), reshape(tails, size(tails, 1), size(tails, 2), 1), cache, params, [T(t_obs)], ν_obs, L; nmax, slab, lists)
 end
 
 # the per-ray slot sums of every parcel, in ascending ray order (deterministic): a CSR by parcel of the
@@ -264,59 +287,73 @@ end
 @kernel function ray_hits_kernel!(hits, kstop, params, tvec, S, pc, met::Krang.Kerr, θo, ::Val{N}) where {N}
     j = @index(Global, Linear)
     T = eltype(tvec)
-    pix = build_pixel(pc, j, met, θo)
+    npix = size(hits, 2)
+    f = (j - 1) ÷ npix + 1
+    r = j - (f - 1) * npix
+    pix = build_pixel(pc, r, met, θo)
     hor = Krang.horizon(met) * (1 + T(1e-3))
-    @inbounds stop = kstop[j]
-    @inbounds t_obs = tvec[1]
+    @inbounds stop = kstop[r]
+    @inbounds t_obs = tvec[f]
     nsplat = size(params, 2)
     for k in 1:N
         k < stop || break
-        s = _stored_sample(S, j, k)
+        s = _stored_sample(S, r, k)
         (s.ok && s.r > hor) || continue
         x, y, z = quasi_cartesian_kerr_schild(met, s.r, s.θ, s.ϕ)
         t = t_obs - s.t
         for i in 1:nsplat
-            @inbounds hits[i, j] != 0x00 && continue
-            @inbounds outside_support(params, i, t, x, y, z) || (hits[i, j] = 0x01)
+            @inbounds hits[i, r, f] != 0x00 && continue
+            @inbounds outside_support(params, i, t, x, y, z) || (hits[i, r, f] = 0x01)
         end
     end
 end
 @kernel function ray_fill_kernel!(ids, @Const(hits), @Const(count))
     j = @index(Global, Linear)
+    npix = size(hits, 2)
+    f = (j - 1) ÷ npix + 1
+    r = j - (f - 1) * npix
     n = Int32(0)
     @inbounds for i in 1:size(hits, 1)
-        if hits[i, j] != 0x00
+        if hits[i, r, f] != 0x00
             n += Int32(1)
-            ids[n, j] = Int32(i)
+            ids[n, r, f] = Int32(i)
         end
     end
 end
 
 """
     ray_lists(cache, params, t_obs; nmax = -1, slab = 0) -> RayLists
+    ray_lists(cache, params, times::AbstractVector; nmax = -1, slab = 0) -> RayLists
 
 For every stored ray the parcels whose bounding sphere (`outside_support`) one of its samples
 enters at the observation time `t_obs` (samples beyond the half-orbit cutoff excluded as in
 the transport), in ascending parcel order: the parcels the ray can see, a few out of
 thousands. The transport over the lists is the same sum as over all parcels, because a parcel
 outside its support contributes exactly zero. A hit byte per parcel and ray on the backend,
-the counts as column sums, and the lists filled into `capacity = maximum(count)` slots.
+the counts as column sums, and the lists filled into `capacity = maximum(count)` slots. With
+a vector of `times` the lists of every frame are built in one launch (`ids` is
+`capacity × npix × nframes`, `count` is `npix × nframes`); with one time they are
+`capacity × npix` and a vector.
 """
-function ray_lists(cache::GeodesicCache{T,N}, params, t_obs; nmax = -1, slab = 0) where {T,N}
+function ray_lists(cache::GeodesicCache{T,N}, params, times::AbstractVector; nmax = -1, slab = 0) where {T,N}
     backend = cache.backend
-    npix = npixels(cache)
+    npix = npixels(cache); nf = length(times)
     nsamples(cache.samples) == N || throw(ArgumentError("the cache holds no stored samples: build it with store_samples = true and a storing marcher"))
     prepare_backend!(backend)
-    tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
+    tvec = KA.allocate(backend, T, nf); copyto!(tvec, T.(times))
     kstop = _cutoffs(cache, nmax, slab)
-    hits = KA.allocate(backend, UInt8, size(params, 2), npix); fill!(hits, 0x00)
-    ray_hits_kernel!(backend, 64)(hits, kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, Val(N); ndrange = npix)
+    hits = KA.allocate(backend, UInt8, size(params, 2), npix, nf); fill!(hits, 0x00)
+    ray_hits_kernel!(backend, 64)(hits, kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, Val(N); ndrange = npix * nf)
     KA.synchronize(backend)
-    count = KA.allocate(backend, Int32, npix)
-    copyto!(count, Int32.(vec(sum(Int32.(Array(hits)); dims = 1))))
+    count = KA.allocate(backend, Int32, npix, nf)
+    copyto!(count, Int32.(dropdims(sum(Int32.(Array(hits)); dims = 1); dims = 1)))
     cap = max(Int(maximum(count)), 1)
-    ids = KA.allocate(backend, Int32, cap, npix); fill!(ids, Int32(0))
-    ray_fill_kernel!(backend, 64)(ids, hits, count; ndrange = npix)
+    ids = KA.allocate(backend, Int32, cap, npix, nf); fill!(ids, Int32(0))
+    ray_fill_kernel!(backend, 64)(ids, hits, count; ndrange = npix * nf)
     KA.synchronize(backend)
     return RayLists(ids, count)
+end
+function ray_lists(cache::GeodesicCache{T,N}, params, t_obs::Real; nmax = -1, slab = 0) where {T,N}
+    l = ray_lists(cache, params, [T(t_obs)]; nmax, slab)
+    return RayLists(reshape(l.ids, size(l.ids, 1), size(l.ids, 2)), vec(l.count))
 end

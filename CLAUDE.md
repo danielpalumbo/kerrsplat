@@ -43,7 +43,10 @@ before any performance work.
 - Large N: the dual sweep and the transport loop over per-ray parcel lists (`Splats.ray_lists`,
   `Transfer.ray_model`; on by default above sixteen parcels, `cull`), built once per frame from
   the stored samples; the per-ray gradient slots are gathered parcel by parcel in ray order, so
-  the result stays deterministic. The fused (unstored) forward transport is dense.
+  the result stays deterministic. The fused (unstored) forward transport is dense. The tails,
+  dual-sweep and list kernels index (ray, frame) pairs, so several frames of one frequency go
+  through one launch (`polarized_tails!`/`polarized_dual_sweep!`/`ray_lists` with a vector of
+  times; `chi2_gradient!(...; batch_frames)`): a single frame's rays underfill a large card.
 - ForwardDiff ≥ 1: `x == 0` on a dual also requires zero partials, and `sqrt` at a zero value
   has NaN partials. Guard removable singularities on the value (`Transfer.vanishes`,
   `Transfer.safe_sqrt`), never with `==` against a literal. `acos(clamp(x, -1, 1))` on a dual
