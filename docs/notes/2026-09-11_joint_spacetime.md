@@ -163,3 +163,11 @@ rings, more frames of the fast inner motion, and, for the dynamics, a prior on t
 velocity itself rather than on the rate alone. That is the next self-fit, and it is the
 first row of the uniqueness table the large-N program is after: which data constrain which
 parameter.
+
+The first of those runs (parcels at 2.5–5 M, 80² pixels over 16 M, 200 samples, six frames,
+the pattern prior at σ = 0.005, from (0.5, 45°), 100 iterations in 27 minutes): the
+inclination comes back to 58.6° (from 45°, for 60°), the spin goes from 0.5 to 0.43, and
+χ²/N settles at 1.51 against 1.00 at the truth (153,600 values). Resolving the rings and
+putting the emission at 2.5–5 M fixed the inclination to a degree and did nothing for the
+spin, whose orbital signature the free velocities still absorb; the run with Keplerian truth
+velocities and the fluid prior follows.
