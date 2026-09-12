@@ -46,7 +46,10 @@ before any performance work.
   the result stays deterministic. The fused (unstored) forward transport is dense.
 - ForwardDiff ≥ 1: `x == 0` on a dual also requires zero partials, and `sqrt` at a zero value
   has NaN partials. Guard removable singularities on the value (`Transfer.vanishes`,
-  `Transfer.safe_sqrt`), never with `==` against a literal.
+  `Transfer.safe_sqrt`), never with `==` against a literal. `acos(clamp(x, -1, 1))` on a dual
+  is NaN when the clamp engages (zero partials times the rule's −∞): `Transfer.safe_acos`.
+  Such measure-zero events do occur over the 1e8 sample evaluations of a GPU fit (the first
+  joint self-fit died of one after eighty iterations).
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per

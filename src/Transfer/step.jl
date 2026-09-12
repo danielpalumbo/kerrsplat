@@ -118,6 +118,23 @@ end
 "Square root with a finite derivative at zero: the step depends on Λ₁, Λ₂ only through even functions, whose derivatives vanish there."
 @inline safe_sqrt(x) = _value(x) > 0 ? sqrt(x) : zero(x)
 
+"""
+    safe_acos(x)
+
+`acos` of a cosine that may have rounded past ±1: the value at the clamped argument, and for a
+dual the derivative −1/√(1 − x²) at the clamped value, zero when that value is at the boundary
+(the cusp of the pitch angle where the field lies along the ray, a set of measure zero). A
+plain `acos(clamp(x, -1, 1))` on a dual gives NaN partials there: the clamp returns the
+boundary with zero partials and the acos rule multiplies them by −∞.
+"""
+@inline safe_acos(x) = acos(clamp(x, -one(x), one(x)))
+@inline function safe_acos(d::ForwardDiff.Dual{T}) where {T}
+    v = clamp(ForwardDiff.value(d), -one(ForwardDiff.value(d)), one(ForwardDiff.value(d)))
+    s = one(v) - v * v
+    dv = s > 0 ? -inv(sqrt(s)) : zero(v)
+    return ForwardDiff.Dual{T}(acos(v), dv * ForwardDiff.partials(d))
+end
+
 "φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt (to first order at a = 0, so that a dual's derivative there is −1/2)."
 @inline phi(a) = vanishes(a) ? one(a) - a / 2 : -expm1(-a) / a
 

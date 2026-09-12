@@ -221,6 +221,17 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
                         J[end - length(rows) + k, i] = 1 / σ[i]
                     end
                 end
+                if !(all(isfinite, J) && all(isfinite, r))
+                    dump = joinpath(tempdir(), "kerrsplat_nonfinite_$(it).csv")
+                    open(dump, "w") do io
+                        println(io, join(x, ","))
+                        for row in eachrow(params)
+                            println(io, join(row, ","))
+                        end
+                    end
+                    @warn "non-finite spacetime residuals or Jacobian; the spacetime step is skipped (state written)" iteration = it x = copy(x) nonfinite_rows = count(k -> !(isfinite(r[k]) && all(isfinite, view(J, k, :))), eachindex(r)) file = dump
+                    break
+                end
                 A = J' * J; gx = J' * r
                 d = diag(A); floor = 1e-12 * max(maximum(d), eps(T))
                 step = -(A + damping * Diagonal(max.(d, floor))) \ gx

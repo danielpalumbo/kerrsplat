@@ -100,4 +100,16 @@ angles) is far from the truth, far enough that the χ² at the true spacetime wi
 the sky has improved, by which time it has adapted. The joint problem from a rough sky is
 the fresh-start problem, and it has two honest answers: the spacetime leading with a slow
 sky (a small η early), and several spacetime starts compared by their final χ², which here
-are well separated (1.9 against 1.0). JOINT_RESULT2
+are well separated (1.9 against 1.0).
+
+The second run (the damping reset, the truth perturbed by 0.05, η = 0.01, 120 iterations, 12
+minutes with the stored dual cache) settled by iteration 30 at a = 0.45 and θo = 56° with
+χ²/N 1.56: a joint local minimum, the sky fitting the wrong spacetime three times worse than
+the truth fits. From iteration 72 on every spacetime Jacobian came back non-finite (the guard
+skipped the steps and the splats went on): a state-dependent singularity that the probe at
+fixed skies never reproduced on either backend. The one boundary-singular function on the
+dual path was the pitch angle, `acos(clamp(cos θB, −1, 1))`, whose partials are NaN whenever
+the clamp engages; it is now `safe_acos`, and the guard writes the state to a file when it
+fires so that the next occurrence can be replayed. The basin question is the 3 × 3 grid of
+spacetime starts, a ∈ {0.3, 0.6, 0.9} × θo ∈ {45°, 60°, 75°}, each fitted for 60 iterations
+from the same perturbed sky and compared by its final χ². GRID_RESULT

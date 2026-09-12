@@ -78,8 +78,12 @@ Transfer.nelements(m::RaySubset) = Int(m.n)
     return RaySubset(m, view(m.lists.ids, :, j), n)
 end
 
-const WEIGHT_CUTOFF = 1e-12
-const SUPPORT_RADIUS2 = -2 * log(WEIGHT_CUTOFF)    # (7.43 σ)²: beyond it the weight is below the cutoff for any orientation
+# The cutoff sets the sphere a parcel claims (5.26σ at 1e-6; 7.43σ at the 1e-12 of the first version) and with it the
+# number of parcels that get the full coefficient evaluation at a sample: at 1e-6 the large-N gradient runs 1.7× faster
+# (docs/notes/2026-09-10_large_n.md). The total's discontinuity at the boundary is the cutoff times one sample–parcel
+# pair's share of the total, of order 1e-11 relative, far below the finite-difference gates at 1e-5.
+const WEIGHT_CUTOFF = 1e-6
+const SUPPORT_RADIUS2 = -2 * log(WEIGHT_CUTOFF)    # (5.26 σ)²: beyond it the weight is below the cutoff for any orientation
 
 Transfer.nelements(m::PolarizedSplats) = size(m.params, 2)
 
@@ -129,7 +133,7 @@ fluid rows as forward-mode duals.
     ũ = SVector(u1, u2, u3)
     fr = local_frame(pix, s, ũ, B)
     νf = ν_obs / fr.g
-    θB = acos(clamp(fr.cosθB, -1, 1))
+    θB = Transfer.safe_acos(fr.cosθB)
     return thermal_synchrotron(ne, Θe, Bmag, νf, θB), fr
 end
 

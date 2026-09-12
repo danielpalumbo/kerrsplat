@@ -111,6 +111,13 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
         r, J = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc), x3, camera, backend; N)
         @test abs(sum(abs2, r) - χ_stored) <= 1e-8 * χ_stored && size(J) == (length(r), 3)
         @test maximum(abs.(2 .* (J' * r) .- gx)) <= 1e-8 * maximum(abs, gx)
+        # the stored and the fused dual paths agree, with and without the half-orbit truncation, and stay finite
+        for nmax in (-1, 1)
+            rs, Js = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc; nmax, slab = 0.5), x3, camera, backend; N, stored = true)
+            rf, Jf = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc; nmax, slab = 0.5), x3, camera, backend; N, stored = false)
+            @test all(isfinite, Js) && all(isfinite, Jf)
+            @test maximum(abs.(rs .- rf)) <= 1e-10 * maximum(abs, rf) && maximum(abs.(Js .- Jf)) <= 1e-8 * maximum(abs, Jf)
+        end
         x0 = x3[1:2]
         qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η = 0.03)
         χ0 = hist[1][1]; χ1 = hist[end][1]
