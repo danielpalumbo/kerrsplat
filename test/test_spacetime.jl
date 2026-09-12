@@ -118,6 +118,16 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
             @test all(isfinite, Js) && all(isfinite, Jf)
             @test maximum(abs.(rs .- rf)) <= 1e-10 * maximum(abs, rf) && maximum(abs.(Js .- Jf)) <= 1e-8 * maximum(abs, Jf)
         end
+        # the pattern prior's residuals depend on the spin through the metric: dual spin vs finite differences
+        σp = 0.01
+        rp(a) = Fit.prior_residuals(q, Fit.PatternPrior(Geodesics.Krang.Kerr(a), σp))
+        da = ForwardDiff.Dual{:a}(0.8, 1.0)
+        rpd = Fit.prior_residuals(ForwardDiff.Dual{:a}.(q, 0.0), Fit.PatternPrior(Geodesics.Krang.Kerr(da), σp))
+        @test maximum(abs.(ForwardDiff.value.(rpd) .- rp(0.8))) <= 1e-12 * maximum(abs, rp(0.8))
+        @test maximum(abs.(ForwardDiff.partials.(rpd, 1) .- (rp(0.8 + 1e-6) .- rp(0.8 - 1e-6)) ./ 2e-6)) <= 1e-6 * maximum(abs, ForwardDiff.partials.(rpd, 1))
+        # a short joint fit with the pattern prior runs and its history includes the penalty
+        qp, xp, hp, accp = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, pattern = σp)
+        @test length(hp) == 3 && all(isfinite, xp) && hp[1][1] > chi2(q, movie, cache, L) * 0.999
         x0 = x3[1:2]
         qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η = 0.03)
         χ0 = hist[1][1]; χ1 = hist[end][1]

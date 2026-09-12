@@ -15,6 +15,13 @@ schedule is the whole story: the spacetime must move from the first iteration wi
 inner LM steps, because the splats adapt to a wrong spacetime within a few iterations and
 then hold it there (a warmup of five iterations left the inclination 6° off; none recovered
 it to 0.4°). Mass through ln L is degenerate with the densities where the emission is thin.
+At scale the joint fit has basins: from a spacetime far off (0.5, 45° for a truth at 0.9, 60°)
+it settles at a wrong one with χ²/N 1.56 against 1.01, so several spacetime starts compared by
+their final χ² are part of the method (the 3 × 3 grid of `joint_selffit.jl`). The weight cutoff
+is now 1e-6 (`WEIGHT_CUTOFF`, a 5.3σ support sphere; 1.7× on the large-N gradient, the fit's χ²
+within 4e-4), and the pitch angle goes through `Transfer.safe_acos`, because a clamped acos on
+a dual is NaN at the boundary and such measure-zero events do occur over a GPU fit's 1e8
+sample evaluations.
 
 ## State at the close of 2026-09-10 (resume here)
 

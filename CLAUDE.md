@@ -61,7 +61,9 @@ before any performance work.
   zero gradient: never reuse a closure's local names in the enclosing function. The same
   scoping rule bites without Enzyme: a closure that assigns a name the enclosing function also
   assigns writes the enclosing variable (`h = solve()` inside, `history = T[]` outside, and the
-  inner result aliases the outer array), so name a helper closure's locals apart.
+  inner result aliases the outer array), so name a helper closure's locals apart, and never
+  give a local closure the name of a module function (the local one shadows every method of
+  the global, so a two-argument call to the global becomes a MethodError on the closure).
 - Enzyme compilation inside a KernelAbstractions CPU kernel deadlocks when several worker tasks
   hit the first call at once (`julia -t 8`; never single-threaded): launch such a kernel once
   with `ndrange = 1` (scratch outputs and a copy of the adjoint seed) before the real launch.

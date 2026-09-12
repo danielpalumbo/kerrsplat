@@ -142,7 +142,7 @@ end
 
 """
     fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2,
-               free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing,
+               free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing,
                bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing)
         -> (params, x, history, accepted)
@@ -169,7 +169,12 @@ inner steps, come from the schedule experiment of `docs/notes/2026-09-11_joint_s
 the spacetime has to move before the splats adapt to the wrong one (a warmup of five
 iterations left the inclination 6° off where no warmup recovered it to 0.4°), and one inner
 step per iteration got only halfway. `spacetime_priors = (μ, σ)` adds
-Gaussian penalties on `x` as residuals of the spacetime block. `history` holds `(χ², x...)` at
+Gaussian penalties on `x` as residuals of the spacetime block. `pattern = σ` ties every
+parcel's pattern rate to the Keplerian rate of its fluid at the current spin (`PatternPrior`,
+rebuilt every iteration): the penalty enters the splat gradient through the priors and its
+residuals enter the spacetime block with their dependence on the spin, so the dynamics
+constrain the spin as the lensing does; without it free pattern rates absorb the spin's
+effect on the motion. `history` holds `(χ², x...)` at
 the start of every iteration, the χ² of the stored-sample pass; `accepted` counts the
 spacetime steps taken.
 
@@ -180,7 +185,7 @@ this movie form in M units does not carry. Fit `[a, θo]` on M-unit movies.
 """
 function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, camera::Geodesics.Camera;
                     L::Real = NaN, iterations::Integer = 100, η = 0.02, η_end = η / 10, warmup::Integer = 0, every::Integer = 1, inner::Integer = 3, λ::Real = 1e-2,
-                    free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing,
+                    free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing,
                     bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                     frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing) where {T,N}
     backend = cache.backend
@@ -195,30 +200,35 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
     damping = T(λ)
     accepted = 0
     history = Vector{T}[]
-    function prior_residuals(y)
+    function spacetime_prior_residuals(y)
         spacetime_priors === nothing && return T[]
         μ, σ = spacetime_priors
         return T[(y[i] - μ[i]) / σ[i] for i in 1:n if isfinite(σ[i])]
     end
+    pattern_prior(a) = PatternPrior(Geodesics.Krang.Kerr(a), pattern)
+    priors_at(a) = pattern === nothing ? priors : vcat(priors === nothing ? [] : collect(priors), [pattern_prior(a)])
     for it in 1:iterations
         ηt = η_end + (η - η_end) * (1 + cos(π * (it - 1) / max(iterations - 1, 1))) / 2
         Optimisers.adjust!(opt, ηt)
         regenerate!(cache, x[1], x[2]; marcher = Recurrence(64))
         Lit = n == 3 ? exp(x[3]) : Lfix
-        χ, g = _dual_valgrad(params, movie, cache, Lit, frames, freqs, priors, nmax, slab, binning, backend)
-        χ += sum(abs2, prior_residuals(x); init = zero(T))
+        χ, g = _dual_valgrad(params, movie, cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
+        χ += sum(abs2, spacetime_prior_residuals(x); init = zero(T))
         push!(history, vcat(χ, x))
         if it > warmup && (it - warmup - 1) % every == 0
             χx = χ
             damping = T(λ)                        # the damping restarts every visit: the sky has moved under the spacetime block since the last one
             for _ in 1:inner
-                residuals = (c, Lc) -> vcat(spacetime_movie_residuals(c, _on_backend(c, params), movie, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning), eltype(c.αs).(prior_residuals(x)))
+                residuals = (c, Lc) -> vcat(spacetime_movie_residuals(c, _on_backend(c, params), movie, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning),
+                                            eltype(c.αs).(spacetime_prior_residuals(x)),
+                                            pattern === nothing ? eltype(c.αs)[] : prior_residuals(eltype(c.αs).(params), pattern_prior(c.spin)))
                 r, J = spacetime_jacobian(residuals, x, camera, backend; N)
                 if spacetime_priors !== nothing
                     μ, σ = spacetime_priors
                     rows = [i for i in 1:n if isfinite(σ[i])]
+                    npat = pattern === nothing ? 0 : size(params, 2)
                     for (k, i) in enumerate(rows)
-                        J[end - length(rows) + k, i] = 1 / σ[i]
+                        J[end - npat - length(rows) + k, i] = 1 / σ[i]
                     end
                 end
                 if !(all(isfinite, J) && all(isfinite, r))
@@ -236,7 +246,8 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
                 d = diag(A); floor = 1e-12 * max(maximum(d), eps(T))
                 step = -(A + damping * Diagonal(max.(d, floor))) \ gx
                 xn = [clamp(x[i] + step[i], bounds[i]...) for i in 1:n]
-                χn = _spacetime_chi2_at(xn, params, movie, camera, backend, N, Lfix, n, frames, freqs, nmax, slab, binning) + sum(abs2, prior_residuals(xn); init = zero(T))
+                χn = _spacetime_chi2_at(xn, params, movie, camera, backend, N, Lfix, n, frames, freqs, nmax, slab, binning) + sum(abs2, spacetime_prior_residuals(xn); init = zero(T)) +
+                     (pattern === nothing ? zero(T) : penalty(params, pattern_prior(xn[1])))
                 if χn < χx
                     x = xn; χx = χn
                     damping = max(damping / 3, T(1e-8))

@@ -113,3 +113,18 @@ the clamp engages; it is now `safe_acos`, and the guard writes the state to a fi
 fires so that the next occurrence can be replayed. The basin question is the 3 × 3 grid of
 spacetime starts, a ∈ {0.3, 0.6, 0.9} × θo ∈ {45°, 60°, 75°}, each fitted for 60 iterations
 from the same perturbed sky and compared by its final χ². GRID_RESULT
+
+## Where the spin lives
+
+The first three grid runs, all from a = 0.3, ended at a = 0.19, 0.30 and 0.38 with θo at
+56–58° and χ²/N 1.6–1.7: the inclination is found from any start, the spin barely moves from
+where it began. In these fits every row of every parcel is free, including the pattern rates,
+and the truth's rates are the Keplerian rates of its orbits at a = 0.9. Free rates absorb the
+spin's effect on the motion, and what remains for the spin is the lensing, which four frames
+of a 40² screen constrain weakly. The dynamics are the other handle: the pattern prior
+(`PatternPrior`, mode C as a soft constraint) ties each parcel's rate to the Keplerian rate
+of its fluid at the current spin, and `fit_joint!(...; pattern = σ)` now rebuilds it at every
+iteration, feeds it to the splat gradient through the priors and to the spacetime block as
+residuals whose partials with respect to the spin come through the metric (gated against
+finite differences in `test_joint_fit`). With it the spin is constrained by the motion as the
+inclination is by the shape. PATTERN_RESULT
