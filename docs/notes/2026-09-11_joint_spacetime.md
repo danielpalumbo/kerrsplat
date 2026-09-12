@@ -257,5 +257,21 @@ third of the full discrimination, and the spin still determined: 2,400 units of 
 of spin is decisive for a correct model at this noise. So on this movie the ranking of the
 data is polarization first, the lensed ring second, and Stokes I alone would still do, which
 is the answer the program was built to get: rich enough data determine the plasma and the
-spacetime together, and the table says how rich. The rows for fewer frames and for a second
-frequency follow. UNIQUENESS2
+spacetime together, and the table says how rich.
+
+Two more rows, both preliminary because their fits did not reach the noise floor in the 80
+iterations the other rows needed (χ²/N 1.84 and 1.35 at the true spin against 1.00 at the
+truth), so their numbers mix information with optimization and are being rerun longer:
+
+| data | χ²/N at 0.7 | at 0.9 | at 0.98 | Δχ² for +0.08 | Δχ² for −0.2 |
+|---|---|---|---|---|---|
+| I, Q, U, V, n ≤ 2, two frames instead of six (51,200 values) | 1.977 | 1.842 | 1.873 | 1,600 | 6,900 |
+| I, Q, U, V, n ≤ 2, 230 and 345 GHz (307,200 values) | 1.462 | 1.354 | 1.384 | 9,300 | 33,300 |
+
+Two frames instead of six cost a factor of five in the spin's discrimination and left the
+inclination 6° off at every spin, as far as this schedule goes: the motion is where much of
+the information about the geometry sits. A second frequency roughly matched the
+single-frequency discrimination on the high side and raised it by half on the low side,
+again as far as this schedule goes; the multifrequency self-fits of 2026-09-08 showed the
+second band's gain to be in the plasma rows rather than the geometry, which is consistent.
+UNIQUENESS3
