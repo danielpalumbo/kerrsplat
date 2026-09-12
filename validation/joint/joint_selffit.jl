@@ -5,6 +5,7 @@
 #                                                  [--frequencies 230] [--iterations 150] [--eta 0.02] [--warmup 0] [--inner 2]
 #                                                  [--every 1] [--a0 0.5] [--inc0 45] [--perturb 0.1] [--fresh] [--seed 1] [--tag joint] [--pattern 0]
 #                                                  [--rin 4] [--rout 7] [--keplerian 0] [--fix-spin] [--stokes IQUV]
+#                                                  [--shell 0] [--hygiene 25] [--prune 0.02]
 # Truth: spin 0.9, inclination 60°, six parcels on orbits at --rin to --rout M (4–7 by default) with Keplerian pattern
 # rates. Output:
 # output/joint_<tag>_summary.txt (the spacetime trajectory, χ² trace, recovered parcels) and the parameter files.
@@ -20,6 +21,7 @@ a0 = getopt("--a0", 0.5); inc0 = getopt("--inc0", 45.0); perturb = getopt("--per
 rin = getopt("--rin", 4.0); rout = getopt("--rout", 7.0)
 σkep = getopt("--keplerian", 0.0); keplerian = σkep > 0 ? σkep : nothing                  # Keplerian truth velocities and the fluid prior in the fit
 stokes = getstr("--stokes", "IQUV")                                                        # the Stokes parameters the fit sees (the others' noise set to infinity)
+nshell = getopt("--shell", 0); hyg_every = getopt("--hygiene", 25); hyg_prune = getopt("--prune", 0.02)        # an over-complete shell start with hygiene
 fixspin = "--fix-spin" in ARGS                                                              # the spin held at --a0 (a profile over the spin), the inclination free
 bounds = fixspin ? ((a0, a0), (0.01, π - 0.01), (-Inf, Inf)) : ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf))
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
@@ -47,7 +49,7 @@ data = [clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices
 σfit = SVector{4}(ntuple(c -> occursin(("I", "Q", "U", "V")[c], stokes) ? σ[c] : Inf, 4))   # excluded Stokes parameters carry no weight
 movie = StokesMovie(data, times, freqs, σfit)
 @info "truth movie" res N nmax slab frames = nframes frequencies_GHz = freqs ./ 1e9 peak = maximum(norm.(clean)) values = 4 * length(data)
-q = fresh ? begin
+q = nshell > 0 ? shell_parcels(nshell; rin = 2.2, rout = rout + 0.5, height = 0.6, scale = 0.25, spin = a0, rng) : fresh ? begin
         q0 = zeros(NPOLARIZEDPARAMS, 8)
         for i in 1:8
             φ = 2π * (i - 1) / 8; r0 = (rin + rout) / 2
@@ -55,6 +57,12 @@ q = fresh ? begin
         end
         q0
     end : p .+ perturb .* randn(rng, size(p))
+if nshell > 0
+    Fshell(qq, cc) = sum(x -> x[1], Array(polarized_cube(cc, Fit._on_backend(cc, qq), [times[1]], freqs[1:1], L; nmax, slab)))
+    cs = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = false); regenerate!(cs, a0, deg2rad(inc0); marcher = Fused(64))
+    q[13, :] .+= log(Fshell(p, gtruth) / Fshell(q, cs))                  # the shell's flux at the truth's, seen from the starting spacetime
+    @info "shell start" parcels = nshell hygiene_every = hyg_every prune = hyg_prune
+end
 x0 = [a0, deg2rad(inc0)]
 cache = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = true)
 regenerate!(cache, x0[1], x0[2]; marcher = Recurrence(64))
@@ -65,15 +73,16 @@ regenerate!(cache, a_true, θ_true; marcher = Recurrence(64))
 @info "start" chi2 = χstart reduced = χstart / (4 * length(data)) chi2_at_true_spacetime_start_sky = χtruth_sky chi2_truth = χtruth reduced_truth = χtruth / (4 * length(data)) a0 inc0 fresh
 t0 = time()
 trace = String[]
-qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η, warmup, inner, every, nmax, slab, pattern, keplerian, bounds,
+hygiene = nshell > 0 ? Fit.Hygiene(every = hyg_every, prune_fraction = hyg_prune, merge_position = 0.15) : Fit.Hygiene()
+qj, xj, hist, acc, events = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η, warmup, inner, every, nmax, slab, pattern, keplerian, bounds, hygiene,
                                    callback = (it, pp, xx, v) -> (it % 10 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  a %.4f  inc %.2f°  %.1f min", it, v, xx[1], rad2deg(xx[2]), (time() - t0) / 60)); @info trace[end])))
 regenerate!(cache, xj[1], xj[2]; marcher = Recurrence(64))
 χend = χ2(qj)
-@info "end" chi2 = χend reduced = χend / (4 * length(data)) a = xj[1] inc = rad2deg(xj[2]) accepted = acc minutes = (time() - t0) / 60
+@info "end" chi2 = χend reduced = χend / (4 * length(data)) a = xj[1] inc = rad2deg(xj[2]) accepted = acc parcels = size(qj, 2) events = events minutes = (time() - t0) / 60
 writedlm(joinpath(outdir, "joint_$(tag)_params.csv"), qj, ','); writedlm(joinpath(outdir, "joint_$(tag)_truth.csv"), p, ','); writedlm(joinpath(outdir, "joint_$(tag)_x.csv"), xj, ',')
 open(joinpath(outdir, "joint_$(tag)_summary.txt"), "w") do io
-    println(io, "joint spacetime-and-splat self-fit: $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames over $(times[end]) M, frequencies $(freqs ./ 1e9) GHz, $(4 * length(data)) values; parcels at $(rin)–$(rout) M; $iterations iterations, eta $η, warmup $warmup, inner $inner, every $every, pattern prior $(pattern === nothing ? "off" : "σ = $σpattern"), Keplerian fluid prior $(keplerian === nothing ? "off" : "σ = $σkep")$(fixspin ? ", spin held" : ""), Stokes $stokes; start a $a0 inc $inc0, $(fresh ? "fresh 8 parcels" : "truth perturbed by $perturb"), seed $seed")
+    println(io, "joint spacetime-and-splat self-fit: $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames over $(times[end]) M, frequencies $(freqs ./ 1e9) GHz, $(4 * length(data)) values; parcels at $(rin)–$(rout) M; $iterations iterations, eta $η, warmup $warmup, inner $inner, every $every, pattern prior $(pattern === nothing ? "off" : "σ = $σpattern"), Keplerian fluid prior $(keplerian === nothing ? "off" : "σ = $σkep")$(fixspin ? ", spin held" : ""), Stokes $stokes$(nshell > 0 ? ", shell of $nshell with hygiene every $hyg_every" : ""); start a $a0 inc $inc0, $(fresh ? "fresh 8 parcels" : "truth perturbed by $perturb"), seed $seed")
     println(io, "truth: a $a_true inc 60.0; chi2 at truth $χtruth (reduced $(χtruth / (4 * length(data)))); chi2 at start $χstart; with the start sky at the true spacetime $χtruth_sky")
-    println(io, "end: a $(xj[1]) inc $(rad2deg(xj[2])) chi2 $χend (reduced $(χend / (4 * length(data)))) accepted spacetime steps $acc minutes $((time() - t0) / 60)")
+    println(io, "end: a $(xj[1]) inc $(rad2deg(xj[2])) chi2 $χend (reduced $(χend / (4 * length(data)))) accepted spacetime steps $acc parcels $(size(qj, 2)) events $events minutes $((time() - t0) / 60)")
     foreach(l -> println(io, l), trace)
 end

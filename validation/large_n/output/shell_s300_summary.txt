@@ -1,0 +1,9 @@
+large-N self-fit: 64² pixels, fov 16.0 M, 160 samples, nmax 2 slab 0.5, 4 frames, 65536 values; shell of 300 parcels of 0.25 M, 300 iterations, eta 0.02, hygiene every 25 (prune 0.02, densify 0.0, max 600), seed 1
+chi2 start 422947.5482550471 (reduced 6.453667423325304), truth 65749.7421359244 (reduced 1.0032614461658387), end 69887.0579450123 (reduced 1.0663918753816575); parcels 300 → 26 through 6 hygiene events [(1, 50, 300, 66), (1, 75, 66, 40), (1, 100, 40, 37), (2, 25, 37, 30), (2, 50, 30, 27), (2, 100, 27, 26)]
+field recovery (density PSNR dB, relative density error, density-weighted temperature and field errors): start (psnr_density = 19.500272088385838, rel_density = 0.10592205442212572, temperature = 0.1355899774498089, field = 0.16104047306701558); end (psnr_density = 22.444008576876765, rel_density = 0.0754743829628402, temperature = 0.1997959893773511, field = 0.15155477668796935)
+stage 1 iteration  25  chi2   189300.3  reduced 2.888  parcels  300  4.1 min
+stage 2 iteration  75  chi2    80360.4  reduced 1.226  parcels   27  20.1 min
+stage 2 iteration 125  chi2    79526.8  reduced 1.213  parcels   26  24.2 min
+stage 2 iteration 150  chi2    73021.2  reduced 1.114  parcels   26  26.2 min
+stage 2 iteration 175  chi2    70843.1  reduced 1.081  parcels   26  28.3 min
+stage 2 iteration 200  chi2    69913.2  reduced 1.067  parcels   26  30.4 min
