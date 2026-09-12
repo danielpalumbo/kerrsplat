@@ -121,7 +121,10 @@ end
 
 The residual vector of `residuals(cache, L)` and its Jacobian with respect to the spacetime
 block `x` (length 2, `(a, θo)`, or 3 with `ln L`) by one forward-mode dual pass through the
-fused march and the transport, as `spacetime_valgrad` does for a scalar loss.
+fused march and the transport, as `spacetime_valgrad` does for a scalar loss. Rows whose value
+is finite but whose partials are not (a ray the duals cannot differentiate: a critical ray or a
+turning point the guards do not cover, one in thousands) are zeroed in `J`, with a warning
+above one per thousand.
 """
 function spacetime_jacobian(residuals, x::AbstractVector{T}, camera::Geodesics.Camera, backend; N::Integer, stored::Bool = true) where {T}
     n = length(x)
@@ -136,6 +139,16 @@ function spacetime_jacobian(residuals, x::AbstractVector{T}, camera::Geodesics.C
     J = Matrix{T}(undef, length(rd), n)
     for k in eachindex(rd), i in 1:n
         J[k, i] = ForwardDiff.partials(rd[k], i)
+    end
+    # a residual whose value is finite but whose partials are not sits on a ray the duals cannot differentiate (a
+    # critical ray, a turning point the guards do not cover): a set of measure zero, one ray in thousands, whose
+    # share of the Jacobian is dropped rather than poisoning the whole step
+    bad = [k for k in eachindex(r) if isfinite(r[k]) && !all(isfinite, view(J, k, :))]
+    if !isempty(bad)
+        length(bad) > 0.001 * length(r) && @warn "spacetime Jacobian: $(length(bad)) of $(length(r)) residuals have non-finite partials; their rows are zeroed"
+        for k in bad
+            J[k, :] .= zero(T)
+        end
     end
     return r, J
 end

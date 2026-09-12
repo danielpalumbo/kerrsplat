@@ -222,3 +222,14 @@ hold the parameter, refit everything else, read the curvature. (The point at a =
 the truth; it is being replayed. Its inclination step was thereby hampered, which can only
 have made 0.3 look worse than it is, and the points at 0.5 and 0.7, with no skipped visits,
 carry the low side of the profile on their own.)
+
+The replay of the a = 0.3 state found the other kind: the stored samples themselves. Two
+rays of the 6400, a pair sharing η = 12.35 and λ = 3.21 (the pixels (α, β) and (α, −β) share
+their conserved quantities and their radial motion), have NaN spin and inclination partials
+in every radial sample from the first, with the polar samples finite: the ray sits on the
+boundary between radial root cases at that spin, where the roots' dependence on the spin is
+singular and a clamp in the root finding turns it into NaN on a dual. That is a genuine
+singularity of the map from the spacetime to the ray, of measure zero, and the treatment is
+the driver's: `spacetime_jacobian` now zeroes the rows whose values are finite and whose
+partials are not, one pixel in thousands, and warns if they exceed one per thousand. The
+per-cause guards (`safe_acos`, `momentum_bl_d`) remain for the cases that are removable.
