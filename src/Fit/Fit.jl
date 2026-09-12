@@ -436,11 +436,24 @@ count as in `polarized_image!` (dual sweep only).
 function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16) where {T,N}
     npix = npixels(cache)
     if method == :dual
-        tails = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, N + 1)
-        lists = Ref{Any}(nothing)                                # the per-ray parcel lists of the frame, built by the forward pass
-        forward = (t, ν) -> (lists[] = cull ? Splats.ray_lists(cache, params, t; nmax, slab) : nothing;
-                             Splats.polarized_tails!(tails, cache, params, t, ν, L; nmax, slab, lists = lists[]); Array(Splats.tail_image(tails, T(ν))))
-        reverse! = (dstokes, t, ν) -> Splats.polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t, ν, L; nmax, slab, lists = lists[])
+        # one launch per batch of frames: the forward pass takes a time or a vector of times (and returns a vector of Stokes
+        # vectors or an npix × nframes matrix), builds the frames' per-ray lists, and keeps the tails for the reverse pass
+        tails = Ref{Any}(nothing)
+        lists = Ref{Any}(nothing)
+        forward = (t, ν) -> begin
+            ts = t isa AbstractVector ? collect(T, t) : T[t]
+            nf = length(ts)
+            lists[] = cull ? Splats.ray_lists(cache, params, ts; nmax, slab) : nothing
+            (tails[] === nothing || size(tails[], 3) != nf) && (tails[] = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, N + 1, nf))
+            Splats.polarized_tails!(tails[], cache, params, ts, ν, L; nmax, slab, lists = lists[])
+            img = Array(Splats.tail_image(tails[], T(ν)))
+            return t isa AbstractVector ? img : vec(img)
+        end
+        reverse! = (dstokes, t, ν) -> begin
+            ts = t isa AbstractVector ? collect(T, t) : T[t]
+            ds = dstokes isa AbstractMatrix ? dstokes : reshape(dstokes, :, 1)
+            Splats.polarized_dual_sweep!(dparams, ds, tails[], cache, params, ts, ν, L; nmax, slab, lists = lists[])
+        end
         return forward, reverse!
     elseif method == :enzyme
         nmax < 0 || throw(ArgumentError("the Enzyme sweep has no half-orbit truncation; use method = :dual"))
@@ -455,7 +468,7 @@ function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Sym
 end
 
 """
-    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, method = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing) -> χ²
+    chi2_gradient!(dparams, params, movie, cache, L; frames, freqs, method = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, cull, batch_frames = 4) -> χ²
 
 The movie χ² and its gradient with respect to the splat parameters, evaluated on the backend of
 `cache` (a cache with stored samples) inside the kernel (the dual sweep by default, or the
@@ -465,56 +478,83 @@ reverse pass, and ∂χ²/∂params accumulates into `dparams` (on the backend).
 included; `nmax`, `slab` truncate the rays and `binning` integrates the points over pixels as
 in `chi2`. The CPU backend and CUDA give the gradient of `chi2` (gates `test_chi2_gradient`,
 `test_binning`).
+With the dual sweep, `batch_frames` frames of one frequency go through the kernels in one
+launch (the tails and the per-ray gradient slots of all of them held at once, so the memory
+grows with the batch): a frame's rays alone underfill a large card.
 """
-function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, cull::Bool = size(params, 2) > 16) where {T,N}
+function chi2_gradient!(dparams, params, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, L; frames = eachindex(movie.times), freqs = eachindex(movie.νs), method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, cull::Bool = size(params, 2) > 16,
+                        batch_frames::Integer = method == :dual ? 4 : 1) where {T,N}
     forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
     npix = npixels(cache)
-    dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix)
-    seed = Vector{SVector{4,T}}(undef, npix)
     perm = cache.perm_host                                  # screen index of every sorted pixel
     nα = size(movie.data, 1)
     total = zero(T)
-    for l in freqs, k in frames
+    for l in freqs
         ν = movie.νs[l]
-        image = forward(movie.times[k], ν)
-        if binning === nothing
-            for j in 1:npix
-                i = perm[j]
-                idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
-                if movie.mask[idx]
-                    σ = noise(movie.σ, idx)
-                    r = (image[j] - movie.data[idx]) ./ σ
-                    total += sum(abs2, r)
-                    seed[j] = 2 .* r ./ σ
-                else
-                    seed[j] = zero(SVector{4,T})
+        for chunk in Iterators.partition(collect(frames), max(Int(batch_frames), 1))
+            ks = collect(chunk)
+            if length(ks) == 1 || method != :dual
+                for k in ks
+                    image = forward(movie.times[k], ν)
+                    seed = Vector{SVector{4,T}}(undef, npix)
+                    total += _frame_seed!(seed, image, movie, k, l, perm, nα, binning)
+                    dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix); copyto!(dstokes, seed)
+                    reverse!(dstokes, movie.times[k], ν)
                 end
-            end
-        else
-            # the residual of every binned pixel, and its adjoint shared equally by the pixel's points
-            screen = Vector{SVector{4,T}}(undef, npix)
-            for j in 1:npix
-                screen[perm[j]] = image[j]
-            end
-            stokes = bin(binning, screen)
-            pseed = Vector{SVector{4,T}}(undef, Geodesics.npixels(binning))
-            for q in 1:Geodesics.npixels(binning)
-                idx = CartesianIndex((q - 1) % nα + 1, (q - 1) ÷ nα + 1, k, l)
-                if movie.mask[idx]
-                    σ = noise(movie.σ, idx)
-                    r = (stokes[q] - movie.data[idx]) ./ σ
-                    total += sum(abs2, r)
-                    pseed[q] = 2 .* r ./ σ ./ binning.count[q]
-                else
-                    pseed[q] = zero(SVector{4,T})
+            else
+                ts = movie.times[ks]
+                images = forward(ts, ν)                              # npix × nframes on the host
+                seeds = Matrix{SVector{4,T}}(undef, npix, length(ks))
+                for (c, k) in enumerate(ks)
+                    total += _frame_seed!(view(seeds, :, c), view(images, :, c), movie, k, l, perm, nα, binning)
                 end
-            end
-            for j in 1:npix
-                seed[j] = pseed[binning.pixel[perm[j]]]
+                dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, length(ks)); copyto!(dstokes, seeds)
+                reverse!(dstokes, ts, ν)
             end
         end
-        copyto!(dstokes, seed)
-        reverse!(dstokes, movie.times[k], ν)
+    end
+    return total
+end
+
+"One frame's χ² and the adjoint seed ∂χ²/∂(observed Stokes) of every sorted pixel (`seed`), from the rendered `image` (sorted order) against frame `k` at frequency `l` of the movie, unbinned or through a `Binning`."
+function _frame_seed!(seed, image, movie::StokesMovie{T}, k, l, perm, nα, binning) where {T}
+    npix = length(seed)
+    total = zero(T)
+    if binning === nothing
+        for j in 1:npix
+            i = perm[j]
+            idx = CartesianIndex((i - 1) % nα + 1, (i - 1) ÷ nα + 1, k, l)
+            if movie.mask[idx]
+                σ = noise(movie.σ, idx)
+                r = (image[j] - movie.data[idx]) ./ σ
+                total += sum(abs2, r)
+                seed[j] = 2 .* r ./ σ
+            else
+                seed[j] = zero(SVector{4,T})
+            end
+        end
+    else
+        # the residual of every binned pixel, and its adjoint shared equally by the pixel's points
+        screen = Vector{SVector{4,T}}(undef, npix)
+        for j in 1:npix
+            screen[perm[j]] = image[j]
+        end
+        stokes = bin(binning, screen)
+        pseed = Vector{SVector{4,T}}(undef, Geodesics.npixels(binning))
+        for q in 1:Geodesics.npixels(binning)
+            idx = CartesianIndex((q - 1) % nα + 1, (q - 1) ÷ nα + 1, k, l)
+            if movie.mask[idx]
+                σ = noise(movie.σ, idx)
+                r = (stokes[q] - movie.data[idx]) ./ σ
+                total += sum(abs2, r)
+                pseed[q] = 2 .* r ./ σ ./ binning.count[q]
+            else
+                pseed[q] = zero(SVector{4,T})
+            end
+        end
+        for j in 1:npix
+            seed[j] = pseed[binning.pixel[perm[j]]]
+        end
     end
     return total
 end

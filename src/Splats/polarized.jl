@@ -63,6 +63,16 @@ struct RayLists{I,C}
 end
 Adapt.@adapt_structure RayLists
 capacity(l::RayLists) = size(l.ids, 1)
+"The number of frames a `RayLists` holds (its `ids` are `capacity × npix × nframes`, or `capacity × npix` for one)."
+nframes(l::RayLists) = ndims(l.ids) == 3 ? size(l.ids, 3) : 1
+"The lists as `capacity × npix × nframes` and `npix × nframes` (a one-frame `RayLists` reshaped; no copy)."
+framed(l::RayLists) = ndims(l.ids) == 3 ? l : RayLists(reshape(l.ids, size(l.ids, 1), size(l.ids, 2), 1), reshape(l.count, :, 1))
+framed(::Nothing) = nothing
+"The lists flattened over frames, `capacity × (npix·nframes)` and a vector, for the gather."
+flattened(l::RayLists) = RayLists(reshape(l.ids, size(l.ids, 1), :), vec(l.count))
+"The lists of frame `f` of a framed `RayLists` (a view)."
+@inline frame_lists(l::RayLists, f) = RayLists(view(l.ids, :, :, f), view(l.count, :, f))
+@inline frame_lists(::Nothing, f) = nothing
 
 "The parcels of a model that one ray touches, indexed `1…n` through `ids`."
 struct RaySubset{M,I}

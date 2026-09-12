@@ -415,3 +415,70 @@ function test_ray_lists(backend; res::Int = 8, N::Int = 40, tol::Float64 = 1e-12
     end
 end
 
+"""
+    test_frame_batching(backend; res = 8, N = 40, tol = 1e-13, label = "CPU backend")
+
+Frames batched into one launch against one launch per frame: the lists of three frames built
+together equal the three built apart; the batched tails and image equal the per-frame ones
+exactly; the batched dual-sweep gradient equals the sum of the per-frame gradients to `tol`,
+dense and over lists, with and without the half-orbit truncation; and `chi2_gradient!` with
+`batch_frames = 3` equals `batch_frames = 1`.
+"""
+function test_frame_batching(backend; res::Int = 8, N::Int = 40, tol::Float64 = 1e-13, label::String = "CPU backend")
+    a, θo = 0.94, deg2rad(60.0); ν = 230e9; L = gravitational_radius(4e6)
+    camera = Geodesics.Camera((-10.0, 10.0), (-10.0, 10.0), res)
+    rng = MersenneTwister(13)
+    n = 24
+    p = zeros(NPOLARIZEDPARAMS, n)
+    for i in 1:n
+        φ = 2π * rand(rng); r0 = 3.0 + 5.0 * rand(rng); sz = i % 3 == 0 ? 0.15 : 0.6
+        p[:, i] = [r0 * cos(φ), r0 * sin(φ), 0.8 * randn(rng), log(sz), log(sz * 1.3), log(sz * 0.7), 1.0, 0.1 * randn(rng), 0.1 * randn(rng), 0.0,
+                   0.0, log(1e9), log(4e4), log(30.0), log(10.0), π / 2 + 0.3 * randn(rng), 0.5 * randn(rng), 0.2 * randn(rng), 0.3 + 0.1 * randn(rng), 0.1 * randn(rng), 0.03 * randn(rng)]
+    end
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a, θo; marcher = Recurrence(64))
+    npix = npixels(cache)
+    params = adapt_to(backend, p)
+    times = [0.0, 12.0, 25.0]
+    w = [SVector{4}(randn(rng, 4)) for _ in 1:npix, _ in 1:3]
+    @testset "$label frames batched into one launch" begin
+        for (nmax, slab) in ((-1, 0.0), (1, 0.5)), cull in (false, true)
+            lists3 = cull ? ray_lists(cache, params, times; nmax, slab) : nothing
+            if cull
+                for (f, t) in enumerate(times)
+                    l1 = ray_lists(cache, params, t; nmax, slab)
+                    c3 = Array(lists3.count)[:, f]; c1 = Array(l1.count)
+                    @test c3 == c1
+                    @test all(Array(lists3.ids)[1:c3[j], j, f] == Array(l1.ids)[1:c1[j], j] for j in 1:npix)
+                end
+            end
+            tails3 = adapt_to(backend, zeros(SVector{4,Float64}, npix, N + 1, 3))
+            polarized_tails!(tails3, cache, params, times, ν, L; nmax, slab, lists = lists3)
+            img3 = Array(tail_image(tails3, ν))
+            @test size(img3) == (npix, 3)
+            g3 = adapt_to(backend, zeros(size(p)))
+            polarized_dual_sweep!(g3, adapt_to(backend, w), tails3, cache, params, times, ν, L; nmax, slab, lists = lists3)
+            g1 = adapt_to(backend, zeros(size(p)))
+            for (f, t) in enumerate(times)
+                l1 = cull ? ray_lists(cache, params, t; nmax, slab) : nothing
+                tails1 = adapt_to(backend, zeros(SVector{4,Float64}, npix, N + 1))
+                polarized_tails!(tails1, cache, params, t, ν, L; nmax, slab, lists = l1)
+                @test Array(tail_image(tails1, ν)) == img3[:, f]
+                polarized_dual_sweep!(g1, adapt_to(backend, w[:, f]), tails1, cache, params, t, ν, L; nmax, slab, lists = l1)
+            end
+            e = maximum(abs.(Array(g3) .- Array(g1))) / maximum(abs.(Array(g1)))
+            @test e <= tol
+            @info "$label batched frames (nmax = $nmax, lists = $cull): image identical, gradient to $e"
+        end
+        # the movie χ² gradient with frames batched
+        clean = Array(polarized_cube(cache, params, times, [ν], L))
+        σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
+        movie = StokesMovie([clean[idx] + σ .* SVector{4}(randn(rng, 4)) for idx in CartesianIndices(clean)], times, [ν], σ)
+        gb = adapt_to(backend, zeros(size(p))); gu = adapt_to(backend, zeros(size(p)))
+        χb = Fit.chi2_gradient!(gb, params, movie, cache, L; batch_frames = 3)
+        χu = Fit.chi2_gradient!(gu, params, movie, cache, L; batch_frames = 1)
+        @test abs(χb - χu) <= 1e-12 * χu
+        @test maximum(abs.(Array(gb) .- Array(gu))) / maximum(abs.(Array(gu))) <= tol
+    end
+end
+
