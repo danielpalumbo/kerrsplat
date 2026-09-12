@@ -1,0 +1,3 @@
+frames batched on the GPU: 64² pixels, 60 samples, 512 parcels of 0.2 M, 4 frames, RTX 2080 SUPER
+lists true   per frame 3.263 s  batched 2.367 s  (1.38x; gradients agree to 4.5e-16)
+lists false  per frame 5.111 s  batched 3.836 s  (1.33x; gradients agree to 1.6e-16)
