@@ -125,6 +125,16 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
         rpd = Fit.prior_residuals(ForwardDiff.Dual{:a}.(q, 0.0), Fit.PatternPrior(Geodesics.Krang.Kerr(da), σp))
         @test maximum(abs.(ForwardDiff.value.(rpd) .- rp(0.8))) <= 1e-12 * maximum(abs, rp(0.8))
         @test maximum(abs.(ForwardDiff.partials.(rpd, 1) .- (rp(0.8 + 1e-6) .- rp(0.8 - 1e-6)) ./ 2e-6)) <= 1e-6 * maximum(abs, ForwardDiff.partials.(rpd, 1))
+        # the Keplerian fluid prior: Schwarzschild at 6 M has the orbital speed 1/2 in the static frame (γv = 1/√3), and the
+        # residuals' spin partials match finite differences
+        uk = Fit.keplerian_zamo_velocity(Geodesics.Krang.Kerr(0.0), 6.0, π / 2)
+        @test abs(norm(uk) - 1 / sqrt(3)) < 1e-12 && count(c -> abs(c) > 1e-12, uk) == 1
+        rk(a) = Fit.prior_residuals(q, Fit.KeplerianPrior(Geodesics.Krang.Kerr(a), 0.1))
+        rkd = Fit.prior_residuals(ForwardDiff.Dual{:a}.(q, 0.0), Fit.KeplerianPrior(Geodesics.Krang.Kerr(da), 0.1))
+        @test maximum(abs.(ForwardDiff.value.(rkd) .- rk(0.8))) <= 1e-12 * maximum(abs, rk(0.8))
+        @test maximum(abs.(ForwardDiff.partials.(rkd, 1) .- (rk(0.8 + 1e-6) .- rk(0.8 - 1e-6)) ./ 2e-6)) <= 1e-6 * maximum(abs, ForwardDiff.partials.(rkd, 1))
+        qk, xk, hk, acck = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, keplerian = 0.1)
+        @test length(hk) == 3 && all(isfinite, xk) && hk[1][1] > chi2(q, movie, cache, L) * 0.999
         # a short joint fit with the pattern prior runs and its history includes the penalty
         qp, xp, hp, accp = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, pattern = σp)
         @test length(hp) == 3 && all(isfinite, xp) && hp[1][1] > chi2(q, movie, cache, L) * 0.999

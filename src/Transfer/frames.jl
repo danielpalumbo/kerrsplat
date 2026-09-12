@@ -81,6 +81,22 @@ eq. 31 of Gelles et al. (2021).
 end
 
 """
+    momentum_bl_d(met, r, θ, η, λ, νr, νθ) -> SVector{4}
+
+The photon's covariant Boyer–Lindquist momentum (−1, ±√R/Δ, ±√Θ, λ), Krang's `p_bl_d` with
+the square roots of the radial and polar potentials taken by `safe_sqrt`: at a turning point
+the potential is zero (or rounds below it), and `√max(0, R)` on a dual there has NaN partials
+(the clamp returns a constant zero and the square-root rule divides by it), which was the
+non-finite spacetime Jacobian of the joint fits, one sample of one ray at the radial turning
+point. `safe_sqrt` gives zero with zero partials there.
+"""
+@inline function momentum_bl_d(met::Krang.Kerr{T}, r, θ, η, λ, νr::Bool, νθ::Bool) where {T}
+    pr = (νr ? one(T) : -one(T)) * safe_sqrt(Krang.r_potential(met, η, λ, r)) / Krang.Δ(met, r)
+    pθ = (νθ ? one(T) : -one(T)) * safe_sqrt(Krang.θ_potential(met, η, λ, θ))
+    return SVector(-one(T) + zero(pr), pr, pθ, λ + zero(pr))
+end
+
+"""
     local_frame(met, r, θ, η, λ, νr, νθ, α, β, θo, ũ, B) -> LocalFrame
 
 Redshift, pitch angle and screen rotation angle for the photon of screen coordinates (α, β)
@@ -90,7 +106,7 @@ along the field the Q axis is undefined and χ = 0 is returned (the polarized co
 there, and ρ_V acts the same in every basis).
 """
 @inline function local_frame(met::Krang.Kerr{T}, r, θ, η, λ, νr::Bool, νθ::Bool, α, β, θo, ũ::SVector{3}, B::SVector{3}) where {T}
-    p_d = Krang.p_bl_d(met, r, θ, η, λ, νr, νθ)
+    p_d = momentum_bl_d(met, r, θ, η, λ, νr, νθ)
     p_u = Krang.metric_uu(met, r, θ) * p_d
     p_zamo = Krang.jac_zamo_u_bl_d(met, r, θ) * p_u
     Λ = boost_zamo_to_fluid(ũ)

@@ -146,6 +146,36 @@ of its fluid at the current spin, and `fit_joint!(...; pattern = σ)` now rebuil
 iteration, feeds it to the splat gradient through the priors and to the spacetime block as
 residuals whose partials with respect to the spin come through the metric (gated against
 finite differences in `test_joint_fit`). With it the spin is constrained by the motion as the
-inclination is by the shape. The two self-fits with the prior at σ = 0.02 rad/M from
-(0.5, 45°) and (0.6, 60°) are running as this is written; their result follows in the next
-note.
+inclination is by the shape, in principle.
+
+In practice, on this movie, it does nothing: with the prior at σ = 0.02 rad/M the fits from
+(0.5, 45°) and (0.6, 60°) end at a = 0.45 and 0.62, θo = 56° and 57°, χ²/N 1.62 and 1.63,
+the same as without it. Two reasons, both physical. The prior ties each rate to the
+azimuthal coordinate velocity of the parcel's own fluid, whose ZAMO-frame velocity rows are
+free, so the spin enters only through frame dragging, and at these radii that is small:
+between a = 0.45 and a = 0.9 the Keplerian rate at 5 M differs by 0.003 rad/M, six times less
+than the σ used, and the free velocities cover the rest. And the lensing signature of the
+spin lives in the n ≥ 1 rings, which at 0.5 M per pixel this screen does not resolve. The
+inclination survives both because it changes the whole image's shape. What would constrain
+the spin is what constrains it in nature: emission near the ISCO (2–3 M, where the rates
+depend on the spin strongly), pixels of a fifth of a gravitational radius to resolve the
+rings, more frames of the fast inner motion, and, for the dynamics, a prior on the fluid
+velocity itself rather than on the rate alone. That is the next self-fit, and it is the
+first row of the uniqueness table the large-N program is after: which data constrain which
+parameter.
+
+The first of those runs (parcels at 2.5–5 M, 80² pixels over 16 M, 200 samples, six frames,
+the pattern prior at σ = 0.005, from (0.5, 45°), 100 iterations in 27 minutes): the
+inclination comes back to 58.6° (from 45°, for 60°), the spin goes from 0.5 to 0.43, and
+χ²/N settles at 1.51 against 1.00 at the truth (153,600 values). Resolving the rings and
+putting the emission at 2.5–5 M fixed the inclination to a degree and did nothing for the
+spin, whose orbital signature the free velocities still absorb.
+
+The run with Keplerian truth velocities and the fluid prior (σ_u = 0.05 with the pattern
+prior at 0.005, the same screen and start, 19 minutes): χ²/N 4.08 → 1.24 with the
+inclination at 58.0° and the spin at 0.438, unmoved since iteration 30, when the spacetime
+Jacobian began coming back non-finite at every other visit (69 skipped steps, the state
+written to a file each time). The prior did make the fit tighter (1.24 against 1.51), but
+the spin question is not answered by this run, because the spacetime block stopped moving
+at the moment it would have had to. The dumped state is being replayed on the CPU to find
+the singular sample; the earlier `safe_acos` was not the whole story.

@@ -49,7 +49,8 @@ before any performance work.
   `Transfer.safe_sqrt`), never with `==` against a literal. `acos(clamp(x, -1, 1))` on a dual
   is NaN when the clamp engages (zero partials times the rule's −∞): `Transfer.safe_acos`.
   Such measure-zero events do occur over the 1e8 sample evaluations of a GPU fit (the first
-  joint self-fit died of one after eighty iterations).
+  joint self-fit died of one after eighty iterations). Krang's `p_bl_d` takes `√max(0, R)`,
+  NaN partials at a turning-point sample: the frame uses `Transfer.momentum_bl_d` instead.
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per
