@@ -169,5 +169,13 @@ the pattern prior at σ = 0.005, from (0.5, 45°), 100 iterations in 27 minutes)
 inclination comes back to 58.6° (from 45°, for 60°), the spin goes from 0.5 to 0.43, and
 χ²/N settles at 1.51 against 1.00 at the truth (153,600 values). Resolving the rings and
 putting the emission at 2.5–5 M fixed the inclination to a degree and did nothing for the
-spin, whose orbital signature the free velocities still absorb; the run with Keplerian truth
-velocities and the fluid prior follows.
+spin, whose orbital signature the free velocities still absorb.
+
+The run with Keplerian truth velocities and the fluid prior (σ_u = 0.05 with the pattern
+prior at 0.005, the same screen and start, 19 minutes): χ²/N 4.08 → 1.24 with the
+inclination at 58.0° and the spin at 0.438, unmoved since iteration 30, when the spacetime
+Jacobian began coming back non-finite at every other visit (69 skipped steps, the state
+written to a file each time). The prior did make the fit tighter (1.24 against 1.51), but
+the spin question is not answered by this run, because the spacetime block stopped moving
+at the moment it would have had to. The dumped state is being replayed on the CPU to find
+the singular sample; the earlier `safe_acos` was not the whole story.
