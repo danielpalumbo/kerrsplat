@@ -233,3 +233,19 @@ singularity of the map from the spacetime to the ray, of measure zero, and the t
 the driver's: `spacetime_jacobian` now zeroes the rows whose values are finite and whose
 partials are not, one pixel in thousands, and warns if they exceed one per thousand. The
 per-cause guards (`safe_acos`, `momentum_bl_d`) remain for the cases that are removable.
+
+## The uniqueness table, first rows
+
+The same profile with the data degraded one axis at a time, the three points that carry the
+spin's discrimination (the spin held at 0.7, 0.9 and 0.98; the inclination and the splats
+fitted jointly; 153,600 values in every row so the χ² are comparable):
+
+| data | χ²/N at 0.7 | at 0.9 (truth) | at 0.98 | Δχ² for +0.08 | Δχ² for −0.2 |
+|---|---|---|---|---|---|
+| I, Q, U, V with the n ≤ 2 images | 1.169 | 1.030 | 1.086 | 8,600 | 21,400 |
+| I, Q, U, V with the n ≤ 1 images | 1.130 | 1.025 | 1.060 | 5,400 | 16,200 |
+
+Removing the n = 2 ring takes away a third of the spin's discrimination on the high side and
+a quarter on the low side; the spin is still determined to a few hundredths from the direct
+and the n = 1 images alone at this resolution and with the dynamics. The next rows, the
+Stokes parameters removed in turn (`--stokes IQU`, `--stokes I`), are running. UNIQUENESS
