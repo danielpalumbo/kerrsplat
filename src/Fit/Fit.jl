@@ -715,6 +715,7 @@ export Prior, PatternPrior, fluid_pattern_rate, penalty, prior_residuals
 
 include("fits.jl")
 include("spacetime.jl")
+include("joint.jl")
 include("polish.jl")
 include("visibilities.jl")
 include("scattering.jl")

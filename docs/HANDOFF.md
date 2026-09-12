@@ -4,6 +4,18 @@ Written 2026-09-04 for whoever (or whichever Claude session) continues this work
 repository is the only durable record: session memories of the Claude instance that wrote most of
 the code live outside the repository and do not travel.
 
+## The joint spacetime-and-splat fit (2026-09-11)
+
+`Fit.fit_joint!` (`src/Fit/joint.jl`, `docs/notes/2026-09-11_joint_spacetime.md`) fits spin
+and inclination (and optionally the mass through ln L) in the same loop as the splats:
+Adam on the splats from the dual sweep over Float64 samples regenerated every iteration,
+Levenberg–Marquardt on the spacetime block from `spacetime_jacobian`, the residual Jacobian
+by forward duals through a fused march on a dual-typed cache (which runs on CUDA too). The
+schedule is the whole story: the spacetime must move from the first iteration with three
+inner LM steps, because the splats adapt to a wrong spacetime within a few iterations and
+then hold it there (a warmup of five iterations left the inclination 6° off; none recovered
+it to 0.4°). Mass through ln L is degenerate with the densities where the emission is thin.
+
 ## State at the close of 2026-09-10 (resume here)
 
 Direction (Daniel, 2026-09-10 evening): the large-N splat basis, rich synthetic I, Q, U, V

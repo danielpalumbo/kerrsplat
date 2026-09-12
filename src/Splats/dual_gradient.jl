@@ -257,41 +257,39 @@ function gather_slots!(dparams, grad, lists::RayLists, backend)
     return dparams
 end
 
-# the per-ray parcel lists: for every ray the parcels whose support one of its samples enters; two launches, the
-# first counting (capacity 0), the second filling ids sized to the largest count, so that no ray overflows
-@kernel function ray_lists_kernel!(count, ids, capacity, kstop, params, tvec, S, pc, met::Krang.Kerr, θo, ::Val{N}) where {N}
+# the per-ray parcel lists: for every ray the parcels whose support one of its samples enters. One kernel marks the hits
+# (samples outer, so each sample's position is formed once; a byte per parcel and ray), the counts are column sums, and a
+# second kernel writes each ray's list in ascending parcel order into capacity = maximum(count) slots: nothing overflows
+# and no per-thread scratch is needed
+@kernel function ray_hits_kernel!(hits, kstop, params, tvec, S, pc, met::Krang.Kerr, θo, ::Val{N}) where {N}
     j = @index(Global, Linear)
     T = eltype(tvec)
     pix = build_pixel(pc, j, met, θo)
     hor = Krang.horizon(met) * (1 + T(1e-3))
     @inbounds stop = kstop[j]
     @inbounds t_obs = tvec[1]
-    xs = @private T N; ys = @private T N; zs = @private T N; ts = @private T N; ok = @private Bool N
+    nsplat = size(params, 2)
     for k in 1:N
+        k < stop || break
         s = _stored_sample(S, j, k)
-        good = k < stop && s.ok && s.r > hor
-        @inbounds ok[k] = good
-        if good
-            x, y, z = quasi_cartesian_kerr_schild(met, s.r, s.θ, s.ϕ)
-            @inbounds xs[k] = x; ys[k] = y; zs[k] = z; ts[k] = t_obs - s.t
+        (s.ok && s.r > hor) || continue
+        x, y, z = quasi_cartesian_kerr_schild(met, s.r, s.θ, s.ϕ)
+        t = t_obs - s.t
+        for i in 1:nsplat
+            @inbounds hits[i, j] != 0x00 && continue
+            @inbounds outside_support(params, i, t, x, y, z) || (hits[i, j] = 0x01)
         end
     end
+end
+@kernel function ray_fill_kernel!(ids, @Const(hits), @Const(count))
+    j = @index(Global, Linear)
     n = Int32(0)
-    for i in 1:size(params, 2)
-        hit = false
-        for k in 1:N
-            @inbounds ok[k] || continue
-            @inbounds if !outside_support(params, i, ts[k], xs[k], ys[k], zs[k])
-                hit = true
-                break
-            end
-        end
-        if hit
+    @inbounds for i in 1:size(hits, 1)
+        if hits[i, j] != 0x00
             n += Int32(1)
-            @inbounds n <= capacity && (ids[n, j] = Int32(i))
+            ids[n, j] = Int32(i)
         end
     end
-    @inbounds count[j] = n
 end
 
 """
@@ -301,8 +299,8 @@ For every stored ray the parcels whose bounding sphere (`outside_support`) one o
 enters at the observation time `t_obs` (samples beyond the half-orbit cutoff excluded as in
 the transport), in ascending parcel order: the parcels the ray can see, a few out of
 thousands. The transport over the lists is the same sum as over all parcels, because a parcel
-outside its support contributes exactly zero. Built by two launches (a count, then the fill
-into `capacity = maximum(count)` slots), so no ray overflows.
+outside its support contributes exactly zero. A hit byte per parcel and ray on the backend,
+the counts as column sums, and the lists filled into `capacity = maximum(count)` slots.
 """
 function ray_lists(cache::GeodesicCache{T,N}, params, t_obs; nmax = -1, slab = 0) where {T,N}
     backend = cache.backend
@@ -311,14 +309,14 @@ function ray_lists(cache::GeodesicCache{T,N}, params, t_obs; nmax = -1, slab = 0
     prepare_backend!(backend)
     tvec = KA.allocate(backend, T, 1); fill!(tvec, T(t_obs))
     kstop = _cutoffs(cache, nmax, slab)
-    count = KA.allocate(backend, Int32, npix)
-    args = (kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, Val(N))
-    none = KA.allocate(backend, Int32, 0, npix)
-    ray_lists_kernel!(backend, 64)(count, none, Int32(0), args...; ndrange = npix)
+    hits = KA.allocate(backend, UInt8, size(params, 2), npix); fill!(hits, 0x00)
+    ray_hits_kernel!(backend, 64)(hits, kstop, params, tvec, cache.samples, cache.consts, Krang.Kerr(cache.spin), cache.θo, Val(N); ndrange = npix)
     KA.synchronize(backend)
+    count = KA.allocate(backend, Int32, npix)
+    copyto!(count, Int32.(vec(sum(Int32.(Array(hits)); dims = 1))))
     cap = max(Int(maximum(count)), 1)
     ids = KA.allocate(backend, Int32, cap, npix); fill!(ids, Int32(0))
-    ray_lists_kernel!(backend, 64)(count, ids, Int32(cap), args...; ndrange = npix)
+    ray_fill_kernel!(backend, 64)(ids, hits, count; ndrange = npix)
     KA.synchronize(backend)
     return RayLists(ids, count)
 end

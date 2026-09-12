@@ -1,0 +1,83 @@
+# Fitting the spacetime in parallel with the splats (2026-09-11)
+
+Daniel, 2026-09-11: fitting spacetime parameters in parallel with the splats is crucial. What
+existed was `fit_spacetime`, Levenberg–Marquardt on spin and inclination at fixed splats on
+the CPU, with the Jacobian by forward-mode duals through the geodesic cache and the transport
+(gate 4, 1e-5 against finite differences). This note adds the joint fit.
+
+## Mixed mode, block-wise, one loop
+
+`Fit.fit_joint!(params, x, movie, cache, camera; L, ...)` fits the splat matrix and the
+spacetime block `x = [a, θo]` (or `[a, θo, ln L]`) to a Stokes movie. Every iteration:
+
+1. the Float64 stored samples of `cache` are regenerated at the current spin and inclination
+   (one recurrence march on the fit's backend);
+2. the splats take one Adam step from the dual sweep over those samples (`chi2_gradient!`,
+   with the per-row step multipliers and the priors of the movie fits);
+3. after `warmup` iterations, the spacetime takes one Levenberg–Marquardt step with the
+   splats held: `spacetime_jacobian` renders the residuals on a cache whose scalars are
+   two- or three-partial duals, regenerated with the fused marcher at the dual spin and
+   inclination, so the Jacobian with respect to `x` comes out of one pass costing a few
+   marches' worth of work independent of the pixel count; the damped Gauss–Newton step is
+   clipped to the bounds and accepted when one Float64 fused pass at the trial spacetime
+   lowers the χ².
+
+Gauss–Newton is the right optimizer for a block of two or three parameters whose curvature
+the duals give for free. The first version of the loop took an Adam step on the spacetime
+from the dual gradient (`spacetime_valgrad`, exact to 1e-9 against finite differences) and
+did not work: the splats adapt to the wrong spacetime within a few iterations, and the
+spacetime gradient then flips sign from one iteration to the next as the sky moves under it,
+so a fixed-size normalized step wandered (θo moved 0.8° of the 8° it was off in 60
+iterations while χ² fell fifty-fold through the splats). The curvature-scaled step does not
+have that problem: it moves the spacetime to the best fit of the current residuals in one
+step, and the accept test keeps it honest when the sky is still bad.
+
+## Mass
+
+Mass enters data in M units only through the length unit L = GM/c², which scales the
+emissivity along the path exactly as the densities do: where the emission is optically thin,
+ln L is degenerate with ln nₑ. It is identifiable through absorption and Faraday depth, and,
+for data in physical units, through the angular scale (the pixel size Δα L/D) and the frame
+times, which is where the mass constraint of a real observation lives. The M-unit movie form
+therefore fits `[a, θo]` with L given; the three-parameter block exists for the physical-unit
+path and its derivatives are gated with the others.
+
+## The dual march on CUDA
+
+The dual-typed geodesic cache had only ever run on the CPU backend. On CUDA it runs as is:
+at 32² pixels and 60 samples the two- and three-partial Jacobians of the four Stokes totals
+of a two-parcel image with respect to (a, θo[, ln L]) agree with the CPU's to every printed
+digit, and cost 0.17 and 0.21 s per evaluation on the 2080 SUPER after compilation (the
+Float64 pass 0.07 s). The per-thread stack sizing already scaled with the dual width.
+
+## The schedule decides
+
+The CPU test case (two parcels, 8² pixels at 2.25 M, 40 samples, two frames at 230 GHz, the
+truth at a = 0.9 and θo = 60°, the fit started at 0.8 and 52° with the parcels perturbed by
+0.05 in every row, 60 iterations at η = 0.03):
+
+| schedule | χ² at the end | a | θo | trace of θo every 10 iterations |
+|---|---|---|---|---|
+| no warmup, 1 LM step per iteration | 585 | 0.917 | 57.5° | 52.0, 57.3, 57.4, 57.9, 57.7, 57.5 |
+| no warmup, 3 LM steps per iteration | 635 | 0.922 | 60.4° | 52.0, 59.8, 60.3, 60.5, 60.5, 60.4 |
+| warmup 5, 3 LM steps | 620 | 0.801 | 53.8° | 52.0, 53.8, 55.0, 53.8, 53.8, 53.8 |
+| no warmup, 3 LM steps, splats held at the truth | 548 | 0.901 | 59.9° | 52.0, 59.9, 59.9, 59.9, 59.9, 59.9 |
+
+The three χ² values of the free-sky rows are the same fit to the noise (512 values); what
+differs is where the spacetime went. With five iterations of warmup the splats absorb the
+inclination error and the spacetime never recovers it, a local minimum that the joint problem
+has and the fixed-sky problem does not. With the spacetime moving from the first iteration
+and three inner steps it lands at 0.4° and 0.02 in spin, as good as the fit with the splats
+held at the truth. The defaults of `fit_joint!` are therefore no warmup and three inner steps,
+and the rule they express is general: when two blocks are fitted jointly and one can mimic
+the other, the block that cannot be mimicked has to lead.
+
+`test_joint_fit` pins the machinery and the recovery: the dual gradient of the stored-sample
+χ² against central finite differences (1e-9), the dual residuals squaring to the same χ² with
+2Jᵀr equal to the gradient, and the joint fit at 8² × 40 recovering a = 0.922 and θo = 60.4°
+from 0.8 and 52° in 60 iterations (168 spacetime steps accepted); at the CI size (6² × 16,
+30 iterations) 58.0° and 0.78, within the looser bounds the CI asks for.
+
+## Results at scale
+
+JOINT_RESULT

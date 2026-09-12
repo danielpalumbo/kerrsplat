@@ -88,6 +88,14 @@ before any performance work.
   is about an hour). Never commit the data files listed in `docs/HANDOFF.md`, nor anything
   private, to a public repository.
 
+## Fitting conventions that bit us
+- Joint fits of two blocks where one can mimic the other (splats and spacetime): the block
+  that cannot be mimicked leads. `fit_joint!` takes its Levenberg–Marquardt spacetime steps
+  from the first iteration, three per iteration; any warmup of the splats on the wrong
+  spacetime parks the fit in a local minimum the spacetime never leaves.
+- Adam's step is invariant to the gradient's scale: a row that must move slowly (the pattern
+  rates in rad/M) needs a smaller step (`steps`), not a smaller gradient.
+
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).
 - Kernels via KernelAbstractions so they run on the CPU backend for testing and on CUDA for real.
