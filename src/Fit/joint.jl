@@ -156,9 +156,10 @@ end
 """
     fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2,
                free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
+               hygiene = Hygiene(),
                bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing)
-        -> (params, x, history, accepted)
+        -> (params, x, history, accepted, events)
 
 Joint fit of the splats and the spacetime block `x` (`[a, θo]` with the length unit `L` given,
 or `[a, θo, ln L]` with the mass through the length unit) to a Stokes movie, mixed-mode and
@@ -189,7 +190,11 @@ residuals enter the spacetime block with their dependence on the spin, so the dy
 constrain the spin as the lensing does; without it free pattern rates absorb the spin's
 effect on the motion. `keplerian = σ_u` does the same for the fluid velocity rows
 (`KeplerianPrior`: the ZAMO velocity of the circular orbit at the parcel's radius), which is
-where the spin enters the dynamics strongly. `history` holds `(χ², x...)` at
+where the spin enters the dynamics strongly. `hygiene` applies the partition hygiene of
+`fit!` (prune, merge, densify every `hygiene.every` iterations, the optimizer and the masks
+rebuilt) so that the joint fit runs from an over-complete start (`shell_parcels`); `free`
+and `steps` then refer to rows, as the schedule's do, and `events` lists the changes of the
+parcel count as `(iteration, before, after)`. `history` holds `(χ², x...)` at
 the start of every iteration, the χ² of the stored-sample pass; `accepted` counts the
 spacetime steps taken.
 
@@ -201,7 +206,7 @@ this movie form in M units does not carry. Fit `[a, θo]` on M-unit movies.
 function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, camera::Geodesics.Camera;
                     L::Real = NaN, iterations::Integer = 100, η = 0.02, η_end = η / 10, warmup::Integer = 0, every::Integer = 1, inner::Integer = 3, λ::Real = 1e-2,
                     free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
-                    bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
+                    hygiene::Hygiene = Hygiene(), bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
                     frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing) where {T,N}
     backend = cache.backend
     x = collect(T, x0)
@@ -209,11 +214,16 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
     n in (2, 3) || throw(ArgumentError("the spacetime block is (a, θo) or (a, θo, ln L)"))
     n == 3 || isfinite(L) || throw(ArgumentError("give the length unit L when the mass is not fitted"))
     Lfix = T(L)
+    # with hygiene the parcel count changes, so the free entries are given by rows (a matrix mask is kept only while
+    # the count does not change)
+    rowfree = free isa AbstractMatrix ? nothing : free
+    freemat = free isa AbstractMatrix ? free : freeze(params, free)
     opt = Optimisers.setup(Optimisers.Adam(η), params)
-    mask = T.(free)
+    mask = T.(freemat)
     scale = steps === nothing ? nothing : step_scale(params, steps)
     damping = T(λ)
     accepted = 0
+    events = Tuple{Int,Int,Int}[]
     history = Vector{T}[]
     function spacetime_prior_residuals(y)
         spacetime_priors === nothing && return T[]
@@ -234,6 +244,27 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
         χ, g = _dual_valgrad(params, movie, cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
         χ += sum(abs2, spacetime_prior_residuals(x); init = zero(T))
         push!(history, vcat(χ, x))
+        if hygiene.every > 0 && it % hygiene.every == 0
+            before = size(params, 2)
+            q, kept = prune(params; fraction = hygiene.prune_fraction)
+            gk = g[:, kept]
+            q, groups = merge(q; position_tol = hygiene.merge_position, shape_tol = hygiene.merge_shape)
+            gm = reduce(hcat, (sum(gk[:, grp], dims = 2) for grp in groups))
+            if size(q, 2) < hygiene.max_splats
+                q = densify(q, gm; threshold = hygiene.densify_threshold)
+            end
+            if size(q) != size(params) || q != params
+                params = q
+                push!(events, (it, before, size(params, 2)))
+                freemat = rowfree === nothing ? trues(size(params)) : freeze(params, rowfree)
+                mask = T.(freemat)
+                scale = steps === nothing ? nothing : step_scale(params, steps)
+                opt = Optimisers.setup(Optimisers.Adam(ηt), params)
+                ndynamic = (pattern === nothing ? 0 : size(params, 2)) + (keplerian === nothing ? 0 : 3 * size(params, 2))
+                callback === nothing || callback(it, params, x, χ)
+                continue
+            end
+        end
         if it > warmup && (it - warmup - 1) % every == 0
             χx = χ
             damping = T(λ)                        # the damping restarts every visit: the sky has moved under the spacetime block since the last one
@@ -280,7 +311,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
         _scaled_update!(params, old, scale)
         callback === nothing || callback(it, params, x, χ)
     end
-    return params, x, history, accepted
+    return params, x, history, accepted, events
 end
 
 "`params` as a matrix of the cache's element type on its backend."

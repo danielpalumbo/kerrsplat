@@ -141,13 +141,19 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
         rkd = Fit.prior_residuals(ForwardDiff.Dual{:a}.(q, 0.0), Fit.KeplerianPrior(Geodesics.Krang.Kerr(da), 0.1))
         @test maximum(abs.(ForwardDiff.value.(rkd) .- rk(0.8))) <= 1e-12 * maximum(abs, rk(0.8))
         @test maximum(abs.(ForwardDiff.partials.(rkd, 1) .- (rk(0.8 + 1e-6) .- rk(0.8 - 1e-6)) ./ 2e-6)) <= 1e-6 * maximum(abs, ForwardDiff.partials.(rkd, 1))
-        qk, xk, hk, acck = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, keplerian = 0.1)
+        qk, xk, hk, acck, _ = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, keplerian = 0.1)
         @test length(hk) == 3 && all(isfinite, xk) && hk[1][1] > chi2(q, movie, cache, L) * 0.999
         # a short joint fit with the pattern prior runs and its history includes the penalty
-        qp, xp, hp, accp = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, pattern = σp)
+        qp, xp, hp, accp, _ = Fit.fit_joint!(copy(q), x3[1:2], movie, cache, camera; L, iterations = 3, η = 0.03, pattern = σp)
         @test length(hp) == 3 && all(isfinite, xp) && hp[1][1] > chi2(q, movie, cache, L) * 0.999
+        # the joint fit from an over-complete shell with hygiene: the parcel count falls, χ² falls, the spacetime stays finite
+        qs = shell_parcels(24; rin = 2.5, rout = 7.0, height = 0.5, scale = 0.4, spin = 0.8, rng = Random.MersenneTwister(2))
+        qs[13, :] .= log(1e6 * 2 / 24)
+        χs0 = chi2(qs, movie, cache, L)
+        qh, xh, hh, acch, evh = Fit.fit_joint!(copy(qs), x3[1:2], movie, cache, camera; L, iterations = 12, η = 0.05, hygiene = Fit.Hygiene(every = 4, prune_fraction = 0.2, merge_position = 0.3))
+        @test size(qh, 2) < 24 && !isempty(evh) && all(isfinite, xh) && hh[end][1] < χs0 && length(hh) == 12
         x0 = x3[1:2]
-        qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η = 0.03)
+        qj, xj, hist, acc, _ = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η = 0.03)
         χ0 = hist[1][1]; χ1 = hist[end][1]
         @test length(hist) == iterations && χ1 < 0.5 * χ0 && acc >= 1
         @test abs(xj[2] - θ_true) < θtol && abs(xj[1] - a_true) < atol
