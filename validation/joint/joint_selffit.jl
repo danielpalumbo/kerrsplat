@@ -4,7 +4,7 @@
 #     julia -t 8 --project=../.. joint_selffit.jl [--res 40] [--fov 20] [--samples 160] [--nmax 2] [--slab 0.5] [--frames 4]
 #                                                  [--frequencies 230] [--iterations 150] [--eta 0.02] [--warmup 0] [--inner 2]
 #                                                  [--every 1] [--a0 0.5] [--inc0 45] [--perturb 0.1] [--fresh] [--seed 1] [--tag joint] [--pattern 0]
-#                                                  [--rin 4] [--rout 7] [--keplerian 0]
+#                                                  [--rin 4] [--rout 7] [--keplerian 0] [--fix-spin]
 # Truth: spin 0.9, inclination 60°, six parcels on orbits at --rin to --rout M (4–7 by default) with Keplerian pattern
 # rates. Output:
 # output/joint_<tag>_summary.txt (the spacetime trajectory, χ² trace, recovered parcels) and the parameter files.
@@ -19,6 +19,8 @@ a0 = getopt("--a0", 0.5); inc0 = getopt("--inc0", 45.0); perturb = getopt("--per
 σpattern = getopt("--pattern", 0.0); pattern = σpattern > 0 ? σpattern : nothing            # the Keplerian pattern prior ties the rates to the spin
 rin = getopt("--rin", 4.0); rout = getopt("--rout", 7.0)
 σkep = getopt("--keplerian", 0.0); keplerian = σkep > 0 ? σkep : nothing                  # Keplerian truth velocities and the fluid prior in the fit
+fixspin = "--fix-spin" in ARGS                                                              # the spin held at --a0 (a profile over the spin), the inclination free
+bounds = fixspin ? ((a0, a0), (0.01, π - 0.01), (-Inf, Inf)) : ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf))
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 a_true = 0.9; θ_true = deg2rad(60.0); L = gravitational_radius(4e6)
 rng = MersenneTwister(seed)
@@ -61,14 +63,14 @@ regenerate!(cache, a_true, θ_true; marcher = Recurrence(64))
 @info "start" chi2 = χstart reduced = χstart / (4 * length(data)) chi2_at_true_spacetime_start_sky = χtruth_sky chi2_truth = χtruth reduced_truth = χtruth / (4 * length(data)) a0 inc0 fresh
 t0 = time()
 trace = String[]
-qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η, warmup, inner, every, nmax, slab, pattern, keplerian,
+qj, xj, hist, acc = Fit.fit_joint!(copy(q), x0, movie, cache, camera; L, iterations, η, warmup, inner, every, nmax, slab, pattern, keplerian, bounds,
                                    callback = (it, pp, xx, v) -> (it % 10 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  a %.4f  inc %.2f°  %.1f min", it, v, xx[1], rad2deg(xx[2]), (time() - t0) / 60)); @info trace[end])))
 regenerate!(cache, xj[1], xj[2]; marcher = Recurrence(64))
 χend = χ2(qj)
 @info "end" chi2 = χend reduced = χend / (4 * length(data)) a = xj[1] inc = rad2deg(xj[2]) accepted = acc minutes = (time() - t0) / 60
 writedlm(joinpath(outdir, "joint_$(tag)_params.csv"), qj, ','); writedlm(joinpath(outdir, "joint_$(tag)_truth.csv"), p, ','); writedlm(joinpath(outdir, "joint_$(tag)_x.csv"), xj, ',')
 open(joinpath(outdir, "joint_$(tag)_summary.txt"), "w") do io
-    println(io, "joint spacetime-and-splat self-fit: $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames over $(times[end]) M, frequencies $(freqs ./ 1e9) GHz, $(4 * length(data)) values; parcels at $(rin)–$(rout) M; $iterations iterations, eta $η, warmup $warmup, inner $inner, every $every, pattern prior $(pattern === nothing ? "off" : "σ = $σpattern"), Keplerian fluid prior $(keplerian === nothing ? "off" : "σ = $σkep"); start a $a0 inc $inc0, $(fresh ? "fresh 8 parcels" : "truth perturbed by $perturb"), seed $seed")
+    println(io, "joint spacetime-and-splat self-fit: $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames over $(times[end]) M, frequencies $(freqs ./ 1e9) GHz, $(4 * length(data)) values; parcels at $(rin)–$(rout) M; $iterations iterations, eta $η, warmup $warmup, inner $inner, every $every, pattern prior $(pattern === nothing ? "off" : "σ = $σpattern"), Keplerian fluid prior $(keplerian === nothing ? "off" : "σ = $σkep")$(fixspin ? ", spin held" : ""); start a $a0 inc $inc0, $(fresh ? "fresh 8 parcels" : "truth perturbed by $perturb"), seed $seed")
     println(io, "truth: a $a_true inc 60.0; chi2 at truth $χtruth (reduced $(χtruth / (4 * length(data)))); chi2 at start $χstart; with the start sky at the true spacetime $χtruth_sky")
     println(io, "end: a $(xj[1]) inc $(rad2deg(xj[2])) chi2 $χend (reduced $(χend / (4 * length(data)))) accepted spacetime steps $acc minutes $((time() - t0) / 60)")
     foreach(l -> println(io, l), trace)
