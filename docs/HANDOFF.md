@@ -23,6 +23,23 @@ within 4e-4), and the pitch angle goes through `Transfer.safe_acos`, because a c
 a dual is NaN at the boundary and such measure-zero events do occur over a GPU fit's 1e8
 sample evaluations.
 
+## State at the close of 2026-09-12 (resume here)
+
+Merged on 2026-09-11/12 (#81–#84): the per-ray parcel lists and the 1e-6 weight cutoff for
+the large-N dual sweep, frames batched into one launch, the joint spacetime-and-splat fit
+(`fit_joint!`, Levenberg–Marquardt on the spacetime block from forward duals, no warmup, three
+inner steps, damping reset per visit, stored dual caches), the Keplerian pattern and fluid
+priors tied to the current spin, the boundary-safe `safe_acos` and `momentum_bl_d` (both found
+by non-finite Jacobians in GPU fits and replayed from dumped states), and the large-N starting
+point `shell_parcels`. The scientific state: on a six-parcel n ≤ 2 movie at 0.2 M per pixel
+with parcels at 2.5–5 M, the joint fit finds the inclination to a degree from any start and the
+spin from none (a joint local minimum), while the spin profile (`--fix-spin`) has its minimum
+at the truth with 8,600 units of χ² per 0.08 of spin: `docs/notes/2026-09-11_joint_spacetime.md`.
+Next: the uniqueness table proper (the same profile with the data degraded: n ≤ 1, no V, no
+Q/U, fewer frames, one frequency), the large-N fits at scale with hygiene on the GPU, the
+replay of the non-finite Jacobian at a = 0.3, and the FP32-transport question for the
+workstation purchase.
+
 ## State at the close of 2026-09-10 (resume here)
 
 Direction (Daniel, 2026-09-10 evening): the large-N splat basis, rich synthetic I, Q, U, V

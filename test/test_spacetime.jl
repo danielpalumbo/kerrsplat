@@ -111,6 +111,14 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
         r, J = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc), x3, camera, backend; N)
         @test abs(sum(abs2, r) - χ_stored) <= 1e-8 * χ_stored && size(J) == (length(r), 3)
         @test maximum(abs.(2 .* (J' * r) .- gx)) <= 1e-8 * maximum(abs, gx)
+        # a residual with finite value and non-finite partials has its Jacobian row zeroed, the rest untouched
+        rbad, Jbad = Fit.spacetime_jacobian(x3, camera, backend; N) do c, Lc
+            rr = Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc)
+            SS = eltype(rr)
+            rr[3] = SS(ForwardDiff.value(rr[3]), ForwardDiff.Partials(ntuple(_ -> ForwardDiff.valtype(SS)(NaN), 3)))
+            rr
+        end
+        @test all(isfinite, Jbad) && all(Jbad[3, :] .== 0) && rbad == r && maximum(abs.(Jbad[[1, 2, 4], :] .- J[[1, 2, 4], :])) == 0
         # the stored and the fused dual paths agree, with and without the half-orbit truncation, and stay finite
         for nmax in (-1, 1)
             rs, Js = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_movie_residuals(c, Fit._on_backend(c, q), movie, Lc; nmax, slab = 0.5), x3, camera, backend; N, stored = true)

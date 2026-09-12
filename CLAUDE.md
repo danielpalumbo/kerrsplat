@@ -53,7 +53,9 @@ before any performance work.
   is NaN when the clamp engages (zero partials times the rule's −∞): `Transfer.safe_acos`.
   Such measure-zero events do occur over the 1e8 sample evaluations of a GPU fit (the first
   joint self-fit died of one after eighty iterations). Krang's `p_bl_d` takes `√max(0, R)`,
-  NaN partials at a turning-point sample: the frame uses `Transfer.momentum_bl_d` instead.
+  NaN partials at a turning-point sample: the frame uses `Transfer.momentum_bl_d` instead. A
+  ray on the boundary between radial root cases has NaN spacetime partials in every sample
+  (a genuine singularity of the march): `Fit.spacetime_jacobian` zeroes such rows.
 - Enzyme's reverse pass over the KernelAbstractions CPU kernel tapes the whole screen: about
   1 GB per 8e4 pixel-samples (12k pixels × 160 samples reached 25 GB and was OOM-killed).
   Differentiate large screens tile by tile (`Geodesics.tiles`, a cache and a movie slice per

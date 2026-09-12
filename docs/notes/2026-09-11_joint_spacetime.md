@@ -177,5 +177,59 @@ inclination at 58.0° and the spin at 0.438, unmoved since iteration 30, when th
 Jacobian began coming back non-finite at every other visit (69 skipped steps, the state
 written to a file each time). The prior did make the fit tighter (1.24 against 1.51), but
 the spin question is not answered by this run, because the spacetime block stopped moving
-at the moment it would have had to. The dumped state is being replayed on the CPU to find
-the singular sample; the earlier `safe_acos` was not the whole story.
+at the moment it would have had to.
+
+The replay of the dumped state found the singularity: one pixel of the 6400, one sample at
+r = 2.20, a radial turning point of that ray, where Krang's momentum takes `√max(0, R)` and
+the clamp's constant zero gives the square-root rule NaN partials on a dual; the frame's
+redshift, pitch angle and polarization angle inherit them, and through them the whole
+Jacobian. The frame now takes its momentum from `Transfer.momentum_bl_d` with the safe
+square root (`test_turning_point_frame`). The rerun with the fix has no non-finite visits at
+all, 75 accepted spacetime steps, and the same answer: χ²/N 1.244, θo = 57.9°, a = 0.438.
+So the spin's stagnation was never the NaN. It is a local minimum of the joint problem: with
+the velocities free and drawn to the Keplerian values of whatever spin the fit holds, the
+prior is self-consistent at any spin, and from 0.5 the Levenberg–Marquardt block sees no
+descent toward 0.9, although the truth fits 37,000 units of χ² better. The local optimizer
+cannot cross that; a profile over the spin can, and its χ² separation is decisive. The spin
+profile (`--fix-spin`: the spin held at each of 0.3, 0.5, 0.7, 0.9 and 0.98 with everything
+else, the inclination included, fitted jointly) is the next run, and the shape of χ² along
+it is the first entry of the uniqueness table: what these data say about the spin.
+
+## The spin profile
+
+The same movie (parcels at 2.5–5 M with Keplerian velocities and rates, 80² pixels of 0.2 M,
+200 samples, n ≤ 2, six frames, 153,600 values at 2% noise in I), the spin held at each of
+five values and everything else fitted jointly from the perturbed sky, the inclination
+included (80 iterations each, about 25 minutes):
+
+| spin held at | χ²/N at the end | θo | Δχ² from the minimum |
+|---|---|---|---|
+| 0.3 | 1.415 | 50.6° | 59,000 |
+| 0.5 | 1.235 | 58.4° | 31,500 |
+| 0.7 | 1.169 | 59.5° | 21,400 |
+| 0.9 (the truth) | 1.030 | 59.6° | 0 |
+| 0.98 | 1.086 | 58.3° | 8,600 |
+
+The profile has its minimum at the truth, at the noise floor, and rises by 8,600 units of χ²
+for 0.08 of spin on the high side and 21,000 for 0.2 on the low side: on this movie the spin
+is determined to a few hundredths, and the inclination to a degree, from a start 0.4 off in
+spin and 15° off in inclination. What the joint fit could not do from a single start, the
+profile does, because the local optimizer's failure was a basin, not a degeneracy: the χ²
+landscape along the spin is well separated once the sky is refitted at each value. This is
+the first row of the uniqueness table, and the shape of the argument for the rest of it:
+hold the parameter, refit everything else, read the curvature. (The point at a = 0.3 skipped
+49 of its spacetime visits on a non-finite Jacobian of another kind, at a geometry far from
+the truth; it is being replayed. Its inclination step was thereby hampered, which can only
+have made 0.3 look worse than it is, and the points at 0.5 and 0.7, with no skipped visits,
+carry the low side of the profile on their own.)
+
+The replay of the a = 0.3 state found the other kind: the stored samples themselves. Two
+rays of the 6400, a pair sharing η = 12.35 and λ = 3.21 (the pixels (α, β) and (α, −β) share
+their conserved quantities and their radial motion), have NaN spin and inclination partials
+in every radial sample from the first, with the polar samples finite: the ray sits on the
+boundary between radial root cases at that spin, where the roots' dependence on the spin is
+singular and a clamp in the root finding turns it into NaN on a dual. That is a genuine
+singularity of the map from the spacetime to the ray, of measure zero, and the treatment is
+the driver's: `spacetime_jacobian` now zeroes the rows whose values are finite and whose
+partials are not, one pixel in thousands, and warns if they exceed one per thousand. The
+per-cause guards (`safe_acos`, `momentum_bl_d`) remain for the cases that are removable.
