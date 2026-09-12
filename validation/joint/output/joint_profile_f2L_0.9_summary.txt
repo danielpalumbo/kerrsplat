@@ -1,0 +1,19 @@
+joint spacetime-and-splat self-fit: 80² pixels, fov 16.0 M, 200 samples, nmax 2 slab 0.5, 2 frames over 60.0 M, frequencies [230.0] GHz, 51200 values; parcels at 2.5–5.0 M; 160 iterations, eta 0.01, warmup 0, inner 3, every 1, pattern prior σ = 0.005, Keplerian fluid prior σ = 0.05, spin held, Stokes IQUV; start a 0.9 inc 45.0, truth perturbed by 0.05, seed 1
+truth: a 0.9 inc 60.0; chi2 at truth 51501.510573990585 (reduced 1.0058888783982536); chi2 at start 516097.9673084236; with the start sky at the true spacetime 411008.94870482455
+end: a 0.9 inc 53.86833330368864 chi2 81187.82779179559 (reduced 1.5856997615585076) accepted spacetime steps 15 minutes 17.318972015380858
+iteration  10  chi2   203796.0  a 0.9000  inc 53.86°  3.8 min
+iteration  20  chi2   138728.2  a 0.9000  inc 53.87°  4.7 min
+iteration  30  chi2   116667.5  a 0.9000  inc 53.87°  5.5 min
+iteration  40  chi2   102394.7  a 0.9000  inc 53.87°  6.4 min
+iteration  50  chi2    94891.8  a 0.9000  inc 53.87°  7.3 min
+iteration  60  chi2    91248.8  a 0.9000  inc 53.87°  8.2 min
+iteration  70  chi2    88768.1  a 0.9000  inc 53.87°  9.1 min
+iteration  80  chi2    86804.9  a 0.9000  inc 53.87°  10.0 min
+iteration  90  chi2    85264.7  a 0.9000  inc 53.87°  10.9 min
+iteration 100  chi2    84143.9  a 0.9000  inc 53.87°  11.8 min
+iteration 110  chi2    83351.6  a 0.9000  inc 53.87°  12.7 min
+iteration 120  chi2    82794.0  a 0.9000  inc 53.87°  13.6 min
+iteration 130  chi2    82400.3  a 0.9000  inc 53.87°  14.6 min
+iteration 140  chi2    82118.8  a 0.9000  inc 53.87°  15.5 min
+iteration 150  chi2    81908.4  a 0.9000  inc 53.87°  16.4 min
+iteration 160  chi2    81733.8  a 0.9000  inc 53.87°  17.3 min
