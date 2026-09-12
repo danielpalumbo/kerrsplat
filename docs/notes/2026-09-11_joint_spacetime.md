@@ -146,6 +146,20 @@ of its fluid at the current spin, and `fit_joint!(...; pattern = σ)` now rebuil
 iteration, feeds it to the splat gradient through the priors and to the spacetime block as
 residuals whose partials with respect to the spin come through the metric (gated against
 finite differences in `test_joint_fit`). With it the spin is constrained by the motion as the
-inclination is by the shape. The two self-fits with the prior at σ = 0.02 rad/M from
-(0.5, 45°) and (0.6, 60°) are running as this is written; their result follows in the next
-note.
+inclination is by the shape, in principle.
+
+In practice, on this movie, it does nothing: with the prior at σ = 0.02 rad/M the fits from
+(0.5, 45°) and (0.6, 60°) end at a = 0.45 and 0.62, θo = 56° and 57°, χ²/N 1.62 and 1.63,
+the same as without it. Two reasons, both physical. The prior ties each rate to the
+azimuthal coordinate velocity of the parcel's own fluid, whose ZAMO-frame velocity rows are
+free, so the spin enters only through frame dragging, and at these radii that is small:
+between a = 0.45 and a = 0.9 the Keplerian rate at 5 M differs by 0.003 rad/M, six times less
+than the σ used, and the free velocities cover the rest. And the lensing signature of the
+spin lives in the n ≥ 1 rings, which at 0.5 M per pixel this screen does not resolve. The
+inclination survives both because it changes the whole image's shape. What would constrain
+the spin is what constrains it in nature: emission near the ISCO (2–3 M, where the rates
+depend on the spin strongly), pixels of a fifth of a gravitational radius to resolve the
+rings, more frames of the fast inner motion, and, for the dynamics, a prior on the fluid
+velocity itself rather than on the rate alone. That is the next self-fit, and it is the
+first row of the uniqueness table the large-N program is after: which data constrain which
+parameter.

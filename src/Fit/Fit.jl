@@ -711,7 +711,59 @@ function prior_residuals(params::AbstractMatrix{T}, prior::PatternPrior) where {
     return T[(params[nrow, i] - fluid_pattern_rate(params, i, prior.met)) / prior.σ for i in 1:size(params, 2)]
 end
 
-export Prior, PatternPrior, fluid_pattern_rate, penalty, prior_residuals
+"""
+    KeplerianPrior(met, σ)
+
+Soft Keplerian fluid: every splat's ZAMO velocity rows (u1, u2, u3) are drawn toward the
+ZAMO-frame spatial 4-velocity of the prograde circular equatorial geodesic at the splat's
+Boyer–Lindquist radius in the spacetime `met` (`keplerian_zamo_velocity`), with the penalty
+Σ_k Σ_c ((u_{c,k} − ũ_c)/σ)². Where `PatternPrior` ties the pattern rate to the fluid, this
+ties the fluid to the metric, and the spin enters strongly (the orbital speed at 3 M changes
+by a fifth between a = 0 and a = 0.9): the dynamical handle on the spin of a joint fit.
+"""
+struct KeplerianPrior{M,S}
+    met::M
+    σ::S
+end
+
+"The ZAMO-frame spatial 4-velocity (γ v) of the prograde circular equatorial geodesic of angular velocity Ω = 1/(r^{3/2} + a) at (r, θ)."
+@inline function keplerian_zamo_velocity(met::Geodesics.Krang.Kerr, r, θ)
+    a = met.spin
+    Ω = 1 / (r * sqrt(r) + a)
+    g = Geodesics.Krang.metric_dd(met, r, θ)
+    ut2 = -(g[1, 1] + 2 * g[1, 4] * Ω + g[4, 4] * Ω * Ω)
+    ut = 1 / sqrt(max(ut2, zero(ut2) + eps(typeof(ut2))))           # inside the photon orbit no timelike circular orbit exists; the prior degrades gracefully
+    u_bl = SVector(ut, zero(ut), zero(ut), ut * Ω)
+    u_zamo = Geodesics.Krang.jac_zamo_u_bl_d(met, r, θ) * u_bl
+    return SVector(u_zamo[2], u_zamo[3], u_zamo[4])
+end
+
+function penalty(params::AbstractMatrix{T}, prior::KeplerianPrior) where {T}
+    total = zero(T)
+    nrow = size(params, 1)
+    for i in 1:size(params, 2)
+        r, θ, _ = Splats.boyer_lindquist(prior.met, params[1, i], params[2, i], params[3, i])
+        ũ = keplerian_zamo_velocity(prior.met, r, θ)
+        for c in 1:3
+            total += ((params[nrow - 4 + c, i] - ũ[c]) / prior.σ)^2
+        end
+    end
+    return total
+end
+function prior_residuals(params::AbstractMatrix{T}, prior::KeplerianPrior) where {T}
+    nrow = size(params, 1)
+    res = T[]
+    for i in 1:size(params, 2)
+        r, θ, _ = Splats.boyer_lindquist(prior.met, params[1, i], params[2, i], params[3, i])
+        ũ = keplerian_zamo_velocity(prior.met, r, θ)
+        for c in 1:3
+            push!(res, (params[nrow - 4 + c, i] - ũ[c]) / prior.σ)
+        end
+    end
+    return res
+end
+
+export Prior, PatternPrior, KeplerianPrior, keplerian_zamo_velocity, fluid_pattern_rate, penalty, prior_residuals
 
 include("fits.jl")
 include("spacetime.jl")
