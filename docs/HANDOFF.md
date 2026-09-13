@@ -50,8 +50,8 @@ basis with no knowledge of the number of parcels. The two-band shell fit (230 an
 The coefficients say why (`validation/large_n/coefficient_degeneracy.jl`): the emissivities at
 any number of bands have an exact null direction, density against field strength with the
 temperature and pitch angle holding the critical frequency, which only absorption and Faraday
-rotation break. Next: the GRMHD truth when Daniel provides it,
-the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
+rotation break. Next: the GRMHD truth when Daniel provides it, and the FP32 timing for the
+workstation question (the transport is Float32-clean, PR #93).
 
 ## State at the close of 2026-09-10 (resume here)
 
