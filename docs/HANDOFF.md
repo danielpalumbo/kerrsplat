@@ -44,8 +44,10 @@ with the truth (the one-band plasma degeneracy), and with the spacetime free as 
 lands within 4% of the floor with the spin to 0.02 and the inclination to 4°, and the spin
 profile from that start (2026-09-13) has its minimum at the truth with 2,230 and 3,540 units
 of χ² for +0.08 and −0.2 of spin on 65,536 values: the spin determined from an over-complete
-basis with no knowledge of the number of parcels. Next: the multifrequency large-N fit (to
-lift the plasma degeneracy),
+basis with no knowledge of the number of parcels. The two-band shell fit (230 and 345 GHz,
+2026-09-13) lifts the temperature side of the one-band plasma degeneracy (temperature error
+0.14 against 0.20) and sharpens the density, and leaves the field where the start put it.
+Next: why the field is not better determined with two bands,
 the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
 
 ## State at the close of 2026-09-10 (resume here)
