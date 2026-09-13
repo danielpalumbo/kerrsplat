@@ -43,7 +43,10 @@ hygiene the fits reach the noise floor and agree with each other on the fields c
 with the truth (the one-band plasma degeneracy), and with the spacetime free as well the fit
 lands within 4% of the floor with the spin to 0.02 and the inclination to 4°. Next: the spin
 profile from the shell start, the multifrequency large-N fit (to lift the plasma degeneracy),
-the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
+the GRMHD truth when Daniel provides it, and the FP32 timing for the workstation question:
+the transport is Float32-clean since 2026-09-12 (`docs/notes/2026-09-12_fp32_transport.md`:
+image and gradient to 1e-6 of Float64 over Float64 geodesics; the rules that keep Float32
+partials finite are in CLAUDE.md), and what remains is to time the Float32 dual sweep on a card.
 
 ## State at the close of 2026-09-10 (resume here)
 

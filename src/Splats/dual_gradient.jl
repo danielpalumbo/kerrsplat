@@ -159,7 +159,7 @@ end
     m = Transfer.ray_model(PolarizedSplats(params, view(tvec, f:f), frame_lists(lists, f)), r)
     c = RadiativeTransport(m, ν, L)
     hor = Krang.horizon(met) * (1 + T(1e-3))
-    @inbounds w = dstokes[r, f] * ν^3
+    @inbounds w = dstokes[r, f] * Transfer.νhat(ν)^3
     @inbounds stop = kstop[r]
     for k in 1:min(stop - 1, N)
         s = _stored_sample(S, r, k)
@@ -167,7 +167,7 @@ end
         j4, α4, ρ3, active = Transfer.accumulate_elements(c, s, pix, nothing)
         active || continue
         Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
-        Δ = L / ν * Σ * Δτ
+        Δ = L / Transfer.νhat(ν) * Σ * Δτ
         @inbounds R = tails[r, k + 1, f]
         O, E, j̄, ᾱ, ρ̄ = Transfer.sample_adjoint(j4, α4, ρ3, Δ, w, R)
         for i in 1:nelements(m)
@@ -207,8 +207,8 @@ function polarized_tails!(tails::AbstractMatrix, cache::GeodesicCache{T,N}, para
 end
 
 "The observed Stokes vectors (sorted pixel order, cgs) from the tails of [`polarized_tails!`](@ref): a vector for one frame, `npix × nframes` for a batch."
-tail_image(tails::AbstractMatrix, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1])
-tail_image(tails::AbstractArray{<:Any,3}, ν_obs) = map(R -> R * ν_obs^3, tails[:, 1, :])
+tail_image(tails::AbstractMatrix, ν_obs) = map(R -> R * Transfer.νhat(ν_obs)^3, tails[:, 1])
+tail_image(tails::AbstractArray{<:Any,3}, ν_obs) = map(R -> R * Transfer.νhat(ν_obs)^3, tails[:, 1, :])
 
 """
     polarized_dual_sweep!(dparams, dstokes, tails, cache, params, t_obs, ν_obs, L; nmax = -1, slab = 0, lists = nothing) -> dparams

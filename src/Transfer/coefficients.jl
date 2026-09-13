@@ -9,6 +9,13 @@
 # (src/symphony/maxwell_juettner_fits.c, power_law_fits.c) including ipole's sign convention;
 # validation/symphony/ generates reference tables from those sources and test/test_coefficients.jl
 # compares against them.
+#
+# Types. Each chain is written in the type of its arguments (`T(literal)` would promote a
+# Float32 argument to Float64 through a Float64 literal), with the constants in the scalar type
+# behind a dual (`S = _scalar(T)`): a constant carried as a dual, divided into a dual, goes
+# through the square of its value in the derivative rule, and (mₑ)² underflows Float32. The
+# frequency enters the rotativities only through the ratios ω₀/ω and ω_p²/ω², and the Planck
+# function through ν̂ = ν/NU0, since (2πν)⁴ and 2h/c² are outside Float32's range.
 
 """
     StokesCoefficients(jI, jQ, jV, αI, αQ, αV, ρQ, ρV)
@@ -33,22 +40,28 @@ Base.:+(a::StokesCoefficients, b::StokesCoefficients) =
 Base.:*(s::Number, c::StokesCoefficients) = StokesCoefficients(s * c.jI, s * c.jQ, s * c.jV, s * c.αI, s * c.αQ, s * c.αV, s * c.ρQ, s * c.ρV)
 
 """
-    planck_invariant(ν, Θe)
+    planck(ν, Θe)
 
-The Planck function divided by ν³, B_ν/ν³ = (2h/c²)/(exp(hν/kT) − 1) with kT = Θe mₑc², with the
-same small-argument expansion as ipole's `Bnu_inv`.
+The Planck function B_ν = (2hν³/c²)/(exp(hν/kT) − 1) with kT = Θe mₑc², with the same
+small-argument expansion as ipole's `Bnu_inv`, in the type of the arguments. It is formed as
+`PLANCK0` ν̂³/(exp(x) − 1) with ν̂ = ν/`NU0`: 2h/c² (1.5e-47) is below Float32's range while
+2h`NU0`³/c² is not.
 """
-@inline function planck_invariant(ν, Θe)
-    x = HPL * ν / (ME * CL * CL * Θe)
-    if x < 2e-3
-        return (2 * HPL / (CL * CL)) / (x / 24 * (24 + x * (12 + x * (4 + x))))
+@inline function planck(ν, Θe)
+    T = typeof(float(ν * Θe))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
+    x = S(HPL) * ν / (S(ME) * S(CL) * S(CL) * Θe)
+    ν̂ = νhat(ν)
+    pref = S(PLANCK0) * ν̂ * ν̂ * ν̂
+    if x < S(2e-3)
+        return pref / (x / 24 * (24 + x * (12 + x * (4 + x))))
     else
-        return (2 * HPL / (CL * CL)) / (exp(x) - 1)
+        return pref / (exp(x) - 1)
     end
 end
 
-"The Planck function B_ν for the dimensionless temperature Θe."
-@inline planck(ν, Θe) = planck_invariant(ν, Θe) * ν^3
+"The Planck function divided by ν³, B_ν/ν³ (a Float64 quantity: 1e-47 is below Float32's range)."
+@inline planck_invariant(ν, Θe) = planck(ν, Θe) / ν^3
 
 # K₀ and K₁ with ForwardDiff duals (Bessels.jl accepts only Float32/Float64): K₀′ = −K₁, K₁′ = −K₀ − K₁/x.
 @inline besselk0(x::Real) = besselk0_inline(x)
@@ -71,9 +84,9 @@ end
 end
 
 # Dexter (2016) thermal fits, appendix A: the functions of x = ν/ν_s.
-@inline dexter_II(x) = 2.5651 * (1 + 1.92 * x^(-1 / 3) + 0.9977 * x^(-2 / 3)) * exp(-1.8899 * x^(1 / 3))
-@inline dexter_IQ(x) = 2.5651 * (1 + 0.93193 * x^(-1 / 3) + 0.499873 * x^(-2 / 3)) * exp(-1.8899 * x^(1 / 3))
-@inline dexter_IV(x) = (1.81384 / x + 3.42319 * x^(-2 / 3) + 0.0292545 * x^(-1 / 2) + 2.03773 * x^(-1 / 3)) * exp(-1.8899 * x^(1 / 3))
+@inline dexter_II(x::T) where {T<:Real} = (S = _scalar(T); S(2.5651) * (1 + S(1.92) * x^S(-1 / 3) + S(0.9977) * x^S(-2 / 3)) * exp(-S(1.8899) * x^S(1 / 3)))
+@inline dexter_IQ(x::T) where {T<:Real} = (S = _scalar(T); S(2.5651) * (1 + S(0.93193) * x^S(-1 / 3) + S(0.499873) * x^S(-2 / 3)) * exp(-S(1.8899) * x^S(1 / 3)))
+@inline dexter_IV(x::T) where {T<:Real} = (S = _scalar(T); (S(1.81384) / x + S(3.42319) * x^S(-2 / 3) + S(0.0292545) * x^S(-1 / 2) + S(2.03773) * x^S(-1 / 3)) * exp(-S(1.8899) * x^S(1 / 3)))
 
 """
     thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV = false, pandya = false) -> StokesCoefficients
@@ -87,24 +100,28 @@ with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
 """
 @inline function thermal_synchrotron(ne, Θe, B, ν, θ; dexter_rhoV::Bool = false, pandya::Bool = false)
     T = typeof(float(ne * Θe * B * ν * θ))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
     sinθ, cosθ = sincos_pair(θ)
     # rotativities (Dexter 2016 appendix B; ipole maxwell_juettner_rho_Q / rho_V)
-    ω0 = EE * B / (ME * CL)
-    ωp2 = 4 * T(π) * ne * EE^2 / ME
+    ω0 = S(EE) * B / (S(ME) * S(CL))
+    ωp2 = 4 * S(π) * ne * S(EE)^2 / S(ME)
+    ω = 2 * S(π) * ν
+    ω0_ω = ω0 / ω                       # the ratios ω₀/ω ~ 1e-4 and ω_p²/ω² ~ 1e-9 stay in Float32's range,
+    ωp2_ω2 = ωp2 / (ω * ω)              # where (2πν)⁴ ~ 1e48 does not
     k0, k1, k2 = besselk012(inv(Θe))
-    x = Θe * sqrt(sqrt(T(2)) * sinθ * (1e3 * ω0 / (2 * T(π) * ν)))
-    extraterm = (0.011 * exp(-x / 47.2) - T(2)^(-1 / 3) / T(3)^(23 / 6) * T(π) * 1e4 * (x + 1e-16)^(-8 / 3)) *
-                (0.5 + 0.5 * tanh((log(x) - log(T(120))) / 0.1))
-    jffunc = 2.011 * exp(-x^1.035 / 4.7) - cos(x / 2) * exp(-x^1.2 / 2.73) - 0.011 * exp(-x / 47.2) + extraterm
+    x = Θe * sqrt(sqrt(S(2)) * sinθ * (S(1e3) * ω0_ω))
+    extraterm = (S(0.011) * exp(-x / S(47.2)) - S(2)^S(-1 / 3) / S(3)^S(23 / 6) * S(π) * S(1e4) * (x + S(1e-16))^S(-8 / 3)) *
+                (S(0.5) + S(0.5) * tanh((log(x) - log(S(120))) / S(0.1)))
+    jffunc = S(2.011) * exp(-x^S(1.035) / S(4.7)) - cos(x / 2) * exp(-x^S(1.2) / S(2.73)) - S(0.011) * exp(-x / S(47.2)) + extraterm
     kratio = k2 > 0 ? k1 / k2 : one(T)
-    eps11m22 = jffunc * ωp2 * ω0^2 / (2 * T(π) * ν)^4 * (kratio + 6 * Θe) * sinθ^2
-    ρQ = 2 * T(π) * ν / (2 * CL) * eps11m22
+    eps11m22 = jffunc * ωp2_ω2 * ω0_ω^2 * (kratio + 6 * Θe) * sinθ^2   # ω_p² ω₀²/ω⁴ …
+    ρQ = ω / (2 * S(CL)) * eps11m22
     if dexter_rhoV && k2 > 0
-        fit_factor = (k0 - 0.43793091 * log(1 + 0.00185777 * x^1.50316886)) / k2
+        fit_factor = (k0 - S(0.43793091) * log(1 + S(0.00185777) * x^S(1.50316886))) / k2
     else
-        fit_factor = (k2 > 0 ? k0 / k2 : one(T)) * (1 - 0.11 * log(1 + 0.035 * x))
+        fit_factor = (k2 > 0 ? k0 / k2 : one(T)) * (1 - S(0.11) * log(1 + S(0.035) * x))
     end
-    ρV = 2 * T(π) * ν / CL * (ωp2 * ω0 / (2 * T(π) * ν)^3 * fit_factor * cosθ)
+    ρV = ω / S(CL) * (ωp2_ω2 * ω0_ω * fit_factor * cosθ)              # … and ω_p² ω₀/ω³
     if !(sinθ > 0)
         return StokesCoefficients(zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), ρV)
     end
@@ -112,12 +129,12 @@ with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
         jI, jQ, jV = thermal_synchrotron_pandya(ne, Θe, B, ν, θ)
     else
         # emissivities (Dexter 2016; ipole maxwell_juettner_dexter_*), ipole's sign for Q
-        νs = 3 * EE * B * sinθ / (4 * T(π) * ME * CL) * Θe^2 + 1
+        νs = 3 * S(EE) * B * sinθ / (4 * S(π) * S(ME) * S(CL)) * Θe^2 + 1
         xs = ν / νs
-        pref = ne * EE^2 * ν / (2 * sqrt(T(3)) * CL * Θe^2)
+        pref = ne * S(EE)^2 * ν / (2 * sqrt(S(3)) * S(CL) * Θe^2)
         jI = pref * dexter_II(xs)
         jQ = pref * dexter_IQ(xs)
-        jV = 2 * ne * EE^2 * ν * cosθ / sinθ / (3 * sqrt(T(3)) * CL * Θe^3) * dexter_IV(xs)
+        jV = 2 * ne * S(EE)^2 * ν * cosθ / sinθ / (3 * sqrt(S(3)) * S(CL) * Θe^3) * dexter_IV(xs)
     end
     # absorptivities by Kirchhoff's law
     Bν = planck(ν, Θe)
@@ -133,18 +150,19 @@ ipole's signs), the alternative to Dexter's fits.
 """
 @inline function thermal_synchrotron_pandya(ne, Θe, B, ν, θ)
     T = typeof(float(ne * Θe * B * ν * θ))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
     sinθ = sin(θ)
-    νc = EE * B / (2 * T(π) * ME * CL)
-    νs = (2 / T(9)) * νc * sinθ * Θe^2
+    νc = S(EE) * B / (2 * S(π) * S(ME) * S(CL))
+    νs = (2 / S(9)) * νc * sinθ * Θe^2
     X = ν / νs
-    pref = ne * EE^2 * νc / CL
-    term1 = sqrt(T(2)) * T(π) / 27 * sinθ
-    jI = pref * term1 * (X^(1 / 2) + T(2)^(11 / 12) * X^(1 / 6))^2 * exp(-X^(1 / 3))
-    t2 = (7 * Θe^(24 / 25) + 35) / (10 * Θe^(24 / 25) + 75)
-    jQ = pref * term1 * (X^(1 / 2) + t2 * T(2)^(11 / 12) * X^(1 / 6))^2 * exp(-X^(1 / 3))
-    tv1 = (37 - 87 * sin(θ - 28 / T(25))) / (100 * (Θe + 1))
-    tv2 = (1 + (Θe^(3 / 5) / 25 + 7 / T(10)) * X^(9 / 25))^(5 / 3)
-    jV = pref * tv1 * tv2 * exp(-X^(1 / 3))
+    pref = ne * S(EE)^2 * νc / S(CL)
+    term1 = sqrt(S(2)) * S(π) / 27 * sinθ
+    jI = pref * term1 * (X^S(1 / 2) + S(2)^S(11 / 12) * X^S(1 / 6))^2 * exp(-X^S(1 / 3))
+    t2 = (7 * Θe^S(24 / 25) + 35) / (10 * Θe^S(24 / 25) + 75)
+    jQ = pref * term1 * (X^S(1 / 2) + t2 * S(2)^S(11 / 12) * X^S(1 / 6))^2 * exp(-X^S(1 / 3))
+    tv1 = (37 - 87 * sin(θ - 28 / S(25))) / (100 * (Θe + 1))
+    tv2 = (1 + (Θe^S(3 / 5) / 25 + 7 / S(10)) * X^S(9 / 25))^S(5 / 3)
+    jV = pref * tv1 * tv2 * exp(-X^S(1 / 3))
     return jI, jQ, jV
 end
 
@@ -156,15 +174,16 @@ transport (symphony `maxwell_juettner_leung_I`).
 """
 @inline function thermal_emissivity_leung(ne, Θe, B, ν, θ)
     T = typeof(float(ne * Θe * B * ν * θ))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
     sinθ = sin(θ)
     _, _, k2 = besselk012(inv(Θe))
-    K2 = max(k2, T(1e-40))
-    νc = EE * B / (2 * T(π) * ME * CL)
-    νs = (2 / T(9)) * νc * Θe^2 * sinθ
+    K2 = max(k2, S(1e-40))
+    νc = EE * B / (2 * S(π) * ME * CL)
+    νs = (2 / S(9)) * νc * Θe^2 * sinθ
     ν > 1e12 * νs && return zero(T)
     x = ν / νs
-    f = (x^(1 / 2) + T(2)^(11 / 12) * x^(1 / 6))^2
-    return (sqrt(T(2)) * T(π) * EE^2 * ne * νs / (3 * CL * K2)) * f * exp(-x^(1 / 3))
+    f = (x^(1 / 2) + S(2)^(11 / 12) * x^(1 / 6))^2
+    return (sqrt(S(2)) * S(π) * EE^2 * ne * νs / (3 * CL * K2)) * f * exp(-x^(1 / 3))
 end
 
 """
@@ -186,8 +205,9 @@ should keep power-law parcels within the window (`powerlaw_rotativities_valid`).
 """
 @inline function powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ)
     T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
     sinθ, cosθ = sincos_pair(θ)
-    νB = EE * B * sinθ / (2 * T(π) * ME * CL)
+    νB = EE * B * sinθ / (2 * S(π) * ME * CL)
     ρperp = ne * EE^2 * (p - 1) / (ME * CL * νB * (γmin^(1 - p) - γmax^(1 - p)))
     νmin = γmin^2 * νB
     ρQ = -ρperp * (νB / ν)^3 * γmin^(2 - p) * (1 - (νmin / ν)^(p / 2 - 1)) / (p / 2 - 1)
@@ -198,7 +218,8 @@ end
 "Whether (ν, B, θ, γmin) lie in the validity window of `powerlaw_rotativities`, ν > 3 γmin² ν_B⊥."
 @inline function powerlaw_rotativities_valid(γmin, B, ν, θ)
     T = typeof(float(γmin * B * ν * θ))
-    return ν > 3 * γmin^2 * EE * B * sin(θ) / (2 * T(π) * ME * CL)
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
+    return ν > 3 * γmin^2 * EE * B * sin(θ) / (2 * S(π) * ME * CL)
 end
 
 """
@@ -211,22 +232,23 @@ Jones & O'Dell rotativities of [`powerlaw_rotativities`](@ref) (symphony's fits 
 """
 @inline function powerlaw_synchrotron(ne, p, γmin, γmax, B, ν, θ; rotativities::Bool = true)
     T = typeof(float(ne * p * γmin * γmax * B * ν * θ))
+    S = _scalar(T)                        # constants in the scalar type behind T (see `_scalar`)
     sinθ, cosθ = sincos_pair(θ)
-    νc = EE * B / (2 * T(π) * ME * CL)
+    νc = EE * B / (2 * S(π) * ME * CL)
     gspan = γmin^(1 - p) - γmax^(1 - p)
     # emissivities
     pref = ne * EE^2 * νc / CL
-    jI = pref * (T(3)^(p / 2) * (p - 1) * sinθ) / (2 * (p + 1) * gspan) *
+    jI = pref * (S(3)^(p / 2) * (p - 1) * sinθ) / (2 * (p + 1) * gspan) *
          Bessels.gamma((3p - 1) / 12) * Bessels.gamma((3p + 19) / 12) * (ν / (νc * sinθ))^(-(p - 1) / 2)
-    jQ = (p + 1) / (p + 7 / T(3)) * jI
-    jV = (171 / T(250)) * p^(49 / 100) * cosθ / sinθ * (ν / (3 * νc * sinθ))^(-1 / 2) * jI
+    jQ = (p + 1) / (p + 7 / S(3)) * jI
+    jV = (171 / S(250)) * p^(49 / 100) * cosθ / sinθ * (ν / (3 * νc * sinθ))^(-1 / 2) * jI
     # absorptivities
     apref = ne * EE^2 / (ν * ME * CL)
-    aI = apref * T(3)^((p + 1) / 2) * (p - 1) / (4 * gspan) *
+    aI = apref * S(3)^((p + 1) / 2) * (p - 1) / (4 * gspan) *
          Bessels.gamma((3p + 2) / 12) * Bessels.gamma((3p + 22) / 12) * (ν / (νc * sinθ))^(-(p + 2) / 2)
-    aQ = aI * ((17 / T(500)) * p - 43 / T(1250))^(43 / 500)
-    term6 = ((31 / T(10)) * sinθ^(-48 / 25) - 31 / T(10))^(64 / 125)
-    aV = aI * ((71 / T(100)) * p + 22 / T(625))^(197 / 500) * term6 * (ν / (νc * sinθ))^(-1 / 2) * sign(cosθ)
+    aQ = aI * ((17 / S(500)) * p - 43 / S(1250))^(43 / 500)
+    term6 = ((31 / S(10)) * sinθ^(-48 / 25) - 31 / S(10))^(64 / 125)
+    aV = aI * ((71 / S(100)) * p + 22 / S(625))^(197 / 500) * term6 * (ν / (νc * sinθ))^(-1 / 2) * sign(cosθ)
     ρQ, ρV = rotativities ? powerlaw_rotativities(ne, p, γmin, γmax, B, ν, θ) : (zero(T), zero(T))
     return StokesCoefficients(jI, jQ, jV, aI, aQ, aV, ρQ, ρV)
 end
@@ -237,13 +259,40 @@ end
 Scale the polarized emissivities and absorptivities so that √(j_Q² + j_V²) ≤ fmax j_I and likewise
 for α, as ipole does (`max_pol_frac_e/a`): the analytic transfer step assumes α_P < α_I.
 """
-@inline function cap_polarization(c::StokesCoefficients{T}, fmax = T(0.99)) where {T}
-    jP = sqrt(c.jQ^2 + c.jV^2)
-    fe = (jP > 0 && c.jI < jP / fmax) ? c.jI / jP * fmax : one(T)
-    aP = sqrt(c.αQ^2 + c.αV^2)
-    fa = (aP > 0 && c.αI < aP / fmax) ? c.αI / aP * fmax : one(T)
+@inline function cap_polarization(c::StokesCoefficients{T}, fmax = _scalar(T)(0.99)) where {T}
+    fe = cap_factor(c.jI, c.jQ, c.jV, fmax)
+    fa = cap_factor(c.αI, c.αQ, c.αV, fmax)
     return StokesCoefficients(c.jI, fe * c.jQ, fe * c.jV, c.αI, fa * c.αQ, fa * c.αV, c.ρQ, c.ρV)
 end
+
+"""
+The factor that scales (Q, V) so that √(Q² + V²) ≤ fmax·I (1 when it already is; 0 when I is not
+positive but Q or V is). The fraction is formed from the ratios Q/I, V/I: the squares of the
+coefficients themselves underflow Float32 at the tails of a density (jQ ~ 1e-24), and the square
+root of an underflowed zero has NaN partials.
+"""
+@inline function cap_factor(I, Q, V, fmax)
+    _value(I) > 0 || return (vanishes(Q) && vanishes(V)) ? one(I) : zero(I)
+    q = Q / I
+    v = V / I
+    p = safe_sqrt(q * q + v * v)
+    return _value(p) > fmax ? fmax / p : one(I)
+end
+
+"""
+    NU0
+
+The reference frequency [Hz] of the transport's invariants: the Lorentz-invariant coefficients
+and Stokes vectors are formed with ν̂ = ν/NU0 instead of ν (j/ν̂², ν̂α, ν̂ρ, and I = ν̂³ I_inv at the
+observer), which leaves every observable unchanged and keeps the invariants within a few orders
+of magnitude of the physical coefficients rather than 1e-34 below them: the difference between
+a transport that runs in Float32 and one whose invariants are Float32 subnormals.
+"""
+const NU0 = 1e11
+"2h NU0³/c²: the Planck function is PLANCK0 ν̂³/(exp(hν/kT) − 1) (`planck`)."
+const PLANCK0 = 2 * HPL * NU0^3 / CL^2
+"The scaled frequency ν/NU0 in the type of ν."
+@inline νhat(ν) = ν / _scalar(typeof(float(ν)))(NU0)
 
 """
     invariants(c::StokesCoefficients, ν)
@@ -251,6 +300,7 @@ end
 The Lorentz-invariant forms j_S/ν², ν α_S and ν ρ_S used by the transfer step.
 """
 @inline function invariants(c::StokesCoefficients, ν)
-    iν2 = inv(ν * ν)
-    return StokesCoefficients(c.jI * iν2, c.jQ * iν2, c.jV * iν2, ν * c.αI, ν * c.αQ, ν * c.αV, ν * c.ρQ, ν * c.ρV)
+    ν̂ = νhat(ν)
+    iν2 = inv(ν̂ * ν̂)
+    return StokesCoefficients(c.jI * iν2, c.jQ * iν2, c.jV * iν2, ν̂ * c.αI, ν̂ * c.αQ, ν̂ * c.αV, ν̂ * c.ρQ, ν̂ * c.ρV)
 end

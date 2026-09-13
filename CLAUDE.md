@@ -21,6 +21,16 @@ before any performance work.
 - Enzyme reverse mode inside KernelAbstractions kernels requires compile-time trip counts
   (`Val(N)`); runtime loop bounds crash with an illegal memory access.
 - Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
+  The transport's invariants are formed with ν̂ = ν/`Transfer.NU0` (1e11 Hz), never with ν:
+  every conversion between a physical and an invariant quantity goes through `Transfer.νhat`
+  (the coefficients, the path length, the observer's ν̂³, the gradient seeds), and the
+  coefficient chain is typed by its arguments (`oftype` in `@muladd_chain`, literals wrapped)
+  so that a Float32 model stays Float32 (`Geodesics.precision` makes the Float32 cache). The
+  rules that keep Float32 partials finite (docs/notes/2026-09-12_fp32_transport.md): constants
+  in the scalar type behind a dual (`_scalar(T)`, never `T(ME)` with `T` a dual type: the
+  division rule squares the constant), frequencies only as in-range ratios (ω₀/ω, ν̂³ in
+  `planck`), the step operator in the products K′Δ (an exact power-of-two rescaling), branch
+  thresholds from `eps(T)`, and fractions like jQ/jI rather than squares of tiny coefficients.
 - Enzyme inside a CUDA kernel (reverse mode, one ray per thread) works only over stored
   samples (the march's special functions get compiled through checked host code otherwise) and
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use
