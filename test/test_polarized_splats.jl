@@ -11,6 +11,7 @@ using LinearAlgebra
 using KerrSplat.Geodesics
 using KerrSplat.Transfer
 using KerrSplat.Splats
+using KerrSplat.Fit
 using KerrSplat.Transfer: transfer_step, advance, rotate_to_screen, invariants, cap_polarization
 
 const POL_ν = 230e9
@@ -517,6 +518,11 @@ function test_precision(; res = 8, N = 24)
             @test abs(Transfer.besselk1(Float32(x)) - Transfer.besselk1(x)) <= 2e-6 * Transfer.besselk1(x)
         end
         @test Transfer.planck_invariant(2.3f11, 30.0f0) isa Float32
+        # a movie converts with its data, times, frequencies and noise, the mask as it is
+        movie = StokesMovie([SVector{4}(randn(MersenneTwister(1), 4)) for _ in 1:3, _ in 1:3, _ in 1:2, _ in 1:1], [0.0, 10.0], [ν], SVector(0.1, 0.05, 0.05, 0.02))
+        m32 = Geodesics.precision(movie, Float32)
+        @test m32 isa StokesMovie{Float32} && eltype(m32.data) == SVector{4,Float32} && m32.σ isa SVector{4,Float32} && m32.times == Float32[0, 10] && m32.mask === movie.mask
+        @test maximum(maximum.(abs, SVector{4,Float64}.(m32.data) .- movie.data)) < 1e-6
         # the dual sweep in Float32 runs and its gradient follows the Float64 one
         w = [SVector{4}(Float64.(randn(MersenneTwister(4), 4))) for _ in 1:npixels(cache)]
         g64 = zeros(size(p)); polarized_dual_sweep!(g64, w, t64, cache, p, 5.0, ν, L)
