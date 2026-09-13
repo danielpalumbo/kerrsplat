@@ -259,6 +259,11 @@ data is polarization first, the lensed ring second, and Stokes I alone would sti
 is the answer the program was built to get: rich enough data determine the plasma and the
 spacetime together, and the table says how rich.
 
+The same three points from an over-complete start (three hundred shell parcels with
+hygiene, no knowledge of the number of parcels) are in `docs/notes/2026-09-10_large_n.md`:
+2,230 and 3,540 units of χ² on a 65,536-value movie, four to six tenths of the correct
+model's discrimination per value, the spin still determined to a few hundredths.
+
 Two more rows, both preliminary because their fits did not reach the noise floor in the 80
 iterations the other rows needed (χ²/N 1.84 and 1.35 at the true spin against 1.00 at the
 truth), so their numbers mix information with optimization and are being rerun longer:
