@@ -47,7 +47,10 @@ of χ² for +0.08 and −0.2 of spin on 65,536 values: the spin determined from 
 basis with no knowledge of the number of parcels. The two-band shell fit (230 and 345 GHz,
 2026-09-13) lifts the temperature side of the one-band plasma degeneracy (temperature error
 0.14 against 0.20) and sharpens the density, and leaves the field where the start put it.
-Next: why the field is not better determined with two bands,
+The coefficients say why (`validation/large_n/coefficient_degeneracy.jl`): the emissivities at
+any number of bands have an exact null direction, density against field strength with the
+temperature and pitch angle holding the critical frequency, which only absorption and Faraday
+rotation break. Next: the GRMHD truth when Daniel provides it,
 the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
 
 ## State at the close of 2026-09-10 (resume here)
