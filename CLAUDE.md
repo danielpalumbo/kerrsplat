@@ -21,6 +21,16 @@ before any performance work.
 - Enzyme reverse mode inside KernelAbstractions kernels requires compile-time trip counts
   (`Val(N)`); runtime loop bounds crash with an illegal memory access.
 - Float32 is numerically unstable in Krang's per-sample geodesic path. Geodesics are Float64.
+  The transport's invariants are formed with ν̂ = ν/`Transfer.NU0` (1e11 Hz), never with ν:
+  every conversion between a physical and an invariant quantity goes through `Transfer.νhat`
+  (the coefficients, the path length, the observer's ν̂³, the gradient seeds), and the
+  coefficient chain is typed by its arguments (`oftype` in `@muladd_chain`, literals wrapped)
+  so that a Float32 model stays Float32 (`Geodesics.precision` makes the Float32 cache). The
+  rules that keep Float32 partials finite (docs/notes/2026-09-12_fp32_transport.md): constants
+  in the scalar type behind a dual (`_scalar(T)`, never `T(ME)` with `T` a dual type: the
+  division rule squares the constant), frequencies only as in-range ratios (ω₀/ω, ν̂³ in
+  `planck`), the step operator in the products K′Δ (an exact power-of-two rescaling), branch
+  thresholds from `eps(T)`, and fractions like jQ/jI rather than squares of tiny coefficients.
 - Enzyme inside a CUDA kernel (reverse mode, one ray per thread) works only over stored
   samples (the march's special functions get compiled through checked host code otherwise) and
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use
@@ -36,7 +46,10 @@ before any performance work.
   the CPU on this card. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
   kernel); longer tapes spill to device malloc, so `prepare_backend!` raises the malloc heap to
   1 GB at the first gradient kernel (CUDA refuses to change it after a kernel has used malloc). Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
-  is worse, not better. The fast path is the dual sweep (`Splats.polarized_gradient!`, default
+  is worse, not better. Those stacks are reserved as local memory for every resident thread,
+  so with another process holding half the card (a running fit) the Enzyme kernels fail to
+  launch with `too many resources requested` (code 701) even at 12² × 60, on `main` as well:
+  run the Enzyme device gates on a free card. The fast path is the dual sweep (`Splats.polarized_gradient!`, default
   `method = :dual`): the reverse over the compositing is written by hand from 4-vectors (tails
   and adjoints) and the per-sample derivatives are ForwardDiff duals, which run in CUDA
   kernels without any of Enzyme's constraints; four times the forward transport per gradient.

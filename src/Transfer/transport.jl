@@ -7,7 +7,9 @@
 # where j, α, ρ are evaluated in the fluid frame at ν = ν_obs/g (g = 1/(−p·u)); it reduces to
 # dI/ds = j − αI at infinity. So every interval of Mino length Δτ at (r, θ) is a transfer step of
 # length Δ = (L/ν_obs) Σ Δτ over the invariants (j/ν², να, νρ), and the observed intensity is
-# I_obs = ν_obs³ × (accumulated invariant) in erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹. A pixel of angular size
+# I_obs = ν_obs³ × (accumulated invariant) in erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹. In the code every ν in
+# this chain is the scaled ν̂ = ν/NU0 (`νhat`), which leaves I_obs unchanged and keeps the
+# invariants inside Float32's range (`coefficients.jl`). A pixel of angular size
 # ΔαL/D on a side subtends (ΔαL/D)² sr.
 
 "Length unit L = GM/c² in cm for a mass in solar masses."
@@ -59,9 +61,10 @@ Adapt.@adapt_structure UnpolarizedTransport
     (s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))) || return acc
     jν, αν, g = unpolarized_coefficients(c.model, pix, s, c.ν_obs)
     Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
-    Δ = c.L / c.ν_obs * Σ * Δτ
-    jinv = jν * g * g / (c.ν_obs * c.ν_obs)     # j/ν² at ν = ν_obs/g
-    αinv = αν * c.ν_obs / g                      # ν α
+    Δ = c.L / νhat(c.ν_obs) * Σ * Δτ
+    ν̂ = νhat(c.ν_obs)
+    jinv = jν * g * g / (ν̂ * ν̂)                  # j/ν̂² at ν = ν_obs/g
+    αinv = αν * ν̂ / g                            # ν̂ α
     return unpolarized_step(acc, jinv, αinv, Δ)
 end
 
@@ -69,7 +72,7 @@ end
 function unpolarized_coefficients end
 
 "Observed specific intensity [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
-observed_intensity(st::UnpolarizedState, ν_obs) = st.I * ν_obs^3
+observed_intensity(st::UnpolarizedState, ν_obs) = st.I * νhat(ν_obs)^3
 
 """
     pixel_solid_angle(Δα, L, D)
@@ -147,7 +150,7 @@ end
     j4, α4, ρ3, active = accumulate_elements(c, s, pix, static_elements(c.model))
     active || return acc
     Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
-    Δ = c.L / c.ν_obs * Σ * Δτ
+    Δ = c.L / νhat(c.ν_obs) * Σ * Δτ
     O, E = transfer_step(j4, α4, ρ3, Δ)
     return advance(acc, O, E)
 end
@@ -166,7 +169,7 @@ the identity, zero and `active = false`.
         j4, α4, ρ3, active = accumulate_elements(c, s, pix, static_elements(c.model))
         if active
             Σ = s.r * s.r + met.spin^2 * cos(s.θ)^2
-            Δ = c.L / c.ν_obs * Σ * Δτ
+            Δ = c.L / νhat(c.ν_obs) * Σ * Δτ
             O, E = transfer_step(j4, α4, ρ3, Δ)
             return O, E, true
         end
@@ -273,7 +276,7 @@ static_elements(::StaticCount{NS}) where {NS} = Val(NS)
 @inline element(m::StaticCount, i, pix, s, ν_obs) = element(m.model, i, pix, s, ν_obs)
 
 "Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
-observed_stokes(st::RadiativeState, ν_obs) = st.S * ν_obs^3
+observed_stokes(st::RadiativeState, ν_obs) = st.S * νhat(ν_obs)^3
 observed_stokes(w::WindingState, ν_obs) = observed_stokes(w.state, ν_obs)
 
 # ---- composite models ------------------------------------------------------------------------------

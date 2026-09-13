@@ -51,7 +51,10 @@ The coefficients say why (`validation/large_n/coefficient_degeneracy.jl`): the e
 any number of bands have an exact null direction, density against field strength with the
 temperature and pitch angle holding the critical frequency, which only absorption and Faraday
 rotation break. Next: the GRMHD truth when Daniel provides it, and the FP32 timing for the
-workstation question (the transport is Float32-clean, PR #93).
+workstation question: the transport is Float32-clean since 2026-09-12
+(`docs/notes/2026-09-12_fp32_transport.md`: image and gradient to 1e-6 of Float64 over Float64
+geodesics; the rules that keep Float32 partials finite are in CLAUDE.md), and what remains is
+to time the Float32 dual sweep on a card.
 
 ## State at the close of 2026-09-10 (resume here)
 

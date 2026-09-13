@@ -431,7 +431,7 @@ function polarized_reverse_sweep!(dparams, dstokes::AbstractVector{SVector{4,T}}
     # chunk c, consumed by its reverse pass, which accumulates the adjoint of its incoming state into column c)
     dstates = similar(states)
     fill!(dstates, zero_adjoint(RadiativeState{T}))
-    copyto!(view(dstates, :, C + 1), map(d -> RadiativeState(zero(SMatrix{4,4,T}), d .* ν^3), dstokes))
+    copyto!(view(dstates, :, C + 1), map(d -> RadiativeState(zero(SMatrix{4,4,T}), d .* Transfer.νhat(ν)^3), dstokes))
     NSv = Val(size(params, 2))                          # the splat count is a compile-time constant of the adjoint kernel (one compile per count)
     if backend isa CPU   # compile on one work item first (concurrent Enzyme compilation on several tasks deadlocks)
         dp = similar(dparams); fill!(dp, zero(T)); dt = similar(dtvec); fill!(dt, zero(T)); ds = copy(dstates); st = copy(states)
