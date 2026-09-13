@@ -482,3 +482,31 @@ function test_frame_batching(backend; res::Int = 8, N::Int = 40, tol::Float64 = 
     end
 end
 
+"""
+    test_precision(; res = 8, N = 24)
+
+`Geodesics.precision`: the Float32 copy of a Float64 cache has converted samples and constants,
+the same permutation and ranges, and the tails image rendered on it is finite and within 5e-3 of
+the Float64 image (1.9e-3 at this size with sixteen samples, 1.1e-4 at 24² × 60; the
+coefficient chain still promotes and the invariants reach subnormals; see the FP32 note).
+"""
+function test_precision(; res = 8, N = 24)
+    a, θo = 0.9, deg2rad(60.0); ν = 230e9; L = gravitational_radius(4e6)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(CPU(), camera, Val(N); store_samples = true); regenerate!(cache, a, θo; marcher = Recurrence(64))
+    c32 = Geodesics.precision(cache, Float32)
+    p = polarized_test_params()
+    @testset "precision converter" begin
+        @test c32 isa GeodesicCache{Float32} && eltype(c32.samples.r) == Float32 && eltype(c32.consts.η) == Float32
+        @test c32.perm_host == cache.perm_host && c32.ranges == cache.ranges && c32.spin == Float32(a)
+        @test maximum(abs.(Float64.(c32.samples.r) .- cache.samples.r)) <= 1e-6 * maximum(abs, cache.samples.r)
+        t64 = zeros(SVector{4,Float64}, npixels(cache), N + 1); polarized_tails!(t64, cache, p, 5.0, ν, L)
+        t32 = zeros(SVector{4,Float32}, npixels(cache), N + 1); polarized_tails!(t32, c32, Float32.(p), 5.0f0, Float32(ν), Float32(L))
+        img64 = tail_image(t64, ν); img32 = tail_image(t32, Float32(ν))
+        @test all(x -> all(isfinite, x), img32)
+        e = maximum(maximum.(abs, SVector{4,Float64}.(img32) .- img64)) / maximum(x -> maximum(abs, x), img64)
+        @test e < 5e-3
+        @info "precision: the Float32 tails image agrees with Float64 to $e of the peak"
+    end
+end
+

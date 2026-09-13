@@ -210,6 +210,28 @@ function fused_march!(f, out, cache::GeodesicCache{T,N}; workgroup::Integer = 12
 end
 
 """
+    precision(cache, T2) -> GeodesicCache{T2}
+
+A copy of a regenerated cache with every scalar converted to `T2` (the pixel constants, the
+stored samples, the residuals, the spin and inclination): the geodesics marched once in
+Float64 and the transport run in another precision. No march is performed on the copy; it
+is for the transport and the dual sweep over stored samples (`Float32` there is the question
+of the FP32 transport for consumer GPUs, whose FP64 runs at 1/32 to 1/64 rate).
+"""
+function precision(cache::GeodesicCache{T,N}, ::Type{T2}) where {T,N,T2}
+    backend = cache.backend
+    conv(x::AbstractVector{T}) = (y = KA.allocate(backend, T2, length(x)); copyto!(y, T2.(Array(x))); y)
+    conv(x::AbstractVector{Complex{T}}) = (y = KA.allocate(backend, Complex{T2}, length(x)); copyto!(y, Complex{T2}.(Array(x))); y)
+    conv(x::AbstractMatrix{T}) = (y = KA.allocate(backend, T2, size(x)...); copyto!(y, T2.(Array(x))); y)
+    conv(x) = x                                                           # integer and flag arrays as they are
+    consts = PixelConstants((conv(getfield(cache.consts, f)) for f in fieldnames(PixelConstants))...)
+    samples = GeodesicSamples((conv(getfield(cache.samples, f)) for f in fieldnames(GeodesicSamples))...)
+    return GeodesicCache(backend, cache.nval, conv(cache.αs), conv(cache.βs), cache.screen_size, cache.numreals_screen, cache.perm,
+                         cache.perm_host, cache.ranges, consts, samples, conv(cache.residual_t), conv(cache.residual_ϕ),
+                         T2(cache.spin), T2(cache.θo), cache.generation, cache.marcher)
+end
+
+"""
     tiles(camera, ntiles) -> Vector{Tuple{Camera, UnitRange{Int}}}
 
 Split a camera into `ntiles` cameras of consecutive pixels (screen order) with the index range
