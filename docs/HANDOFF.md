@@ -41,8 +41,11 @@ two frames do not determine the geometry). The large-N program's first instances
 `docs/notes/2026-09-10_large_n.md`: from over-complete shells of 300 and 600 parcels with
 hygiene the fits reach the noise floor and agree with each other on the fields closer than
 with the truth (the one-band plasma degeneracy), and with the spacetime free as well the fit
-lands within 4% of the floor with the spin to 0.02 and the inclination to 4°. Next: the spin
-profile from the shell start, the multifrequency large-N fit (to lift the plasma degeneracy),
+lands within 4% of the floor with the spin to 0.02 and the inclination to 4°, and the spin
+profile from that start (2026-09-13) has its minimum at the truth with 2,230 and 3,540 units
+of χ² for +0.08 and −0.2 of spin on 65,536 values: the spin determined from an over-complete
+basis with no knowledge of the number of parcels. Next: the multifrequency large-N fit (to
+lift the plasma degeneracy),
 the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
 
 ## State at the close of 2026-09-10 (resume here)
