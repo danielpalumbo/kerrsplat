@@ -44,9 +44,14 @@ with the truth (the one-band plasma degeneracy), and with the spacetime free as 
 lands within 4% of the floor with the spin to 0.02 and the inclination to 4°, and the spin
 profile from that start (2026-09-13) has its minimum at the truth with 2,230 and 3,540 units
 of χ² for +0.08 and −0.2 of spin on 65,536 values: the spin determined from an over-complete
-basis with no knowledge of the number of parcels. Next: the multifrequency large-N fit (to
-lift the plasma degeneracy), the GRMHD truth when Daniel provides it, and the FP32 timing for
-the workstation question: the transport is Float32-clean since 2026-09-12
+basis with no knowledge of the number of parcels. The two-band shell fit (230 and 345 GHz,
+2026-09-13) lifts the temperature side of the one-band plasma degeneracy (temperature error
+0.14 against 0.20) and sharpens the density, and leaves the field where the start put it.
+The coefficients say why (`validation/large_n/coefficient_degeneracy.jl`): the emissivities at
+any number of bands have an exact null direction, density against field strength with the
+temperature and pitch angle holding the critical frequency, which only absorption and Faraday
+rotation break. Next: the GRMHD truth when Daniel provides it, and the FP32 timing for the
+workstation question: the transport is Float32-clean since 2026-09-12
 (`docs/notes/2026-09-12_fp32_transport.md`: image and gradient to 1e-6 of Float64 over Float64
 geodesics; the rules that keep Float32 partials finite are in CLAUDE.md), and what remains is
 to time the Float32 dual sweep on a card.
