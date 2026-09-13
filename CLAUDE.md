@@ -46,7 +46,10 @@ before any performance work.
   the CPU on this card. The per-thread stack tops out at 64 KB on this card (eight polarized samples per
   kernel); longer tapes spill to device malloc, so `prepare_backend!` raises the malloc heap to
   1 GB at the first gradient kernel (CUDA refuses to change it after a kernel has used malloc). Newer Enzyme (0.13.200) with CUDA.jl 6.3.1
-  is worse, not better. The fast path is the dual sweep (`Splats.polarized_gradient!`, default
+  is worse, not better. Those stacks are reserved as local memory for every resident thread,
+  so with another process holding half the card (a running fit) the Enzyme kernels fail to
+  launch with `too many resources requested` (code 701) even at 12² × 60, on `main` as well:
+  run the Enzyme device gates on a free card. The fast path is the dual sweep (`Splats.polarized_gradient!`, default
   `method = :dual`): the reverse over the compositing is written by hand from 4-vectors (tails
   and adjoints) and the per-sample derivatives are ForwardDiff duals, which run in CUDA
   kernels without any of Enzyme's constraints; four times the forward transport per gradient.
