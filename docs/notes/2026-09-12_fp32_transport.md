@@ -35,8 +35,8 @@ numbers stand: the H200 route needs no code change.
 
 ## Making the transport Float32-clean
 
-Seven changes, each found by running the Float32 tails image and dual sweep against Float64
-and walking the first divergent ray sample by sample (`test_precision`; the probe scripts are
+Seven changes (the last one twice), each found by running the Float32 tails image and dual
+sweep against Float64 and walking the first divergent ray sample by sample (`test_precision`; the probe scripts are
 not kept). Float64 results are unchanged: bit for bit in the step operator, at the rounding
 level elsewhere.
 
@@ -69,10 +69,32 @@ level elsewhere.
 6. **The branch thresholds of the step are in the precision of the type**: the linear branch
    below (|K′|Δ)² = 1e-200 in Float64 (which is zero in Float32) and 1e-25 in Float32, the
    cubic branch below ΘΔ²(1 + |K′Δ|²) = eps/20 (1e-17 in Float64, 6e-9 in Float32).
-7. **The polarization cap is computed from the fractions Q/I, V/I**: jQ² underflows at the
-   tails (jQ ~ 1e-24), and the square root of an underflowed zero has NaN partials.
+7. **The polarization cap is computed on coefficients scaled by an exact power of two** (the
+   one below the largest of |I|, |Q|, |V|, a plain number): jQ² underflows at the tails
+   (jQ ~ 1e-24), the ratios Q/I, V/I overflow where the field lies within a fraction of a
+   degree of the ray (jI vanishes there while jV, with its cot θ, does not; found at fit size,
+   83 samples in 1e8, after the small tests had passed with the ratio form), and a dual divisor
+   of 1e-37 squares to an underflow in the derivative rule. Any of the three gives NaN partials.
 
 Result (`test_precision`, 6² rays × 16 samples, two parcels, CPU): the Float32 tails image
 agrees with Float64 to 3e-7 of the peak (1e-4 in the first probe, where the chain still
 promoted), and the Float32 dual-sweep gradient to 1.5e-6 of its largest entry (gates 1e-4 and 1e-3). The κ and
 power-law chains are typed the same way but not probed in Float32 (`Bessels.gamma` promotes).
+
+A whole fit can run in Float32: `Geodesics.precision` converts a `StokesMovie` as it converts a
+cache, and `shell_selffit.jl --precision Float32` fits Float32 copies of the movie, the
+parameters and the stored samples (the geodesics stay Float64, the reported χ² is Float64). 
+
+## The timing
+
+`bench_precision.jl` on the RTX 2080 SUPER (FP64 at 1/32 of FP32), the tails and the dual sweep
+of four batched frames over per-ray lists, Float64 geodesics in both cases:
+
+| screen × samples × parcels | Float64 | Float32 | ratio |
+|---|---|---|---|
+| 64² × 160 × 300 | 6.37 s | 0.71 s | 9.0 |
+| 128² × 160 × 600 | 24.2 s | 4.0 s | 6.0 |
+
+The Float32 image agrees with Float64 to 1.3e-6 of the peak at both sizes. A 300-parcel shell fit
+of 300 iterations in Float64 takes 1901 s, 6.3 s per iteration: the sweep is the whole cost, so
+a Float32 fit stands to gain most of the sweep's factor. FP32_FIT_RESULT

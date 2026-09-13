@@ -518,6 +518,15 @@ function test_precision(; res = 8, N = 24)
             @test abs(Transfer.besselk1(Float32(x)) - Transfer.besselk1(x)) <= 2e-6 * Transfer.besselk1(x)
         end
         @test Transfer.planck_invariant(2.3f11, 30.0f0) isa Float32
+        # the cap where the field lies along the ray (found at fit size): jI ~ 1e-37 with jV ~ -6e-37 through cot θ, the
+        # Float32 partials of the capped coefficients finite and the cap the same as Float64's
+        for (T, fl) in ((Float32, nothing), (Float64, nothing))
+            d = Transfer.seed_duals(SVector{3,T}(log(T(30)), log(T(20)), T(π) - T(4.5e-4)), Splats.FluidTag, Val(3), 0)
+            cf = Transfer.thermal_synchrotron(T(22.6), exp(d[1]), exp(d[2]), T(3.3e11), d[3])
+            cp = Transfer.cap_polarization(cf)
+            @test all(x -> isfinite(ForwardDiff.value(x)) && all(isfinite, ForwardDiff.partials(x)), (cp.jI, cp.jQ, cp.jV, cp.αI, cp.αQ, cp.αV))
+            @test ForwardDiff.value(cp.jV) / ForwardDiff.value(cp.jI) ≈ -0.9577 atol = 1e-3
+        end
         # a movie converts with its data, times, frequencies and noise, the mask as it is
         movie = StokesMovie([SVector{4}(randn(MersenneTwister(1), 4)) for _ in 1:3, _ in 1:3, _ in 1:2, _ in 1:1], [0.0, 10.0], [ν], SVector(0.1, 0.05, 0.05, 0.02))
         m32 = Geodesics.precision(movie, Float32)

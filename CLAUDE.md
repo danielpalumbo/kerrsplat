@@ -30,7 +30,10 @@ before any performance work.
   in the scalar type behind a dual (`_scalar(T)`, never `T(ME)` with `T` a dual type: the
   division rule squares the constant), frequencies only as in-range ratios (ω₀/ω, ν̂³ in
   `planck`), the step operator in the products K′Δ (an exact power-of-two rescaling), branch
-  thresholds from `eps(T)`, and fractions like jQ/jI rather than squares of tiny coefficients.
+  thresholds from `eps(T)`, and coefficients scaled by an exact power of two of the largest
+  value before a norm or a cap (never their squares, which underflow, nor ratios to jI, which
+  overflow where the field lies along the ray, nor a division by a tiny dual, whose rule
+  squares it: `cap_factor`).
 - Enzyme inside a CUDA kernel (reverse mode, one ray per thread) works only over stored
   samples (the march's special functions get compiled through checked host code otherwise) and
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use

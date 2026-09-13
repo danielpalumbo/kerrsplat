@@ -267,16 +267,22 @@ end
 
 """
 The factor that scales (Q, V) so that √(Q² + V²) ≤ fmax·I (1 when it already is; 0 when I is not
-positive but Q or V is). The fraction is formed from the ratios Q/I, V/I: the squares of the
-coefficients themselves underflow Float32 at the tails of a density (jQ ~ 1e-24), and the square
-root of an underflowed zero has NaN partials.
+positive but Q or V is). The three coefficients are first divided by the largest of them: the
+squares of the coefficients themselves underflow Float32 at the tails of a density (jQ ~ 1e-24),
+and the ratios Q/I, V/I overflow where the field lies within a fraction of a degree of the ray
+(jI vanishes there while jV, with its cot θ, does not); either way the partials come out NaN.
+The scale is the power of two below the largest coefficient's value: exact, and a plain number,
+where a dual divisor of 1e-37 would square to an underflow in the derivative rule. With the
+largest near one, the polarized norm is at least 0.99 wherever the cap engages.
 """
 @inline function cap_factor(I, Q, V, fmax)
     _value(I) > 0 || return (vanishes(Q) && vanishes(V)) ? one(I) : zero(I)
-    q = Q / I
-    v = V / I
+    s = pow2_below(max(abs(_value(I)), abs(_value(Q)), abs(_value(V))))
+    Î = I / s
+    q = Q / s
+    v = V / s
     p = safe_sqrt(q * q + v * v)
-    return _value(p) > fmax ? fmax / p : one(I)
+    return _value(p) > fmax * _value(Î) ? fmax * Î / p : one(I)
 end
 
 """
