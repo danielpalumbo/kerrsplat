@@ -95,6 +95,15 @@ of four batched frames over per-ray lists, Float64 geodesics in both cases:
 | 64² × 160 × 300 | 6.37 s | 0.71 s | 9.0 |
 | 128² × 160 × 600 | 24.2 s | 4.0 s | 6.0 |
 
-The Float32 image agrees with Float64 to 1.3e-6 of the peak at both sizes. A 300-parcel shell fit
-of 300 iterations in Float64 takes 1901 s, 6.3 s per iteration: the sweep is the whole cost, so
-a Float32 fit stands to gain most of the sweep's factor. FP32_FIT_RESULT
+The Float32 image agrees with Float64 to 1.3e-6 of the peak at both sizes, and after the cap's
+rescaling the Float32 gradient at the first size is finite and agrees to 7e-6 (8.8× on the rerun).
+A 300-parcel shell fit of 300 iterations in Float64 takes 1901 s, 6.3 s per iteration: the sweep
+is the whole cost, so a Float32 fit stands to gain most of the sweep's factor.
+
+Two things are open (2026-09-13, 05:30). At 128² × 160 × 600 one set of gradient entries is still
+non-finite after the cap fix: a rarer sample of the same kind as the others, being walked on the
+CPU (the probe at that size). And the Float32 shell fit itself (`--precision Float32`) died after
+203 s, about a hundred iterations, with a DomainError thrown inside a kernel, which the card
+reports without a stack trace; the same fit at reduced size on the CPU backend is running to get
+one. Until both are closed the Float32 path is validated for the sweep at fit size, not for a
+fit.

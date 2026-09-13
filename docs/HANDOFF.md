@@ -23,6 +23,23 @@ within 4e-4), and the pitch angle goes through `Transfer.safe_acos`, because a c
 a dual is NaN at the boundary and such measure-zero events do occur over a GPU fit's 1e8
 sample evaluations.
 
+## State at the close of 2026-09-13 (resume here)
+
+Merged today: #93 (the FP32-clean transport: seven mechanisms, Float64 unchanged, the Float32
+image and gradient to 1e-6 of Float64 on both backends, `docs/notes/2026-09-12_fp32_transport.md`),
+#94 (the spin profile from the shell start: minimum at the truth, 2,230 and 3,540 units of χ² for
++0.08 and −0.2 of spin on 65,536 values) and #95 (the two-band shell fit: the second band lifts
+the temperature side of the plasma degeneracy and sharpens the density, not the field, and
+`validation/large_n/coefficient_degeneracy.jl` says why: the emissivities at any number of bands
+leave density against field strength degenerate at fixed critical frequency). The FP32 timing on
+the 2080 SUPER: the Float32 sweep 9× Float64 at 64² × 160 × 300 and 6× at 128² × 600, and the
+sweep is the whole cost of a fit iteration (1901 s for 300 iterations in Float64). Branch
+`fp32-fitsize` (PR open) fixes the fit-size Float32 gradient NaN (the polarization cap where the
+field lies along the ray, scaled by an exact power of two) with a regression test. Open: a rarer
+non-finite set at 128² × 600 and a device DomainError in the Float32 shell fit after a hundred
+iterations, both under diagnosis on the CPU (see the FP32 note); the Float32 path is validated
+for the sweep, not yet for a fit. Then the queued triband ngEHT self-fit below.
+
 ## Queued: the triband ngEHT self-fit (Daniel, 2026-09-13; not started)
 
 An example self-fit to synthetic ngEHT data at 86, 230 and 345 GHz with the Phase-2 reference
