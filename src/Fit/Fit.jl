@@ -39,6 +39,21 @@ StokesMovie(data::AbstractArray{SVector{4,T},4}, times, νs, σ; mask = trues(si
     StokesMovie(data, collect(T, times), collect(T, νs), σ, mask)
 
 @inline noise(σ::SVector{4}, k) = σ
+
+"""
+    Geodesics.precision(movie::StokesMovie, T2) -> StokesMovie{T2}
+
+The movie with its data, times, frequencies and noise in the scalar type `T2` (the mask as it
+is), for a fit at another precision: `Geodesics.precision` converts the cache the same way, and
+`fit!` takes the parameters, movie and cache in one type.
+"""
+function Geodesics.precision(movie::StokesMovie, ::Type{T2}) where {T2}
+    conv(x::SVector{4}) = SVector{4,T2}(x)
+    conv(x::AbstractArray{<:SVector{4}}) = map(conv, x)
+    conv(x::Real) = T2(x)
+    conv(x::AbstractArray{<:Real}) = T2.(x)
+    return StokesMovie(conv(movie.data), collect(T2, movie.times), collect(T2, movie.νs), conv(movie.σ), movie.mask)
+end
 @inline noise(σ::AbstractArray, k) = σ[k]
 
 """

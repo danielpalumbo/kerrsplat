@@ -45,8 +45,11 @@ lands within 4% of the floor with the spin to 0.02 and the inclination to 4°, a
 profile from that start (2026-09-13) has its minimum at the truth with 2,230 and 3,540 units
 of χ² for +0.08 and −0.2 of spin on 65,536 values: the spin determined from an over-complete
 basis with no knowledge of the number of parcels. Next: the multifrequency large-N fit (to
-lift the plasma degeneracy),
-the GRMHD truth when Daniel provides it, and the FP32-transport question for the workstation.
+lift the plasma degeneracy), the GRMHD truth when Daniel provides it, and the FP32 timing for
+the workstation question: the transport is Float32-clean since 2026-09-12
+(`docs/notes/2026-09-12_fp32_transport.md`: image and gradient to 1e-6 of Float64 over Float64
+geodesics; the rules that keep Float32 partials finite are in CLAUDE.md), and what remains is
+to time the Float32 dual sweep on a card.
 
 ## State at the close of 2026-09-10 (resume here)
 

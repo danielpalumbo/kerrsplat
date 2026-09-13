@@ -15,9 +15,11 @@ the compiler outlines into a call taking the coefficient tuple by reference once
 nine or more entries, and Enzyme's reverse pass on the device cannot cache that call.
 """
 macro muladd_chain(x, cs...)
-    ex = esc(cs[end])
+    # every coefficient is converted to the argument's type, so a Float32 argument stays Float32 (a Float64 literal
+    # would promote the whole chain); for Float64 and duals the conversion is the identity
+    ex = :(oftype($(esc(x)), $(esc(cs[end]))))
     for c in reverse(cs[1:end-1])
-        ex = :(muladd($(esc(x)), $ex, $(esc(c))))
+        ex = :(muladd($(esc(x)), $ex, oftype($(esc(x)), $(esc(c)))))
     end
     return ex
 end

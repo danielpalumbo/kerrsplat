@@ -11,6 +11,7 @@ using LinearAlgebra
 using KerrSplat.Geodesics
 using KerrSplat.Transfer
 using KerrSplat.Splats
+using KerrSplat.Fit
 using KerrSplat.Transfer: transfer_step, advance, rotate_to_screen, invariants, cap_polarization
 
 const POL_ν = 230e9
@@ -505,8 +506,31 @@ function test_precision(; res = 8, N = 24)
         img64 = tail_image(t64, ν); img32 = tail_image(t32, Float32(ν))
         @test all(x -> all(isfinite, x), img32)
         e = maximum(maximum.(abs, SVector{4,Float64}.(img32) .- img64)) / maximum(x -> maximum(abs, x), img64)
-        @test e < 5e-3
-        @info "precision: the Float32 tails image agrees with Float64 to $e of the peak"
+        @test e < 1e-4                      # measured 3e-7 (the coefficient chain's own Float32 rounding, 1e-7)
+        # the coefficient chain stays Float32 (the Dexter fits, the Bessel series and the physical constants typed by
+        # the arguments), and the Bessel functions in Float32 follow Float64 to single precision
+        cf32 = Transfer.thermal_synchrotron(1.0f3, 30.0f0, 20.0f0, 2.3f11, 1.0f0)
+        cf64 = Transfer.thermal_synchrotron(1.0e3, 30.0, 20.0, 2.3e11, 1.0)
+        @test cf32 isa Transfer.StokesCoefficients{Float32}
+        @test abs(cf32.jI - cf64.jI) <= 1e-5 * abs(cf64.jI) && abs(cf32.ρV - cf64.ρV) <= 1e-4 * abs(cf64.ρV)
+        for x in (0.3, 1.0, 3.0, 12.0)
+            @test abs(Transfer.besselk0(Float32(x)) - Transfer.besselk0(x)) <= 2e-6 * Transfer.besselk0(x)
+            @test abs(Transfer.besselk1(Float32(x)) - Transfer.besselk1(x)) <= 2e-6 * Transfer.besselk1(x)
+        end
+        @test Transfer.planck_invariant(2.3f11, 30.0f0) isa Float32
+        # a movie converts with its data, times, frequencies and noise, the mask as it is
+        movie = StokesMovie([SVector{4}(randn(MersenneTwister(1), 4)) for _ in 1:3, _ in 1:3, _ in 1:2, _ in 1:1], [0.0, 10.0], [ν], SVector(0.1, 0.05, 0.05, 0.02))
+        m32 = Geodesics.precision(movie, Float32)
+        @test m32 isa StokesMovie{Float32} && eltype(m32.data) == SVector{4,Float32} && m32.σ isa SVector{4,Float32} && m32.times == Float32[0, 10] && m32.mask === movie.mask
+        @test maximum(maximum.(abs, SVector{4,Float64}.(m32.data) .- movie.data)) < 1e-6
+        # the dual sweep in Float32 runs and its gradient follows the Float64 one
+        w = [SVector{4}(Float64.(randn(MersenneTwister(4), 4))) for _ in 1:npixels(cache)]
+        g64 = zeros(size(p)); polarized_dual_sweep!(g64, w, t64, cache, p, 5.0, ν, L)
+        g32 = zeros(Float32, size(p)); polarized_dual_sweep!(g32, SVector{4,Float32}.(w), t32, c32, Float32.(p), 5.0f0, Float32(ν), Float32(L))
+        @test all(isfinite, g32)
+        eg = maximum(abs.(Float64.(g32) .- g64)) / maximum(abs.(g64))
+        @test eg < 1e-3                     # measured 1.5e-6
+        @info "precision: the Float32 tails image agrees with Float64 to $e of the peak, the Float32 dual-sweep gradient to $eg; Float32 synchrotron jI relative difference $(abs(cf32.jI - cf64.jI) / abs(cf64.jI))"
     end
 end
 

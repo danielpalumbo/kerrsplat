@@ -43,6 +43,25 @@ the derivative of the closed forms loses accuracy as eps/(ΘΔ²) while their va
 (the same holds for any differentiation of these formulae, Enzyme included).
 """
 @inline function step_operator(α::SVector{4,T}, ρ::SVector{3,T}, Δ) where {T}
+    # An exact rescaling: with D the power of two just below Δ, the products αD, ρD and the length
+    # f = Δ/D ∈ [1, 2) are formed without rounding, so Float64 is unchanged to the bit, while the
+    # closed forms see O(1) powers of the length and squares of O(|K′|Δ) products. Fed K′ and Δ
+    # apart, Float32 overflows the partials of Δ³M₄K′³ (1e45) and underflows Θ² (1e-62) at the
+    # tails of the density, where the coefficients are 1e-20 and Δ ~ 1e11.
+    D = pow2_below(Δ)
+    O, Ej = _step_operator(α * D, ρ * D, Δ / D)
+    return O, D * Ej
+end
+
+"The power of two 2^⌊log₂ x⌋ of the value of `x` (1 when that is zero or not finite)."
+@inline function pow2_below(x)
+    v = _value(x)
+    (isfinite(v) && v > 0) || return one(v)
+    m, e = frexp(v)                        # v = m 2^e, m ∈ [1/2, 1)
+    return ldexp(one(v), e - 1)
+end
+
+@inline function _step_operator(α::SVector{4,T}, ρ::SVector{3,T}, Δ) where {T}
     αI = α[1]
     αQ, αU, αV = α[2], α[3], α[4]
     ρQ, ρU, ρV = ρ[1], ρ[2], ρ[3]
@@ -50,7 +69,7 @@ the derivative of the closed forms loses accuracy as eps/(ΘΔ²) while their va
     ρ2 = ρQ * ρQ + ρU * ρU + ρV * ρV
     a = αI * Δ
     K1 = @SMatrix [zero(T) αQ αU αV; αQ zero(T) ρV -ρU; αU -ρV zero(T) ρQ; αV ρU -ρQ zero(T)]
-    if (α2 + ρ2) * Δ^2 < T(1e-200)         # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
+    if (α2 + ρ2) * Δ^2 < linear_threshold(T)   # no polarized transfer, or negligible and underflowing (ρ ~ 1e-170 from
         e = exp(-a)                        # density tails): the unpolarized operator to first order in K' (its value is
         return e * (identity4(T) - Δ * K1), Δ * (phi(a) * identity4(T) - (Δ * moment1(a)) * K1)   # unpolarized, its derivative continuous)
     end
@@ -73,7 +92,7 @@ the derivative of the closed forms loses accuracy as eps/(ΘΔ²) while their va
     Θ = Λ1sq + Λ2sq
     # K' nilpotent (α⃗² = ρ⃗², α⃗ ⟂ ρ⃗, Θ = 0): the cubic with the b → 0 limits is exact; it stays accurate to
     # ΘΔ²(1 + |K'Δ|²) when Θ is merely tiny, which also covers Θ underflowing while K' does not.
-    if Θ * Δ^2 * (1 + (α2 + ρ2) * Δ^2) < T(1e-17)
+    if Θ * Δ^2 * (1 + (α2 + ρ2) * Δ^2) < cubic_threshold(T)
         e = exp(-a)
         O = e * (identity4(T) - Δ * K1 + (Δ^2 / 2) * K2 - (Δ^3 / 6) * K3)
         M = moments(a)
@@ -115,6 +134,23 @@ end
 @inline _value(x::ForwardDiff.Dual) = ForwardDiff.value(x)
 "Whether the value of `x` is zero (its partials, if any, aside)."
 @inline vanishes(x) = iszero(_value(x))
+"The scalar type behind `T` (the value type of a dual, through any nesting)."
+@inline _scalar(::Type{T}) where {T<:Real} = T
+@inline _scalar(::Type{<:ForwardDiff.Dual{Tg,V}}) where {Tg,V} = _scalar(V)
+"""
+The branch thresholds of `step_operator` in the precision of `T`. Below `linear_threshold`
+in (|K′|Δ)² the transfer is taken to first order in K′Δ (1e-200 in Float64, where ρ ~ 1e-170 from
+density tails underflows the closed forms; 1e-25 in Float32; floatmin^(2/3) in general), and
+below `cubic_threshold` in ΘΔ²(1 + |K′Δ|²) the cubic in K′Δ is exact to rounding (eps/20:
+1e-17 in Float64, 6e-9 in Float32).
+"""
+@inline linear_threshold(::Type{T}) where {T} = _linear_threshold(_scalar(T))
+@inline _linear_threshold(::Type{Float64}) = 1e-200
+@inline _linear_threshold(::Type{Float32}) = 1f-25
+@inline _linear_threshold(::Type{T}) where {T} = T(floatmin(T)^(2 / 3))
+@inline cubic_threshold(::Type{T}) where {T} = _cubic_threshold(_scalar(T))
+@inline _cubic_threshold(::Type{Float64}) = 1e-17
+@inline _cubic_threshold(::Type{T}) where {T} = eps(T) / 20
 "Square root with a finite derivative at zero: the step depends on Λ₁, Λ₂ only through even functions, whose derivatives vanish there."
 @inline safe_sqrt(x) = _value(x) > 0 ? sqrt(x) : zero(x)
 

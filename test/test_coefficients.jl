@@ -84,7 +84,7 @@ function test_coefficients(backend; tol = 1e-12, label = "")
         c0 = thermal_synchrotron(1e5, 10.0, 30.0, 230e9, 0.0)
         @test c0.jI == 0 && c0.αI == 0 && c0.ρQ == 0 && c0.ρV != 0
         inv = invariants(c, 230e9)
-        @test inv.jI == c.jI / 230e9^2 && inv.αQ == 230e9 * c.αQ && inv.ρV == 230e9 * c.ρV
+        @test inv.jI == c.jI / νhat(230e9)^2 && inv.αQ == νhat(230e9) * c.αQ && inv.ρV == νhat(230e9) * c.ρV   # ν̂ = ν/NU0
         capped = cap_polarization(StokesCoefficients(1.0, 0.9, 0.9, 1.0, 0.1, 0.1, 0.0, 0.0))
         @test sqrt(capped.jQ^2 + capped.jV^2) ≈ 0.99 && capped.αQ == 0.1
         x = HPL * 230e9 / (ME * CL^2 * 100.0)   # Planck expansion branch continuity

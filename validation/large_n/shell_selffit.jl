@@ -4,6 +4,9 @@
 #     julia -t 8 --project=../.. shell_selffit.jl [--res 64] [--fov 16] [--samples 160] [--nmax 2] [--slab 0.5] [--frames 4]
 #                                                  [--n 300] [--scale 0.25] [--iterations 300] [--eta 0.02] [--every 25]
 #                                                  [--prune 0.02] [--densify 0] [--max 600] [--seed 1] [--tag shell] [--frequencies 230]
+#                                                  [--precision Float64|Float32] [--backend cuda|cpu]
+# With --precision Float32 the fit runs on Float32 copies of the movie, the parameters and the stored samples (the
+# geodesics stay Float64); the start, truth and end χ² are evaluated in Float64 either way.
 using KerrSplat, KerrSplat.Fit, KerrSplat.Splats, KerrSplat.Geodesics, KerrSplat.Transfer
 using KernelAbstractions, CUDA, StaticArrays, LinearAlgebra, Random, Printf, DelimitedFiles
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
@@ -12,6 +15,8 @@ res = getopt("--res", 64); fov = getopt("--fov", 16.0); N = getopt("--samples", 
 nframes = getopt("--frames", 4); n = getopt("--n", 300); scale = getopt("--scale", 0.25); iterations = getopt("--iterations", 300); η = getopt("--eta", 0.02)
 every = getopt("--every", 25); prune = getopt("--prune", 0.02); densify = getopt("--densify", 0.0); maxsplats = getopt("--max", 600); seed = getopt("--seed", 1); tag = getstr("--tag", "shell")
 freqs = parse.(Float64, split(getstr("--frequencies", "230"), ",")) .* 1e9
+T = getstr("--precision", "Float64") == "Float32" ? Float32 : Float64
+backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU()
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 a = 0.9; θo = deg2rad(60.0); L = gravitational_radius(4e6); ν = freqs[1]
 rng = MersenneTwister(seed)
@@ -24,7 +29,7 @@ for i in 1:6
                0.0, log(1e9), log(3e5) + 0.3 * randn(rng), log(30.0) + 0.2 * randn(rng), log(20.0) + 0.2 * randn(rng), π / 2 + 0.3 * randn(rng), 0.5 * randn(rng), 0.0, 0.3, 0.05 * randn(rng), kepler(r0)]
 end
 times = collect(range(0.0, 60.0; length = nframes))
-cache = GeodesicCache(CUDABackend(), camera, Val(N); store_samples = true); regenerate!(cache, a, θo; marcher = Recurrence(64))
+cache = GeodesicCache(backend, camera, Val(N); store_samples = true); regenerate!(cache, a, θo; marcher = Recurrence(64))
 cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false); regenerate!(cpu, a, θo; marcher = Fused(64))
 clean = polarized_cube(cpu, p, times, freqs, L; nmax, slab)
 σ = SVector(0.02, 0.01, 0.01, 0.005) * maximum(norm.(clean))
@@ -45,14 +50,15 @@ trace = String[]
 stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations = iterations ÷ 3, η, η_end = η / 2, label = "geometry and densities"),
           Fit.Stage(; iterations = iterations - iterations ÷ 3, η, η_end = η / 10, label = "everything")]
 hyg = Fit.Hygiene(every = every, prune_fraction = prune, densify_threshold = densify > 0 ? densify : Inf, merge_position = 0.15, max_splats = maxsplats)
-q, history, events = Fit.fit!(copy(q0), movie, cache, L, stages; hygiene = hyg, gradient = :dual, nmax, slab,
+qT, history, events = Fit.fit!(T.(q0), Geodesics.precision(movie, T), Geodesics.precision(cache, T), T(L), stages; hygiene = hyg, gradient = :dual, nmax, slab,
                               callback = (si, it, x, v) -> (it % 25 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ndat, size(x, 2), (time() - t0) / 60)); @info trace[end])))
+q = Float64.(qT)
 χ1 = chi2(q, movie, cpu, L; nmax, slab)
 m1 = recovery_metrics(q, p, 0.0, xs, ys, zs)
 @info "end" chi2 = χ1 reduced = χ1 / ndat parcels = size(q, 2) events = length(events) minutes = (time() - t0) / 60 recovery = m1
 writedlm(joinpath(outdir, "shell_$(tag)_params.csv"), q, ','); writedlm(joinpath(outdir, "shell_$(tag)_truth.csv"), p, ',')
 open(joinpath(outdir, "shell_$(tag)_summary.txt"), "w") do io
-    println(io, "large-N self-fit: $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames, frequencies $(freqs ./ 1e9) GHz, $ndat values; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, densify $densify, max $maxsplats), seed $seed")
+    println(io, "large-N self-fit ($T on $(backend isa CPU ? "CPU" : "CUDA")): $(res)² pixels, fov $fov M, $N samples, nmax $nmax slab $slab, $nframes frames, frequencies $(freqs ./ 1e9) GHz, $ndat values; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, densify $densify, max $maxsplats), seed $seed")
     println(io, "chi2 start $χ0 (reduced $(χ0 / ndat)), truth $χt (reduced $(χt / ndat)), end $χ1 (reduced $(χ1 / ndat)); parcels $n → $(size(q, 2)) through $(length(events)) hygiene events $(events)")
     println(io, "field recovery (density PSNR dB, relative density error, density-weighted temperature and field errors): start $m0; end $m1")
     foreach(l -> println(io, l), trace)
