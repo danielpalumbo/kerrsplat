@@ -23,6 +23,38 @@ within 4e-4), and the pitch angle goes through `Transfer.safe_acos`, because a c
 a dual is NaN at the boundary and such measure-zero events do occur over a GPU fit's 1e8
 sample evaluations.
 
+## State at the close of 2026-09-13 (resume here)
+
+Merged today: #93 (the FP32-clean transport: seven mechanisms, Float64 unchanged, the Float32
+image and gradient to 1e-6 of Float64 on both backends, `docs/notes/2026-09-12_fp32_transport.md`),
+#94 (the spin profile from the shell start: minimum at the truth, 2,230 and 3,540 units of χ² for
++0.08 and −0.2 of spin on 65,536 values) and #95 (the two-band shell fit: the second band lifts
+the temperature side of the plasma degeneracy and sharpens the density, not the field, and
+`validation/large_n/coefficient_degeneracy.jl` says why: the emissivities at any number of bands
+leave density against field strength degenerate at fixed critical frequency). The FP32 timing on
+the 2080 SUPER: the Float32 sweep 9× Float64 at 64² × 160 × 300 and 6× at 128² × 600, and the
+sweep is the whole cost of a fit iteration (1901 s for 300 iterations in Float64). Branch
+`fp32-fitsize` (PR open) fixes the fit-size Float32 gradient NaN (the polarization cap where the
+field lies along the ray, scaled by an exact power of two) with a regression test. Open: a rarer
+non-finite set at 128² × 600 and a device DomainError in the Float32 shell fit after a hundred
+iterations, both under diagnosis on the CPU (see the FP32 note); the Float32 path is validated
+for the sweep, not yet for a fit. Then the queued triband ngEHT self-fit below.
+
+## Queued: the triband ngEHT self-fit (Daniel, 2026-09-13; not started)
+
+An example self-fit to synthetic ngEHT data at 86, 230 and 345 GHz with the Phase-2 reference
+array of Doeleman et al. (2023, Galaxies 11, 107), each station observing the bands the paper
+assigns it, an M87* multi-day campaign (M87 mass and distance, no scattering), fitted from the
+over-complete shell start with the spacetime free, with animations (truth against model per
+band, the uv coverage filling in, the parcels in 3D, χ² per band) in `viz/` and on an artifact
+page. `ngehtsim` 1.2 is installed in the Python environment and carries the reference arrays
+and the per-site weather and SEFD tables at the three bands. New work: multi-band scan data
+(one set of scans per band, per-band gains and D-terms), the M87-scale campaign timing, and the
+animation tooling. Expect the third band to sharpen the temperature and density and to probe
+how far absorption and Faraday rotation across the bands break the density–field degeneracy
+that the emissivities leave (`docs/notes/2026-09-10_large_n.md`). Queue it after the Float32
+fit-size fix and the Float32-against-Float64 fit comparison.
+
 ## State at the close of 2026-09-12 (resume here)
 
 Merged on 2026-09-11/12 (#81–#84): the per-ray parcel lists and the 1e-6 weight cutoff for
