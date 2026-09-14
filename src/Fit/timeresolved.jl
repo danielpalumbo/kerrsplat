@@ -111,9 +111,18 @@ function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::Geodes
             for j in 1:npix, q in 1:4
                 screen[q, perm[j]] = images[j, c][q]
             end
-            g(x) = loss(_pixel_image(x, nα, nβ, binning))
-            total += g(screen)
-            dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
+            if binning === nothing && instrument === nothing && image_prior === nothing && all(s -> s.data isa VisibilityData, scans)
+                # visibility scans: the seed is the adjoint transform of the weighted residuals (no tape, threaded over baselines)
+                dscreen = zeros(T, 4, nα * nβ)
+                img = _pixel_image(screen, nα, nβ, binning)
+                for s in scans
+                    total += visibility_seed!(dscreen, img, Δα, L, D, s.data; kernel = s.kernel)
+                end
+            else
+                g(x) = loss(_pixel_image(x, nα, nβ, binning))
+                total += g(screen)
+                dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
+            end
             for j in 1:npix
                 seeds[j, c] = SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]])
             end

@@ -74,6 +74,23 @@ it.
 
 FULL_RESULTS_PENDING
 
+## The spacetime free in the data domain
+
+`fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
+time-resolved scans, the pixel size and the distance): the splats' gradient is the batched
+time-resolved sweep summed over the bands, and the spacetime block's Levenberg–Marquardt step
+takes its residuals from the scans of every `lm_every`-th frame rendered on the dual cache
+(`spacetime_scan_residuals`), since a dual render of every frame of a campaign would cost as
+much as the sweep itself. The gate `test_joint_scans` checks the Jacobian of the scan residuals
+against finite differences of the summed χ² (2e-5) and runs 24 joint iterations on two bands of
+three scans (χ² down seventeenfold, the spin and inclination near the truth). The triband driver
+runs it with `--free-spacetime 1` (Float64, the geodesics being regenerated at every iteration;
+the pattern and Keplerian priors tied to the current spin as in the image-domain joint fits). At
+this card's speed the full-size joint run is a ten-hour job; it is the first job for a cluster
+node. For the visibility scans the host seed of each frame's sweep is the adjoint transform of
+the weighted residuals (`visibility_seed!`, threaded over baselines) rather than an Enzyme pass,
+which was the fit's bottleneck: the card sat idle between launches.
+
 ## The animations
 
 `viz/triband_movie.jl` renders the campaign frame by frame: the truth and the fit at the three
