@@ -33,12 +33,15 @@ the temperature side of the plasma degeneracy and sharpens the density, not the 
 `validation/large_n/coefficient_degeneracy.jl` says why: the emissivities at any number of bands
 leave density against field strength degenerate at fixed critical frequency). The FP32 timing on
 the 2080 SUPER: the Float32 sweep 9× Float64 at 64² × 160 × 300 and 6× at 128² × 600, and the
-sweep is the whole cost of a fit iteration (1901 s for 300 iterations in Float64). Branch
-`fp32-fitsize` (PR open) fixes the fit-size Float32 gradient NaN (the polarization cap where the
-field lies along the ray, scaled by an exact power of two) with a regression test. Open: a rarer
-non-finite set at 128² × 600 and a device DomainError in the Float32 shell fit after a hundred
-iterations, both under diagnosis on the CPU (see the FP32 note); the Float32 path is validated
-for the sweep, not yet for a fit. Then the queued triband ngEHT self-fit below.
+sweep is the whole cost of a fit iteration (1901 s for 300 iterations in Float64). PR #96
+fixed the fit-size Float32 gradient NaN (the polarization cap where the field lies along the
+ray, scaled by an exact power of two). On 2026-09-14 two more mechanisms closed the Float32
+path (the step's scalar helpers by series at small arguments; the along-the-field branch of
+`thermal_synchrotron` before sin θ is used, since Float32's π has a negative sine), and the
+300-parcel shell fit in Float32 reaches the same χ²/N as Float64 in 303 s instead of 1901 s,
+with the recovered fields within the run-to-run spread: the FP32 transport is validated at the
+fit level on this card (nine mechanisms in the FP32 note). Then the queued triband ngEHT
+self-fit below.
 
 ## Queued: the triband ngEHT self-fit (Daniel, 2026-09-13; not started)
 

@@ -33,7 +33,9 @@ before any performance work.
   thresholds from `eps(T)`, and coefficients scaled by an exact power of two of the largest
   value before a norm or a cap (never their squares, which underflow, nor ratios to jI, which
   overflow where the field lies along the ray, nor a division by a tiny dual, whose rule
-  squares it: `cap_factor`).
+  squares it: `cap_factor`), and series rather than closed forms at small arguments (`phi`,
+  `sinhc`, `sinc`: (1 − e^{−a})/a at a = 1e-24 has a finite value and NaN partials). The pitch
+  angle π in Float32 has a negative sine: guard the along-the-field case before sin θ is used.
 - Enzyme inside a CUDA kernel (reverse mode, one ray per thread) works only over stored
   samples (the march's special functions get compiled through checked host code otherwise) and
   with device-safe code: no `sincos` (Enzyme has no rule for `__nv_sincos`; use

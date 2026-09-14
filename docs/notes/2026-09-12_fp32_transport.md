@@ -35,7 +35,7 @@ numbers stand: the H200 route needs no code change.
 
 ## Making the transport Float32-clean
 
-Seven changes (the last one twice), each found by running the Float32 tails image and dual
+Nine changes (the seventh twice), each found by running the Float32 tails image and dual
 sweep against Float64 and walking the first divergent ray sample by sample (`test_precision`; the probe scripts are
 not kept). Float64 results are unchanged: bit for bit in the step operator, at the rounding
 level elsewhere.
@@ -75,6 +75,17 @@ level elsewhere.
    degree of the ray (jI vanishes there while jV, with its cot θ, does not; found at fit size,
    83 samples in 1e8, after the small tests had passed with the ratio form), and a dual divisor
    of 1e-37 squares to an underflow in the derivative rule. Any of the three gives NaN partials.
+8. **The step's scalar helpers take their series for small arguments** (`phi` for |a| < 1 from
+   the M₀ chain, `sinhc` and `sinc` for |b| < 0.1 from the excess and deficit series) instead of
+   the closed forms (1 − e^{−a})/a, sinh(b)/b, sin(b)/b at every nonzero argument. Found at
+   128² × 600: a parcel deep in the redshift well (g = 0.28) with its field along the ray has
+   invariant coefficients of 1e-34, K′Δ of 1e-24, the linear branch, and `phi` at a = 1e-24,
+   whose quotient rule squares a. Two samples in 1e9 evaluations.
+9. **The along-the-field branch of `thermal_synchrotron` returns before any use of sin θ.** The
+   pitch angle π in Float32 has a negative sine (sin(Float32(π)) = −8.7e-8; Float64's rounds the
+   other way, +1.2e-16), and the factor √(√2 sin θ …) of Dexter's fits threw a DomainError inside
+   the kernel a hundred iterations into the first Float32 fit. Found by replaying the fit's last
+   parameters on the CPU backend (`shell_selffit.jl` writes them out when the fit throws).
 
 Result (`test_precision`, 6² rays × 16 samples, two parcels, CPU): the Float32 tails image
 agrees with Float64 to 3e-7 of the peak (1e-4 in the first probe, where the chain still
@@ -100,10 +111,29 @@ rescaling the Float32 gradient at the first size is finite and agrees to 7e-6 (8
 A 300-parcel shell fit of 300 iterations in Float64 takes 1901 s, 6.3 s per iteration: the sweep
 is the whole cost, so a Float32 fit stands to gain most of the sweep's factor.
 
-Two things are open (2026-09-13, 05:30). At 128² × 160 × 600 one set of gradient entries is still
-non-finite after the cap fix: a rarer sample of the same kind as the others, being walked on the
-CPU (the probe at that size). And the Float32 shell fit itself (`--precision Float32`) died after
-203 s, about a hundred iterations, with a DomainError thrown inside a kernel, which the card
-reports without a stack trace; the same fit at reduced size on the CPU backend is running to get
-one. Until both are closed the Float32 path is validated for the sweep at fit size, not for a
-fit.
+The 128² × 600 set was mechanism 8 (2026-09-14): with the series the Float32 gradient at that
+size is finite on the CPU (zero non-finite entries) and on the card, where it agrees with Float64
+to 3.1e-6 at 5.9× the speed. The Float32 shell fit itself (`--precision Float32`) first died a
+hundred iterations in with a DomainError thrown inside a kernel, which the card reports without a
+stack trace; replaying the fit's last parameters on the CPU backend gave the trace, mechanism 9.
+
+## The fit in Float32
+
+The same 300-parcel shell fit (`shell_selffit.jl --n 300 --iterations 300`, 64² × 160 samples,
+four frames, hygiene, the true spacetime) in the two precisions on the 2080 SUPER, the χ² in
+Float64 either way:
+
+| | Float64 | Float32 |
+|---|---|---|
+| wall time, 300 iterations | 1901 s | 303 s |
+| χ²/N at the end (truth 1.003) | 1.063 | 1.064 |
+| parcels at the end | 26 | 22 |
+| density PSNR, relative error | 22.3 dB, 0.076 | 21.5 dB, 0.084 |
+| temperature, field errors | 0.204, 0.144 | 0.218, 0.134 |
+
+The Float32 fit is 6.3× faster and lands at the same noise floor; its recovered fields sit
+within the spread between the one-band fits of different starts (22.4 and 22.4 dB, 0.20 and 0.22,
+0.15 and 0.14 in `docs/notes/2026-09-10_large_n.md`), which is the run-to-run variation of the
+over-complete fit, not a precision effect. That is the fit-level validation of the FP32 transport
+on this card: on a card whose FP64 rate is a thirty-second of its FP32 rate, the whole fit runs
+six times faster in Float32 with the same result.

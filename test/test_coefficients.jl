@@ -83,6 +83,12 @@ function test_coefficients(backend; tol = 1e-12, label = "")
         @test c.ρV > 0 && thermal_synchrotron(1e5, 10.0, 30.0, 230e9, π - 1.0).ρV < 0
         c0 = thermal_synchrotron(1e5, 10.0, 30.0, 230e9, 0.0)
         @test c0.jI == 0 && c0.αI == 0 && c0.ρQ == 0 && c0.ρV != 0
+        # θ = π in Float32 has a negative sine (−9e-8): the along-the-field branch, no DomainError, ρV of the opposite sign,
+        # and the same ρV as Float64's within single precision
+        cπ32 = thermal_synchrotron(1f5, 10f0, 30f0, 2.3f11, Float32(π)); cπ = thermal_synchrotron(1e5, 10.0, 30.0, 230e9, Float64(π))
+        @test cπ32.jI == 0 && cπ32.ρQ == 0 && isfinite(cπ32.ρV)
+        @test cπ32.ρV ≈ -c0.ρV rtol = 1e-5
+        @test cπ.ρV ≈ -c0.ρV rtol = 1e-8         # Float64's sin(π) = 1.2e-16 > 0 takes the full branch: x ~ 1e-6 in the fit factor
         inv = invariants(c, 230e9)
         @test inv.jI == c.jI / νhat(230e9)^2 && inv.αQ == νhat(230e9) * c.αQ && inv.ρV == νhat(230e9) * c.ρV   # ν̂ = ν/NU0
         capped = cap_polarization(StokesCoefficients(1.0, 0.9, 0.9, 1.0, 0.1, 0.1, 0.0, 0.0))

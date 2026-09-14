@@ -171,17 +171,27 @@ boundary with zero partials and the acos rule multiplies them by −∞.
     return ForwardDiff.Dual{T}(acos(v), dv * ForwardDiff.partials(d))
 end
 
-"φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt (to first order at a = 0, so that a dual's derivative there is −1/2)."
-@inline phi(a) = vanishes(a) ? one(a) - a / 2 : -expm1(-a) / a
+"""
+φ(a) = (1 − e^{−a})/a = ∫₀¹ e^{−at} dt: the series of M₀ for |a| < 1 and the closed form beyond. The
+closed form at a tiny dual would divide by a, and the quotient rule squares it: a ~ 1e-24 (a
+parcel deep in the redshift well with its field along the ray) underflows Float32 to NaN partials.
+"""
+@inline function phi(a)
+    if abs(_value(a)) < 1
+        return @muladd_chain(a, 1.0, -0.5, 0.16666666666666666, -0.041666666666666664, 0.008333333333333333, -0.001388888888888889, 0.0001984126984126984, -2.48015873015873e-05, 2.7557319223985893e-06, -2.755731922398589e-07, 2.505210838544172e-08, -2.08767569878681e-09, 1.6059043836821613e-10, -1.1470745597729725e-11, 7.647163731819816e-13, -4.779477332387385e-14, 2.8114572543455206e-15, -1.5619206968586225e-16, 8.22063524662433e-18, -4.110317623312165e-19, 1.9572941063391263e-20, -8.896791392450574e-22, 3.868170170630684e-23, -1.6117375710961184e-24)
+    else
+        return -expm1(-a) / a
+    end
+end
 
 "1 − cos b, without cancellation."
 @inline versin(b) = 2 * sin(b / 2)^2
 
-"sinh(b)/b."
-@inline sinhc(b) = vanishes(b) ? one(b) : sinh(b) / b
+"sinh(b)/b, by series for |b| < 0.1 (the closed form's derivative divides by b², which underflows for a tiny dual)."
+@inline sinhc(b) = abs(_value(b)) < 0.1 ? one(b) + sinhc_excess(b) : sinh(b) / b
 
-"sin(b)/b."
-@inline sinc(b) = vanishes(b) ? one(b) : sin(b) / b
+"sin(b)/b, by series for |b| < 0.1."
+@inline sinc(b) = abs(_value(b)) < 0.1 ? one(b) - sinc_deficit(b) : sin(b) / b
 
 "1 − sin(b)/b ≥ 0, by series for small b."
 @inline function sinc_deficit(b)
