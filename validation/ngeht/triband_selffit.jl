@@ -6,9 +6,12 @@
 #     julia -t 8 --project=../.. triband_selffit.jl [--days 5] [--start 2026-04-01] [--bands 86,230,345] [--res 64] [--fov 16]
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
-#         [--seed 1] [--tag triband]
+#         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
 # --flux is the truth's total flux density at 230 GHz in Jy (the densities are scaled to it, so ngehtsim's thermal noise
-# applies as it is); --closures 1 fits closure phases and log closure amplitudes instead of the visibilities.
+# applies as it is); --closures 1 fits closure phases and log closure amplitudes instead of the visibilities. With
+# --free-spacetime 1 the spin and inclination are fitted jointly (Fit.fit_joint! on the bands, Levenberg–Marquardt on
+# the spacetime block from every --lm-every-th frame, in Float64 whatever --precision says) from --a0 and --inc0, with
+# the pattern and Keplerian priors tied to the current spin.
 using KerrSplat, KerrSplat.Fit, KerrSplat.Splats, KerrSplat.Geodesics, KerrSplat.Transfer
 using KernelAbstractions, CUDA, StaticArrays, LinearAlgebra, Random, Printf, DelimitedFiles, Dates
 getopt(flag, default) = (i = findfirst(==(flag), ARGS); i === nothing ? default : parse(typeof(default), ARGS[i+1]))
@@ -19,6 +22,9 @@ frame_hours = getopt("--frame-hours", 4.0); n = getopt("--shell", 300); scale = 
 η = getopt("--eta", 0.02); every = getopt("--every", 25); prune = getopt("--prune", 0.02); maxsplats = getopt("--max", 600); flux_target = getopt("--flux", 0.6)
 closures = getopt("--closures", 0) == 1; T = getstr("--precision", "Float32") == "Float32" ? Float32 : Float64
 backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU(); batch = getopt("--batch", 8); seed = getopt("--seed", 1); tag = getstr("--tag", "triband")
+free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); inc0 = getopt("--inc0", 50.0); lm_every = getopt("--lm-every", 3); inner = getopt("--inner", 3)
+pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
+free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
 _mean(x) = sum(x) / length(x); _median(x) = (s = sort(x); s[(length(s) + 1) ÷ 2])
@@ -110,8 +116,18 @@ cb = (si, it, x, v) -> begin
     last_state[] = copy(x)
     it % 20 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ntot, size(x, 2), (time() - t_start) / 60)); @info trace[end])   # not every 25: the loop skips the callback on a hygiene iteration
 end
+x_end = [a, θo]; accepted = 0
 q, history, events = try
-    Fit.fit!(copy(q0), x -> valgrad(x)[1], stages; hygiene = hyg, gradient = valgrad, callback = cb)
+    if free_spacetime
+        bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
+        xj = fit_joint!(copy(q0), [a0, deg2rad(inc0)], bandsT, gcacheT, camera; L = T(L), iterations, η, η_end = η / 10, inner, nmax, slab,
+                        pattern = pattern_σ, keplerian = keplerian_σ, hygiene = hyg, lm_every,
+                        callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
+        global x_end = xj[2]; global accepted = xj[4]
+        (xj[1], [h[1] for h in xj[3]], xj[5])
+    else
+        Fit.fit!(copy(q0), x -> valgrad(x)[1], stages; hygiene = hyg, gradient = valgrad, callback = cb)
+    end
 catch err
     writedlm(joinpath(outdir, "$(tag)_failed_params.csv"), last_state[], ',')
     @error "the fit threw; the parameters of its last iteration are in output/$(tag)_failed_params.csv" exception = (err, catch_backtrace())
@@ -120,7 +136,8 @@ end
 minutes = (time() - t_start) / 60
 χ1 = band_chi2(q)
 m1 = recovery_metrics(q, p, t0f, xs, ys, zs)
-@info "end" reduced = Dict(f => round(χ1[f] / ndat[f], digits = 3) for f in bands) total = round(sum(values(χ1)) / ntot, digits = 4) parcels = size(q, 2) minutes = round(minutes, digits = 1)
+free_spacetime && (cpu_end = GeodesicCache(CPU(), camera, Val(N); store_samples = false); regenerate!(cpu_end, x_end[1], x_end[2]; marcher = Fused(64)); global χ1 = Dict(f => chi2_timeresolved(q, trs[f], cpu_end, L, Δα, D, f * 1e9; nmax, slab) for f in bands))
+@info "end" reduced = Dict(f => round(χ1[f] / ndat[f], digits = 3) for f in bands) total = round(sum(values(χ1)) / ntot, digits = 4) parcels = size(q, 2) minutes = round(minutes, digits = 1) spacetime = free_spacetime ? (a = round(x_end[1], digits = 4), inc = round(rad2deg(x_end[2]), digits = 2), accepted) : "held at the truth"
 @info "field recovery" start = m0 fin = m1
 
 writedlm(joinpath(outdir, "$(tag)_params.csv"), q, ',')
@@ -128,6 +145,7 @@ writedlm(joinpath(outdir, "$(tag)_history.csv"), history, ',')       # the total
 writedlm(joinpath(outdir, "$(tag)_truth.csv"), p, ',')
 open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
     println(io, "triband ngEHT self-fit ($T on $(backend isa CPU ? "CPU" : "CUDA")): M87 (M $(M_solar) M☉, D 16.8 Mpc), $days days from $start, bands $(bands) GHz, $(res)² pixels of $(round(Δα, digits = 3)) M, $N samples, nmax $nmax slab $slab, frames per $frame_hours h ($(round(frame_span, digits = 1)) M of campaign), $(closures ? "closures" : "visibilities"), values per band $ndat; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, max $maxsplats), seed $seed, truth flux $flux_target Jy at 230 GHz")
+    free_spacetime && println(io, "spacetime: start a $a0 inc $inc0; end a $(x_end[1]) inc $(rad2deg(x_end[2])) (truth a $a inc $(rad2deg(θo))); accepted spacetime steps $accepted; lm_every $lm_every inner $inner pattern $pattern_σ keplerian $keplerian_σ")
     println(io, "chi2/N per band: truth $(Dict(f => round(χt[f] / ndat[f], digits = 4) for f in bands)), start $(Dict(f => round(χ0[f] / ndat[f], digits = 3) for f in bands)), end $(Dict(f => round(χ1[f] / ndat[f], digits = 4) for f in bands)); total end $(round(sum(values(χ1)) / ntot, digits = 4)) (truth $(round(sum(values(χt)) / ntot, digits = 4))); parcels $n → $(size(q, 2)) through $(length(events)) hygiene events $events; $(round(minutes, digits = 1)) minutes")
     println(io, "field recovery (density PSNR dB, relative density error, density-weighted temperature and field errors): start $m0; end $m1")
     foreach(l -> println(io, l), trace)

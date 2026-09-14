@@ -154,6 +154,78 @@ function spacetime_jacobian(residuals, x::AbstractVector{T}, camera::Geodesics.C
 end
 
 """
+    BandScans(ν, tr::TimeResolved, Δα, D)
+
+One band's time-resolved data for the joint fit in the data domain: the observed frequency [Hz],
+its scans, the pixel size Δα [M] and the distance D [cm]. A vector of them is the `data` of
+[`fit_joint!`](@ref); the bands' χ² are summed, their gradients accumulated.
+"""
+struct BandScans{T,TR}
+    ν::T
+    tr::TR
+    Δα::T
+    D::T
+end
+
+# the three places the joint loop touches its data: the splats' value and gradient, the residuals on a (dual)
+# cache for the spacetime block, and the χ² at a trial spacetime; a movie or a vector of bands
+_joint_valgrad(q, movie::StokesMovie, cache, L, frames, freqs, priors, nmax, slab, binning, backend) =
+    _dual_valgrad(q, movie, cache, L, frames, freqs, priors, nmax, slab, binning, backend)
+function _joint_valgrad(q::AbstractMatrix{T}, bands::AbstractVector{<:BandScans}, cache, L, frames, freqs, priors, nmax, slab, binning, backend) where {T}
+    pdev = KernelAbstractions.allocate(backend, T, size(q)); copyto!(pdev, q)
+    gdev = KernelAbstractions.allocate(backend, T, size(q)); fill!(gdev, zero(T))
+    χ = zero(T)
+    for b in bands
+        χ += timeresolved_gradient!(gdev, pdev, b.tr, cache, L, b.Δα, b.D, b.ν; nmax, slab, binning)
+    end
+    g = Array(gdev)
+    if priors !== nothing
+        value, gp = _enzyme_valgrad(x -> penalty(x, priors), q)
+        χ += value; g .+= gp
+    end
+    return χ, g
+end
+_joint_residuals(c, q, movie::StokesMovie, L; frames, freqs, nmax, slab, binning, lm_every) =
+    spacetime_movie_residuals(c, q, movie, L; frames, freqs, nmax, slab, binning)
+_joint_residuals(c, q, bands::AbstractVector{<:BandScans}, L; frames, freqs, nmax, slab, binning, lm_every) =
+    spacetime_scan_residuals(c, q, bands, L; nmax, slab, binning, every = lm_every)
+_joint_chi2(c, q, movie::StokesMovie, L; frames, freqs, nmax, slab, binning) = spacetime_chi2(c, q, movie, L; frames, freqs, nmax, slab, binning)
+function _joint_chi2(c::GeodesicCache{S}, q, bands::AbstractVector{<:BandScans}, L; frames = nothing, freqs = nothing, nmax = -1, slab = 0, binning = nothing) where {S}
+    out = KernelAbstractions.allocate(c.backend, SVector{4,S}, npixels(c))
+    total = zero(S)
+    for b in bands, t in frame_times(b.tr)
+        render_frame!(out, c, q, t, b.ν, L; nmax, slab)
+        stokes = _screen_stokes(c, out, binning)
+        total += sum(scan_loss(stokes, S(b.Δα), L, S(b.D), s) for s in b.tr.scans if s.time == t; init = zero(S))
+    end
+    return total
+end
+
+"""
+    spacetime_scan_residuals(cache, params, bands, L; nmax = -1, slab = 0, binning = nothing, every = 1) -> Vector
+
+The residuals of the bands' scans (`scan_residuals`) on frames rendered on `cache`, dual-typed
+for [`spacetime_jacobian`](@ref), on every `every`-th frame time of each band: the spacetime
+block's Jacobian over a campaign of hundreds of frames costs a dual render per frame, and a
+subset of the frames carries the geometry.
+"""
+function spacetime_scan_residuals(cache::GeodesicCache{S}, params, bands::AbstractVector{<:BandScans}, L; nmax = -1, slab = 0, binning = nothing, every::Integer = 1) where {S}
+    out = KernelAbstractions.allocate(cache.backend, SVector{4,S}, npixels(cache))
+    res = S[]
+    for b in bands
+        for t in frame_times(b.tr)[1:max(Int(every), 1):end]
+            render_frame!(out, cache, params, t, b.ν, L; nmax, slab)
+            stokes = _screen_stokes(cache, out, binning)
+            for s in b.tr.scans
+                s.time == t || continue
+                append!(res, scan_residuals(stokes, S(b.Δα), L, S(b.D), s))
+            end
+        end
+    end
+    return res
+end
+
+"""
     fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2,
                free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                hygiene = Hygiene(),
@@ -203,11 +275,14 @@ thin (both scale the emissivity along the path); it is identifiable through abso
 Faraday depth, and, for data in physical units, through the angular and time scales, which
 this movie form in M units does not carry. Fit `[a, θo]` on M-unit movies.
 """
-function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::StokesMovie{T}, cache::GeodesicCache{T,N}, camera::Geodesics.Camera;
+function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, data, cache::GeodesicCache{T,N}, camera::Geodesics.Camera;
                     L::Real = NaN, iterations::Integer = 100, η = 0.02, η_end = η / 10, warmup::Integer = 0, every::Integer = 1, inner::Integer = 3, λ::Real = 1e-2,
                     free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                     hygiene::Hygiene = Hygiene(), bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
-                    frames = eachindex(movie.times), freqs = eachindex(movie.νs), callback = nothing) where {T,N}
+                    frames = nothing, freqs = nothing, lm_every::Integer = 1, callback = nothing) where {T,N}
+    data isa StokesMovie || data isa AbstractVector{<:BandScans} || throw(ArgumentError("the data are a StokesMovie or a vector of BandScans"))
+    frames = frames === nothing ? (data isa StokesMovie ? eachindex(data.times) : Int[]) : frames
+    freqs = freqs === nothing ? (data isa StokesMovie ? eachindex(data.νs) : Int[]) : freqs
     backend = cache.backend
     x = collect(T, x0)
     n = length(x)
@@ -241,7 +316,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
         Optimisers.adjust!(opt, ηt)
         regenerate!(cache, x[1], x[2]; marcher = Recurrence(64))
         Lit = n == 3 ? exp(x[3]) : Lfix
-        χ, g = _dual_valgrad(params, movie, cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
+        χ, g = _joint_valgrad(params, data, cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
         χ += sum(abs2, spacetime_prior_residuals(x); init = zero(T))
         push!(history, vcat(χ, x))
         if hygiene.every > 0 && it % hygiene.every == 0
@@ -269,7 +344,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
             χx = χ
             damping = T(λ)                        # the damping restarts every visit: the sky has moved under the spacetime block since the last one
             for _ in 1:inner
-                residuals = (c, Lc) -> vcat(spacetime_movie_residuals(c, _on_backend(c, params), movie, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning),
+                residuals = (c, Lc) -> vcat(_joint_residuals(c, _on_backend(c, params), data, n == 3 ? Lc : eltype(c.αs)(Lfix); frames, freqs, nmax, slab, binning, lm_every),
                                             eltype(c.αs).(spacetime_prior_residuals(x)),
                                             ndynamic == 0 ? eltype(c.αs)[] : dynamic_residuals(eltype(c.αs).(params), c.spin))
                 r, J = spacetime_jacobian(residuals, x, camera, backend; N)
@@ -295,7 +370,7 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, movie::Sto
                 d = diag(A); floor = 1e-12 * max(maximum(d), eps(T))
                 step = -(A + damping * Diagonal(max.(d, floor))) \ gx
                 xn = [clamp(x[i] + step[i], bounds[i]...) for i in 1:n]
-                χn = _spacetime_chi2_at(xn, params, movie, camera, backend, N, Lfix, n, frames, freqs, nmax, slab, binning) + sum(abs2, spacetime_prior_residuals(xn); init = zero(T)) +
+                χn = _spacetime_chi2_at(xn, params, data, camera, backend, N, Lfix, n, frames, freqs, nmax, slab, binning) + sum(abs2, spacetime_prior_residuals(xn); init = zero(T)) +
                      sum(penalty(params, pr) for pr in dynamic_priors(xn[1]); init = zero(T))
                 if χn < χx
                     x = xn; χx = χn
@@ -320,11 +395,11 @@ function _on_backend(cache::GeodesicCache{S}, params) where {S}
     return q
 end
 "The χ² at a trial spacetime by one Float64 fused pass (a non-storing cache regenerated at `xn`)."
-function _spacetime_chi2_at(xn, params, movie, camera, backend, N, L, n, frames, freqs, nmax, slab, binning)
+function _spacetime_chi2_at(xn, params, data, camera, backend, N, L, n, frames, freqs, nmax, slab, binning)
     T = eltype(xn)
     c = GeodesicCache(backend, camera, Val(Int(N)); store_samples = true)
     regenerate!(c, xn[1], xn[2]; marcher = Recurrence(64))
-    return spacetime_chi2(c, _on_backend(c, params), movie, n == 3 ? exp(xn[3]) : T(L); frames, freqs, nmax, slab, binning)
+    return _joint_chi2(c, _on_backend(c, params), data, n == 3 ? exp(xn[3]) : T(L); frames, freqs, nmax, slab, binning)
 end
 
-export spacetime_chi2, spacetime_valgrad, spacetime_movie_loss, spacetime_movie_residuals, spacetime_jacobian, fit_joint!
+export spacetime_chi2, spacetime_valgrad, spacetime_movie_loss, spacetime_movie_residuals, spacetime_jacobian, fit_joint!, BandScans, spacetime_scan_residuals
