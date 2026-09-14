@@ -50,8 +50,18 @@ trace = String[]
 stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations = iterations ÷ 3, η, η_end = η / 2, label = "geometry and densities"),
           Fit.Stage(; iterations = iterations - iterations ÷ 3, η, η_end = η / 10, label = "everything")]
 hyg = Fit.Hygiene(every = every, prune_fraction = prune, densify_threshold = densify > 0 ? densify : Inf, merge_position = 0.15, max_splats = maxsplats)
-qT, history, events = Fit.fit!(T.(q0), Geodesics.precision(movie, T), Geodesics.precision(cache, T), T(L), stages; hygiene = hyg, gradient = :dual, nmax, slab,
-                              callback = (si, it, x, v) -> (it % 25 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ndat, size(x, 2), (time() - t0) / 60)); @info trace[end])))
+last_state = Ref(T.(q0))                 # the parameters at the last iteration, written out if the fit throws (a device
+cb = (si, it, x, v) -> begin              # exception carries no stack trace; the state replays on the CPU backend)
+    last_state[] = copy(x)
+    it % 25 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ndat, size(x, 2), (time() - t0) / 60)); @info trace[end])
+end
+qT, history, events = try
+    Fit.fit!(T.(q0), Geodesics.precision(movie, T), Geodesics.precision(cache, T), T(L), stages; hygiene = hyg, gradient = :dual, nmax, slab, callback = cb)
+catch err
+    writedlm(joinpath(outdir, "shell_$(tag)_failed_params.csv"), Float64.(last_state[]), ',')
+    @error "the fit threw; the parameters of its last iteration are in output/shell_$(tag)_failed_params.csv" exception = (err, catch_backtrace())
+    rethrow()
+end
 q = Float64.(qT)
 χ1 = chi2(q, movie, cpu, L; nmax, slab)
 m1 = recovery_metrics(q, p, 0.0, xs, ys, zs)

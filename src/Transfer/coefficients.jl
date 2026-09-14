@@ -109,6 +109,11 @@ with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
     ω0_ω = ω0 / ω                       # the ratios ω₀/ω ~ 1e-4 and ω_p²/ω² ~ 1e-9 stay in Float32's range,
     ωp2_ω2 = ωp2 / (ω * ω)              # where (2πν)⁴ ~ 1e48 does not
     k0, k1, k2 = besselk012(inv(Θe))
+    if !(sinθ > 0)                          # along the field only ρ_V survives (x = 0 in the fits below); before any use of
+        f0 = k2 > 0 ? k0 / k2 : one(T)      # sin θ, which is −9e-8 at θ = Float32(π) and would send sqrt a negative argument
+        ρV0 = ω / S(CL) * (ωp2_ω2 * ω0_ω * f0 * cosθ)
+        return StokesCoefficients(zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), ρV0)
+    end
     x = Θe * sqrt(sqrt(S(2)) * sinθ * (S(1e3) * ω0_ω))
     extraterm = (S(0.011) * exp(-x / S(47.2)) - S(2)^S(-1 / 3) / S(3)^S(23 / 6) * S(π) * S(1e4) * (x + S(1e-16))^S(-8 / 3)) *
                 (S(0.5) + S(0.5) * tanh((log(x) - log(S(120))) / S(0.1)))
@@ -122,9 +127,6 @@ with `dexter_rhoV = true`). Along the field (sin θ = 0) emission and absorption
         fit_factor = (k2 > 0 ? k0 / k2 : one(T)) * (1 - S(0.11) * log(1 + S(0.035) * x))
     end
     ρV = ω / S(CL) * (ωp2_ω2 * ω0_ω * fit_factor * cosθ)              # … and ω_p² ω₀/ω³
-    if !(sinθ > 0)
-        return StokesCoefficients(zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), ρV)
-    end
     if pandya
         jI, jQ, jV = thermal_synchrotron_pandya(ne, Θe, B, ν, θ)
     else
