@@ -736,6 +736,24 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         @test abs(χ - χ_host) <= 1e-10 * χ_host
         e = maximum(abs.(g .- g_host)) / maximum(abs.(g_host))
         @test all(isfinite, g) && e <= tol
+        # the same gradient with the frames batched into one launch (the two frame times in one chunk)
+        dparams_b = adapt_to(backend, zeros(size(q)))
+        χb = timeresolved_gradient!(dparams_b, params, tr, cache, L, Δα, D, ν; batch_frames = 2)
+        @test abs(χb - χ) <= 1e-12 * χ && maximum(abs.(Array(dparams_b) .- g)) <= 1e-12 * maximum(abs.(g))
+        # the observation's own noise per baseline (coverage keeps it): the visibilities' σ are the coverage's, the closures'
+        # uncertainties follow from them
+        covσ = [ScanCoverage(c.time, c.u, c.v, c.s1, c.s2, [SVector{4}(0.02 .* (1 .+ 0.5 .* rand(rng, 4))) for _ in c.u]) for c in cov]
+        trσ = synthetic_scans(cpu, p, L, Δα, D, ν, covσ; noise = nothing, closures = false, rng)
+        @test all(s.data.σ == c.σ for (s, c) in zip(trσ.scans, covσ))
+        trσc = synthetic_scans(cpu, p, L, Δα, D, ν, covσ; noise = nothing, closures = true, rng)
+        @test all(!isempty(s.data.triangles) && all(>(0), s.data.σ_phase) for s in trσc.scans)
+        @test_throws ArgumentError synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = nothing, closures = false)
+        # another precision: the converted scans give the Float64 χ² to single precision
+        tr32 = Geodesics.precision(trσ, Float32)
+        @test tr32 isa TimeResolved && tr32.scans[1].time isa Float32 && eltype(tr32.scans[1].data.vis) == SVector{4,ComplexF32} && eltype(tr32.scans[1].data.σ) == SVector{4,Float32}
+        cpu32 = Geodesics.precision(cpu, Float32)
+        χσ = chi2_timeresolved(q, trσ, cpu, L, Δα, D, ν); χσ32 = chi2_timeresolved(Float32.(q), tr32, cpu32, Float32(L), Float32(Δα), Float32(D), Float32(ν))
+        @test abs(χσ32 - χσ) <= 1e-3 * χσ
         # visibilities with a prior
         priors = [Fit.Prior(rows = (:logB,), μ = log(28.0), σ = 0.5)]
         trv = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng)
