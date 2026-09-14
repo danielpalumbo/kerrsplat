@@ -57,7 +57,22 @@ compared with the truth on a voxel grid (`recovery_metrics`).
 
 ## Results
 
-RESULTS_PENDING
+**The Float64 pilot** (48² pixels of 0.33 M, 120 samples, 200 shell parcels, 150 iterations,
+frames per six hours, the five days; 80 minutes on the 2080 SUPER in Float64): χ²/N per band
+from 57,600 / 15,200 / 1,200 at the start (230 / 86 / 345 GHz) to 232 / 89 / 16 at the end
+against 1.00 / 1.01 / 0.97 at the truth, 200 → 72 parcels through five hygiene events, and on the
+voxel grid the density's PSNR 19.7 → 21.2 dB, its relative error 0.104 → 0.087, the temperature
+error 0.136 → 0.117 and the field error 0.161 → 0.184. Two things to read off. The recovered
+fields are about what the image-domain shell fits reach at the noise floor (22.4 dB, 0.20 and
+0.14 in `docs/notes/2026-09-10_large_n.md`), so the campaign's data constrain the plasma as
+well as a 2%-noise movie does. But the χ² is 150 times the floor, and the last fifty iterations
+moved it by one percent: at the campaign's sensitivity (a median σ of 1 mJy on a 0.6 Jy source)
+the visibilities demand the image to a few tenths of a percent, where the movie fits needed two
+percent, and Adam on the over-complete basis plateaus far above it. The distance to the floor is
+the optimizer's, not the data's: the same truth lies in the basis, and the image-domain fits reach
+it.
+
+FULL_RESULTS_PENDING
 
 ## The animations
 
