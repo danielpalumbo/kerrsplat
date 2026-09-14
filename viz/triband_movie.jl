@@ -108,15 +108,11 @@ for (col, which) in enumerate((:truth, :fit)), (row, field) in enumerate((:densi
     sl[(which, field)] = Observable(field == :density ? d : T)
     heatmap!(ax, xs, xs, sl[(which, field)], colormap = field == :density ? :viridis : :plasma)
 end
-# the χ² trace per band from the summary, as a still on the right
-trace = try
-    lines = readlines(joinpath(datadir, "$(tag)_summary.txt"))
-    [(parse(Int, m[1]), parse(Float64, m[2])) for l in lines for m in eachmatch(r"iteration\s+(\d+)\s+chi2\s+([\d.]+)", l)]
-catch
-    Tuple{Int,Float64}[]
-end
-ax_chi = Axis(fig[3:4, 3:6], title = "χ² of the three bands against the iteration (stage-wise)", xlabel = "iteration", ylabel = "χ²", yscale = log10)
-isempty(trace) || lines!(ax_chi, 1:length(trace), last.(trace), color = :black)
+# the total χ² at every iteration (the fit's history file), as a still on the right
+histpath = joinpath(datadir, "$(tag)_history.csv")
+history = isfile(histpath) ? vec(readdlm(histpath, ',')) : Float64[]
+ax_chi = Axis(fig[3:4, 3:6], title = "the three bands' χ² against the iteration", xlabel = "iteration", ylabel = "χ²", yscale = log10)
+isempty(history) || lines!(ax_chi, 1:length(history), max.(history, 1e-300), color = :black, linewidth = 2)
 
 function set_frame!(k)
     t = frame_times[k]; hour = frame_hours_centre[k]

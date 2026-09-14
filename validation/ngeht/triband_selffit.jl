@@ -108,7 +108,7 @@ ntot = sum(values(ndat))
 last_state = Ref(copy(q0))
 cb = (si, it, x, v) -> begin
     last_state[] = copy(x)
-    it % 25 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ntot, size(x, 2), (time() - t_start) / 60)); @info trace[end])
+    it % 20 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ntot, size(x, 2), (time() - t_start) / 60)); @info trace[end])   # not every 25: the loop skips the callback on a hygiene iteration
 end
 q, history, events = try
     Fit.fit!(copy(q0), x -> valgrad(x)[1], stages; hygiene = hyg, gradient = valgrad, callback = cb)
@@ -124,6 +124,7 @@ m1 = recovery_metrics(q, p, t0f, xs, ys, zs)
 @info "field recovery" start = m0 fin = m1
 
 writedlm(joinpath(outdir, "$(tag)_params.csv"), q, ',')
+writedlm(joinpath(outdir, "$(tag)_history.csv"), history, ',')       # the total χ² at every iteration
 writedlm(joinpath(outdir, "$(tag)_truth.csv"), p, ',')
 open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
     println(io, "triband ngEHT self-fit ($T on $(backend isa CPU ? "CPU" : "CUDA")): M87 (M $(M_solar) M☉, D 16.8 Mpc), $days days from $start, bands $(bands) GHz, $(res)² pixels of $(round(Δα, digits = 3)) M, $N samples, nmax $nmax slab $slab, frames per $frame_hours h ($(round(frame_span, digits = 1)) M of campaign), $(closures ? "closures" : "visibilities"), values per band $ndat; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, max $maxsplats), seed $seed, truth flux $flux_target Jy at 230 GHz")
