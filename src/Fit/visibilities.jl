@@ -20,17 +20,19 @@ observation of a known image.
 """
 function visibilities(image::AbstractMatrix{<:SVector{4}}, Δα, L, D, u::AbstractVector, v::AbstractVector)
     nx, ny = size(image)
-    psize = Δα * L / D                           # radians; east is −α, so the sky offset l of pixel i is −x
-    Ω = psize^2
-    xs = [-(i - (nx + 1) / 2) * psize for i in 1:nx]
-    ys = [(j - (ny + 1) / 2) * psize for j in 1:ny]
-    T = eltype(first(image))
+    T = eltype(first(image))                     # everything in the image's type: a Float64 factor would promote the
+    psize = T(Δα * L / D)                        # accumulator, and Enzyme's type analysis fails on the union (Float32 fits)
+    Ω = psize^2                                  # radians; east is −α, so the sky offset l of pixel i is −x
+    xs = [-(T(i) - T(nx + 1) / 2) * psize for i in 1:nx]
+    ys = [(T(j) - T(ny + 1) / 2) * psize for j in 1:ny]
+    scale = Ω / T(Transfer.JY)
     out = Vector{SVector{4,Complex{T}}}(undef, length(u))
     for k in eachindex(u)
         acc = zero(SVector{4,Complex{T}})
+        uk = T(u[k]); vk = T(v[k])
         for j in 1:ny, i in 1:nx
-            ph = 2 * T(π) * (u[k] * xs[i] + v[k] * ys[j])
-            acc += image[i, j] .* (Ω / Transfer.JY * cis(ph))
+            ph = 2 * T(π) * (uk * xs[i] + vk * ys[j])
+            acc += image[i, j] .* (scale * cis(ph))
         end
         out[k] = acc
     end

@@ -977,7 +977,7 @@ uuid = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 version = "0.6.12"
 
 [[deps.KerrSplat]]
-deps = ["Adapt", "Bessels", "CUDA", "CUDA_Compiler_jll", "CUDA_Runtime_jll", "Enzyme", "FITSIO", "ForwardDiff", "JacobiElliptic", "KernelAbstractions", "Krang", "LinearAlgebra", "Optimisers", "Random", "StaticArrays"]
+deps = ["Adapt", "Bessels", "CUDA", "CUDA_Compiler_jll", "CUDA_Runtime_jll", "Enzyme", "FITSIO", "ForwardDiff", "HypergeometricFunctions", "JacobiElliptic", "KernelAbstractions", "Krang", "LinearAlgebra", "Optimisers", "Random", "StaticArrays"]
 path = "/home/daniel/local_scripts/kerrsplat"
 uuid = "11b6c985-b832-4e08-af24-12e7205e8b77"
 version = "0.1.0"

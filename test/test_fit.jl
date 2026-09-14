@@ -754,6 +754,12 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         cpu32 = Geodesics.precision(cpu, Float32)
         χσ = chi2_timeresolved(q, trσ, cpu, L, Δα, D, ν); χσ32 = chi2_timeresolved(Float32.(q), tr32, cpu32, Float32(L), Float32(Δα), Float32(D), Float32(ν))
         @test abs(χσ32 - χσ) <= 1e-3 * χσ
+        # and the Float32 gradient on the backend (the host seed by Enzyme through a Float32 visibility transform) follows Float64's
+        cache32 = Geodesics.precision(cache, Float32)
+        dσ = adapt_to(backend, zeros(size(q))); χσb = timeresolved_gradient!(dσ, params, trσ, cache, L, Δα, D, ν; batch_frames = 2)
+        dσ32 = adapt_to(backend, zeros(Float32, size(q))); χσ32b = timeresolved_gradient!(dσ32, adapt_to(backend, Float32.(q)), tr32, cache32, Float32(L), Float32(Δα), Float32(D), Float32(ν); batch_frames = 2)
+        @test abs(χσ32b - χσb) <= 1e-3 * χσb && all(isfinite, Array(dσ32))
+        @test maximum(abs.(Float64.(Array(dσ32)) .- Array(dσ))) <= 1e-3 * maximum(abs.(Array(dσ)))
         # visibilities with a prior
         priors = [Fit.Prior(rows = (:logB,), μ = log(28.0), σ = 0.5)]
         trv = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng)
