@@ -83,20 +83,16 @@ hours; a first attempt with the Enzyme host seed was stopped after 21 hours with
 | χ²/N at the start | 51,600 | 18,000 | 1,060 | 33,700 |
 | χ²/N at the end | 44.2 | 21.5 | 4.5 | 31.6 |
 
-300 → 74 parcels through nine hygiene events; on the voxel grid the density's PSNR 20.1 →
-22.1 dB and its relative error 0.099 → 0.079, the temperature error 0.136 → 0.112, the field
-error 0.161 → 0.161. The χ² history (`triband_history.csv`, per iteration): 33,700 → 1,455 at
-iteration 50, back up to 2,400 when the second stage frees the fields at 100, 83 at 200, 42 at
-250 and 31.5 at the end, the last fifty iterations still taking a third off as the cosine
-schedule closes. So the full run is five times closer to the floor than the pilot and was not
-yet at a plateau: the distance is the schedule's, and a longer or slower second stage, or a
-Levenberg–Marquardt polish on the time-resolved residuals on the card, is the next step toward
-the floor. The fields, again, are recovered as well as the image-domain fits recover them
-(22.1 dB against 22.4; the temperature better, 0.11 against 0.20; the field alike, 0.16 against
-0.14–0.15), which is the result that matters for the program: the campaign's three bands carry
-the plasma's density and temperature to the same accuracy as a 2%-noise movie of the same
-truth, with the field strength the least determined quantity in the data domain as in the image
-domain. The movie of this run is `viz/output/triband_movie.mp4`.
+300 → 74 parcels through nine hygiene events. This run is not converged, and its numbers are an
+interim record, not a result: the χ² history (`triband_history.csv`) reads 33,700 → 1,455 at
+iteration 50, 2,400 when the second stage frees the fields at 100, 83 at 200, 42 at 250 and
+31.5 at the end, still falling by a third per fifty iterations when the cosine schedule closes.
+The truth scores 1.0 on the same data, so the floor is reachable; a converged fit of the
+over-complete basis is expected to reach it with a plasma distribution that need not be the
+truth's (Daniel, 2026-09-15), which is why recovered-field metrics are not quoted for this run.
+It was resumed from its end state (`--resume`, one stage with everything free, 600 iterations
+at η 0.01 → 1e-4); the χ²/N of the resumed run is the result to report. The movie of the
+unconverged run is `viz/output/triband_movie.mp4`.
 
 ## The spacetime free in the data domain
 
