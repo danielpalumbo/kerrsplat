@@ -49,10 +49,12 @@ frame_hours_centre = (blocks .+ 0.5) .* frame_hours
 @info "campaign" frames = length(frame_times) span_M = round(frame_times[end] - frame_times[1], digits = 2) uv_points = length(hours_all)
 
 # ---- rendering
+device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
+qdev = device(q); pdev = device(p)                                      # the parameters on the backend (a host matrix is no kernel argument)
 function render(params, t, ν)
     out = Vector{Splats.accumulator_type(Float64, nmax)}(undef, npixels(cache)); fill!(out, zero(eltype(out)))
     dev = KernelAbstractions.allocate(backend, eltype(out), length(out)); fill!(dev, zero(eltype(out)))
-    polarized_image!(dev, cache, params, t, ν, L; nmax, slab)
+    polarized_image!(dev, cache, params === q ? qdev : pdev, t, ν, L; nmax, slab)
     img = Fit.pixel_stokes(to_screen(cache, Array(dev)), ν, nothing)
     return img                                                           # res × res of SVector{4} in cgs
 end

@@ -48,12 +48,14 @@ self-fit below.
 Daniel's request of 2026-09-13, running as PR #98: the campaign from `ngehtsim` (`validation/
 ngeht/make_campaign.py`, outputs not tracked), the batched time-resolved likelihood with the
 coverage's own noise and Float32 scans, the driver `validation/ngeht/triband_selffit.jl` and the
-animation `viz/triband_movie.jl`. The Float64 pilot recovers the fields as well as the
-image-domain fits while the χ² stays 150× the floor: at 1 mJy on 0.6 Jy the visibilities demand
-the image to a few tenths of a percent and Adam plateaus. The full Float32 run and the question
-of how to reach the floor in the data domain (longer schedules, a GPU Levenberg–Marquardt polish
-on the time-resolved residuals, closures) are the open items. The original request, for the
-record:
+animation `viz/triband_movie.jl`. The full Float32 run (5 h with the analytic
+visibility seed; the Enzyme host seed had made it a 21-hour stall) recovers the fields as well as
+the image-domain fits (density 22.1 dB, temperature 0.11, field 0.16) with the χ²/N at 31.6 and
+still descending when the schedule ends: at 1 mJy on 0.6 Jy the visibilities demand the image to
+a few tenths of a percent. Open: a longer or slower second stage or a GPU Levenberg–Marquardt
+polish on the time-resolved residuals to reach the floor; the spacetime-free triband run
+(`--free-spacetime 1`, Float64, ~10 h here: the first cluster job). The original request, for
+the record:
 
 An example self-fit to synthetic ngEHT data at 86, 230 and 345 GHz with the Phase-2 reference
 array of Doeleman et al. (2023, Galaxies 11, 107), each station observing the bands the paper
