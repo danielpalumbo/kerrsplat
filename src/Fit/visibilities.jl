@@ -81,8 +81,19 @@ function visibility_seed!(g::AbstractMatrix, image::AbstractMatrix{<:SVector{4}}
     xs = [-(T(i) - T(nx + 1) / 2) * psize for i in 1:nx]
     ys = [(T(j) - T(ny + 1) / 2) * psize for j in 1:ny]
     scale = Ω / T(Transfer.JY)
-    model = taper(kernel, visibilities(image, Δα, L, D, data.u, data.v), data.u, data.v)
-    tap = kernel === nothing ? ones(T, length(data.u)) : [T(taper(kernel, [one(Complex{T})], [data.u[k]], [data.v[k]])[1]) for k in eachindex(data.u)]
+    # the forward transform, threaded over baselines (`visibilities` itself stays serial for Enzyme's host pass)
+    nbl = length(data.u)
+    raw = Vector{SVector{4,Complex{T}}}(undef, nbl)
+    Threads.@threads for k in 1:nbl
+        acc = zero(SVector{4,Complex{T}})
+        uk = T(data.u[k]); vk = T(data.v[k])
+        for j in 1:ny, i in 1:nx
+            acc += image[i, j] .* (scale * cis(2 * T(π) * (uk * xs[i] + vk * ys[j])))
+        end
+        raw[k] = acc
+    end
+    model = taper(kernel, raw, data.u, data.v)
+    tap = kernel === nothing ? ones(T, nbl) : [T(taper(kernel, [one(Complex{T})], [data.u[k]], [data.v[k]])[1]) for k in 1:nbl]
     w = Vector{SVector{4,Complex{T}}}(undef, length(model))              # 2 (V − d)/σ² per baseline and Stokes parameter
     total = zero(T)
     for k in eachindex(model)
