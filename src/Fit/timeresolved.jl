@@ -91,8 +91,34 @@ frame being the sum over its scans; the priors' penalty and gradient are added o
 `params` and `dparams` live on the backend; `dparams` accumulates.
 """
 function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::GeodesicCache{T,N}, L, Δα, D, ν; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, priors = nothing,
-                                instrument = nothing, dinstrument = nothing, image_prior = nothing, batch_frames::Integer = method == :dual ? 4 : 1, cull::Bool = size(params, 2) > 16) where {T,N}
+                                instrument = nothing, dinstrument = nothing, image_prior = nothing, batch_frames::Integer = method == :dual ? 4 : 1, cull::Bool = size(params, 2) > 16,
+                                device::Bool = true) where {T,N}
     total = zero(T)
+    # visibility scans without binning, instrument or image prior go through the backend likelihood (`device_visibilities.jl`):
+    # the images never leave the backend, the frame's transform, χ² and seed are kernels
+    on_device = device && method == :dual && binning === nothing && instrument === nothing && image_prior === nothing && all(s -> s.data isa VisibilityData, tr.scans)
+    if on_device
+        forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
+        npix = npixels(cache)
+        times = frame_times(tr)
+        fsd = Dict(t => frame_scans(cache.backend, T, [s for s in tr.scans if s.time == t]) for t in times)
+        for chunk in Iterators.partition(times, max(Int(batch_frames), 1))
+            ts = collect(chunk)
+            images = forward(ts, ν; device = true)
+            seeds = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, length(ts)); fill!(seeds, zero(SVector{4,T}))
+            for (c, t) in enumerate(ts)
+                total += frame_chi2_seed!(seeds, c, images, fsd[t], cache, Δα, L, D)
+            end
+            length(ts) > 1 ? reverse!(seeds, ts, ν) : reverse!(vec(seeds), ts[1], ν)
+        end
+        if priors !== nothing
+            value, g = _enzyme_valgrad(x -> penalty(x, priors), Array(params))
+            gd = similar(dparams); copyto!(gd, g)
+            dparams .+= gd
+            total += value
+        end
+        return total
+    end
     # frames go through the sweeps in chunks of `batch_frames` (one launch each, as `chi2_gradient!`): the forward pass
     # renders the chunk's images, each frame's scan loss is differentiated on the host for its adjoint seed, and one
     # reverse pass takes the seeds of the whole chunk; a campaign of hundreds of scans would otherwise launch one
