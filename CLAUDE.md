@@ -124,6 +124,13 @@ before any performance work.
   spacetime parks the fit in a local minimum the spacetime never leaves.
 - Adam's step is invariant to the gradient's scale: a row that must move slowly (the pattern
   rates in rad/M) needs a smaller step (`steps`), not a smaller gradient.
+- Time-resolved fits: the seed of a frame's sweep for visibility scans is the analytic adjoint
+  transform (`Fit.visibility_seed!`, threaded), never Enzyme's host pass over the direct
+  Fourier transform, which costs 60 s per 64² frame on 600 baselines against 1.3 s and made
+  the first campaign fit a 21-hour stall with the card idle; measure the per-frame host cost
+  at full size before launching a long run. The fit loop skips its callback on an iteration
+  where hygiene changes the parcel count: trace at a cadence that is not a multiple of
+  `every`, and keep the per-iteration χ² history from `fit!`'s return.
 
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).

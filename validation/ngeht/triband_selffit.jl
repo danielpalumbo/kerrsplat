@@ -7,6 +7,10 @@
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
 #         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
+#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0]
+# --resume resumes from the parameters a previous run wrote (the same --seed regenerates the same data; Adam's moments
+# start afresh); --single-stage 1 runs one stage with everything free (the way to continue a fit), --eta-end its final
+# step (0: --eta/10).
 # --flux is the truth's total flux density at 230 GHz in Jy (the densities are scaled to it, so ngehtsim's thermal noise
 # applies as it is); --closures 1 fits closure phases and log closure amplitudes instead of the visibilities. With
 # --free-spacetime 1 the spin and inclination are fitted jointly (Fit.fit_joint! on the bands, Levenberg–Marquardt on
@@ -24,6 +28,7 @@ closures = getopt("--closures", 0) == 1; T = getstr("--precision", "Float32") ==
 backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU(); batch = getopt("--batch", 8); seed = getopt("--seed", 1); tag = getstr("--tag", "triband")
 free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); inc0 = getopt("--inc0", 50.0); lm_every = getopt("--lm-every", 3); inner = getopt("--inner", 3)
 pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
+start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
 free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
@@ -85,6 +90,10 @@ ndat = Dict(f => ndata(trs[f]) for f in bands)
 # ---- the shell start, its densities scaled to the truth's 230 GHz flux
 q0 = shell_parcels(n; rin = 2.2, rout = 5.5, height = 0.6, scale, spin = a, rng)
 q0[13, :] .+= log(total_flux(p, 230e9) / total_flux(q0, 230e9))
+if !isempty(start_file)                                     # resume from a previous run's end state (the data above are the same)
+    q0 = Matrix{Float64}(readdlm(start_file, ','))
+    @info "resuming" from = start_file parcels = size(q0, 2)
+end
 
 # ---- the likelihood on the backend in the chosen precision: the three bands summed
 gcache = GeodesicCache(backend, camera, Val(N); store_samples = true); regenerate!(gcache, a, θo; marcher = Recurrence(64))
@@ -107,8 +116,9 @@ m0 = recovery_metrics(q0, p, t0f, xs, ys, zs)
 
 # ---- the fit
 t_start = time(); trace = String[]
-stages = [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations = iterations ÷ 3, η, η_end = η / 2, label = "geometry and densities"),
-          Fit.Stage(; iterations = iterations - iterations ÷ 3, η, η_end = η / 10, label = "everything")]
+stages = single_stage ? [Fit.Stage(; iterations, η, η_end, label = "everything")] :
+         [Fit.Stage(; free = (:x, :y, :z, :s1, :s2, :s3, :logne), iterations = iterations ÷ 3, η, η_end = η / 2, label = "geometry and densities"),
+          Fit.Stage(; iterations = iterations - iterations ÷ 3, η, η_end, label = "everything")]
 hyg = Fit.Hygiene(every = every, prune_fraction = prune, merge_position = 0.15, max_splats = maxsplats)
 ntot = sum(values(ndat))
 last_state = Ref(copy(q0))
@@ -144,6 +154,7 @@ writedlm(joinpath(outdir, "$(tag)_params.csv"), q, ',')
 writedlm(joinpath(outdir, "$(tag)_history.csv"), history, ',')       # the total χ² at every iteration
 writedlm(joinpath(outdir, "$(tag)_truth.csv"), p, ',')
 open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
+    isempty(start_file) || println(io, "resumed from $start_file ($(single_stage ? "one stage" : "two stages"), eta $η → $η_end)")
     println(io, "triband ngEHT self-fit ($T on $(backend isa CPU ? "CPU" : "CUDA")): M87 (M $(M_solar) M☉, D 16.8 Mpc), $days days from $start, bands $(bands) GHz, $(res)² pixels of $(round(Δα, digits = 3)) M, $N samples, nmax $nmax slab $slab, frames per $frame_hours h ($(round(frame_span, digits = 1)) M of campaign), $(closures ? "closures" : "visibilities"), values per band $ndat; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, max $maxsplats), seed $seed, truth flux $flux_target Jy at 230 GHz")
     free_spacetime && println(io, "spacetime: start a $a0 inc $inc0; end a $(x_end[1]) inc $(rad2deg(x_end[2])) (truth a $a inc $(rad2deg(θo))); accepted spacetime steps $accepted; lm_every $lm_every inner $inner pattern $pattern_σ keplerian $keplerian_σ")
     println(io, "chi2/N per band: truth $(Dict(f => round(χt[f] / ndat[f], digits = 4) for f in bands)), start $(Dict(f => round(χ0[f] / ndat[f], digits = 3) for f in bands)), end $(Dict(f => round(χ1[f] / ndat[f], digits = 4) for f in bands)); total end $(round(sum(values(χ1)) / ntot, digits = 4)) (truth $(round(sum(values(χt)) / ntot, digits = 4))); parcels $n → $(size(q, 2)) through $(length(events)) hygiene events $events; $(round(minutes, digits = 1)) minutes")
