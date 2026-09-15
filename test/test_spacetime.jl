@@ -160,3 +160,53 @@ function test_joint_fit(backend; res = 8, N = 40, iterations = 60, tol = 2e-5, �
         @info "$label joint fit: spacetime gradient vs finite differences $e; χ² $(round(χ0)) → $(round(χ1)) for $(4 * length(data)) values in $iterations iterations, $acc spacetime steps accepted; a $(round(xj[1]; digits = 3)) (from 0.8, true 0.9), θo $(round(rad2deg(xj[2]); digits = 2))° (from 52°, true 60°); trace of θo every 10 iterations: $(round.(rad2deg.(getindex.(hist[1:10:end], 3)); digits = 1))°"
     end
 end
+
+"""
+The joint fit in the data domain: the spacetime Jacobian of the bands' scan residuals against
+finite differences of the summed χ², and a few joint iterations from an offset spacetime.
+"""
+function test_joint_scans(backend; res = 6, N = 16, tol = 2e-5, label = "CPU backend")
+    rng = Random.MersenneTwister(23)
+    a_true = 0.9; θ_true = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar)
+    p = polarized_test_params()
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a_true, θ_true; marcher = Fused(64))
+    function scancov(t)
+        sts = sort(randperm(rng, 5)[1:4]); s1 = Int[]; s2 = Int[]
+        for i in 1:4, j in i+1:4
+            push!(s1, sts[i]); push!(s2, sts[j])
+        end
+        return ScanCoverage(t, 3e9 .* randn(rng, length(s1)), 3e9 .* randn(rng, length(s1)), s1, s2)
+    end
+    cov = [scancov(0.0), scancov(0.0), scancov(20.0)]
+    bands = [BandScans(ν, synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng), Δα, D) for ν in (230e9, 345e9)]
+    q = p .+ 0.05 .* randn(rng, size(p))
+    x = [0.85, deg2rad(55.0)]
+    @testset "$label joint fit on scans" begin
+        function χ_at(y)
+            c = GeodesicCache(CPU(), camera, Val(N); store_samples = true)
+            regenerate!(c, y[1], y[2]; marcher = Recurrence(64))
+            return Fit._joint_chi2(c, q, bands, L)
+        end
+        χ0 = χ_at(x)                              # (the stored recurrence march, as the joint loop renders; the fused march of
+        r, J = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_scan_residuals(c, Fit._on_backend(c, q), bands, eltype(c.αs)(L)), x, camera, backend; N)
+        @test abs(sum(abs2, r) - χ0) <= 1e-8 * χ0 && size(J) == (length(r), 2)
+        h = 1e-5
+        gfd = [(χ_at(x .+ h .* (1:2 .== i)) - χ_at(x .- h .* (1:2 .== i))) / (2h) for i in 1:2]
+        gx = 2 .* (J' * r)
+        @test maximum(abs.(gx .- gfd) ./ max.(abs.(gfd), 1e-6 * maximum(abs, gfd))) < tol
+        # every second frame in the spacetime block
+        r2, J2 = Fit.spacetime_jacobian((c, Lc) -> Fit.spacetime_scan_residuals(c, Fit._on_backend(c, q), bands, eltype(c.αs)(L); every = 2), x, camera, backend; N)
+        @test length(r2) < length(r) && all(isfinite, J2)
+        # joint iterations lower the χ² and keep the spacetime near the truth (the few scans of this test constrain it loosely)
+        cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+        q1, x1, history, accepted, events = fit_joint!(copy(q), x, bands, cache, camera; L, iterations = 24, η = 0.01, lm_every = 1)
+        @test history[end][1] < history[1][1] && accepted > 0
+        @test abs(x1[1] - a_true) <= 0.2 && abs(x1[2] - θ_true) <= deg2rad(8.0)
+        @info "joint fit on scans ($label): χ² $(round(history[1][1], digits = 1)) → $(round(history[end][1], digits = 1)), spin $(x[1]) → $(round(x1[1], digits = 4)) (truth $a_true), inclination $(round(rad2deg(x1[2]), digits = 2))°, $accepted accepted steps"
+    end
+end
+

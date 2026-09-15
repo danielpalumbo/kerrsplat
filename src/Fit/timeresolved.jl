@@ -91,17 +91,48 @@ frame being the sum over its scans; the priors' penalty and gradient are added o
 `params` and `dparams` live on the backend; `dparams` accumulates.
 """
 function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::GeodesicCache{T,N}, L, Δα, D, ν; method::Symbol = :dual, kmax = 1, nmax = -1, slab = 0, binning = nothing, priors = nothing,
-                                instrument = nothing, dinstrument = nothing, image_prior = nothing) where {T,N}
+                                instrument = nothing, dinstrument = nothing, image_prior = nothing, batch_frames::Integer = method == :dual ? 4 : 1, cull::Bool = size(params, 2) > 16) where {T,N}
     total = zero(T)
-    for t in frame_times(tr)
-        scans = [s for s in tr.scans if s.time == t]
-        loss(img) = sum(scan_loss(img, Δα, L, D, s, instrument) for s in scans) + _image_penalty(image_prior, img)
-        frame = Ref{Any}(nothing)
-        total += image_loss_gradient!(dparams, loss, cache, params, t, ν, L; method, kmax, nmax, slab, binning, on_image = img -> (frame[] = img))
-        if dinstrument !== nothing
-            total_i, gg, gd = instrument_gradient(frame[], Δα, L, D, scans, instrument)
-            dinstrument[1] .+= gg; dinstrument[2] .+= gd
+    # frames go through the sweeps in chunks of `batch_frames` (one launch each, as `chi2_gradient!`): the forward pass
+    # renders the chunk's images, each frame's scan loss is differentiated on the host for its adjoint seed, and one
+    # reverse pass takes the seeds of the whole chunk; a campaign of hundreds of scans would otherwise launch one
+    # underfilled kernel per frame
+    forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
+    npix = npixels(cache); perm = cache.perm_host; nα, nβ = cache.screen_size
+    for chunk in Iterators.partition(frame_times(tr), max(Int(batch_frames), 1))
+        ts = collect(chunk)
+        batched = length(ts) > 1 && method == :dual
+        images = batched ? forward(ts, ν) : reshape(forward(ts[1], ν), npix, 1)
+        seeds = Matrix{SVector{4,T}}(undef, npix, length(ts))
+        for (c, t) in enumerate(ts)
+            scans = [s for s in tr.scans if s.time == t]
+            loss(img) = sum(scan_loss(img, Δα, L, D, s, instrument) for s in scans) + _image_penalty(image_prior, img)
+            screen = Matrix{T}(undef, 4, nα * nβ)               # the frame as plain numbers for Enzyme, screen order
+            for j in 1:npix, q in 1:4
+                screen[q, perm[j]] = images[j, c][q]
+            end
+            if binning === nothing && instrument === nothing && image_prior === nothing && all(s -> s.data isa VisibilityData, scans)
+                # visibility scans: the seed is the adjoint transform of the weighted residuals (no tape, threaded over baselines)
+                dscreen = zeros(T, 4, nα * nβ)
+                img = _pixel_image(screen, nα, nβ, binning)
+                for s in scans
+                    total += visibility_seed!(dscreen, img, Δα, L, D, s.data; kernel = s.kernel)
+                end
+            else
+                g(x) = loss(_pixel_image(x, nα, nβ, binning))
+                total += g(screen)
+                dscreen = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g), screen)[1]
+            end
+            for j in 1:npix
+                seeds[j, c] = SVector(dscreen[1, perm[j]], dscreen[2, perm[j]], dscreen[3, perm[j]], dscreen[4, perm[j]])
+            end
+            if dinstrument !== nothing
+                total_i, gg, gd = instrument_gradient(_pixel_image(screen, nα, nβ, binning), Δα, L, D, scans, instrument)
+                dinstrument[1] .+= gg; dinstrument[2] .+= gd
+            end
         end
+        dstokes = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, length(ts)); copyto!(dstokes, seeds)
+        batched ? reverse!(dstokes, ts, ν) : reverse!(vec(dstokes), ts[1], ν)
     end
     if priors !== nothing
         value, g = _enzyme_valgrad(x -> penalty(x, priors), Array(params))
@@ -255,14 +286,17 @@ struct ScanCoverage{T}
     v::Vector{T}
     s1::Vector{Int}
     s2::Vector{Int}
+    σ::Vector{SVector{4,T}}                  # the observation's thermal noise per baseline (empty when not kept)
 end
+ScanCoverage(time::T, u, v, s1, s2) where {T} = ScanCoverage(time, u, v, s1, s2, SVector{4,T}[])
 
 """
     coverage(obs::Observation, times; uvmin = 0) -> Vector{ScanCoverage}
 
 A real observation's coverage, scan by scan (`scan_index`), with the frame time `times[k]`
 assigned to scan k: the array's (u, v) sampling lent to a synthetic movie whose time axis is
-chosen freely. `uvmin` (wavelengths) drops shorter baselines.
+chosen freely, and its thermal noise per baseline kept alongside (`synthetic_scans` with
+`noise = nothing` uses it). `uvmin` (wavelengths) drops shorter baselines.
 """
 function coverage(obs::Observation{T}, times::AbstractVector; uvmin = 0.0) where {T}
     scans = scan_index(obs); nscans = maximum(scans)
@@ -271,7 +305,7 @@ function coverage(obs::Observation{T}, times::AbstractVector; uvmin = 0.0) where
     for k in 1:nscans
         rows = findall(r -> scans[r] == k && hypot(obs.u[r], obs.v[r]) >= uvmin, eachindex(scans))
         isempty(rows) && continue
-        push!(out, ScanCoverage(T(times[k]), obs.u[rows], obs.v[rows], obs.s1[rows], obs.s2[rows]))
+        push!(out, ScanCoverage(T(times[k]), obs.u[rows], obs.v[rows], obs.s1[rows], obs.s2[rows], SVector{4,T}.(obs.σ[rows])))
     end
     return out
 end
@@ -282,7 +316,8 @@ end
 Synthetic data of a splat movie on the coverage `cov` (a vector of [`ScanCoverage`](@ref)):
 the frame at each scan's time is rendered, its model visibilities on the scan's baselines get
 complex Gaussian noise of standard deviation `noise` × the frame's total flux density (per
-real and imaginary part, every Stokes parameter and baseline), and each scan becomes a
+real and imaginary part, every Stokes parameter and baseline), or with `noise = nothing` the
+coverage's own thermal noise per baseline and Stokes parameter, and each scan becomes a
 `VisibilityData`, or with `closures = true` a `ClosureData` with the closure phases of all
 triangles and the log closure amplitudes of all quadrangles of the scan, their uncertainties
 propagated from the visibility noise as the real-data path does (closures with a leg below 3σ
@@ -300,21 +335,27 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
     function scan(c)
         img = frames[c.time]
         vis = taper(kernel, visibilities(img, Δα, L, D, c.u, c.v), c.u, c.v)
-        flux = real(visibilities(img, Δα, L, D, [zero(T)], [zero(T)])[1][1])
-        σ = T(noise) * flux
-        noisy = [vis[k] .+ σ .* SVector{4}(complex.(randn(rng, 4), randn(rng, 4))) for k in eachindex(vis)]
+        n = length(c.u)
+        if noise === nothing
+            isempty(c.σ) && throw(ArgumentError("noise = nothing takes the noise from the coverage, which has none (coverage(obs, times) keeps the observation's)"))
+            σs = c.σ
+        else
+            flux = real(visibilities(img, Δα, L, D, [zero(T)], [zero(T)])[1][1])
+            σ = T(noise) * flux
+            σs = fill(SVector(σ, σ, σ, σ), n)
+        end
+        noisy = [vis[k] .+ σs[k] .* SVector{4}(complex.(randn(rng, 4), randn(rng, 4))) for k in eachindex(vis)]
         if closures
-            n = length(c.u)
-            o = Observation{T}(zeros(T, n), zeros(T, n), c.s1, c.s2, String[], c.u, c.v, noisy, fill(SVector(σ, σ, σ, σ), n), T(ν), zero(T), zero(T), zero(T), 0, "synthetic")
+            o = Observation{T}(zeros(T, n), zeros(T, n), c.s1, c.s2, String[], c.u, c.v, noisy, σs, T(ν), zero(T), zero(T), zero(T), 0, "synthetic")
             tri = scan_triangles(o); quad = scan_quadrangles(o)
             phases = closure_phases(noisy, tri)
-            σ_phase = [sqrt(sum((σ / abs(noisy[abs(k)][1]))^2 for k in t)) for t in tri]
+            σ_phase = [sqrt(sum((σs[abs(k)][1] / abs(noisy[abs(k)][1]))^2 for k in t)) for t in tri]
             logamps = log_closure_amplitudes(noisy, quad)
-            σ_logamp = [sqrt(sum((σ / abs(noisy[abs(k)][1]))^2 for k in q)) for q in quad]
+            σ_logamp = [sqrt(sum((σs[abs(k)][1] / abs(noisy[abs(k)][1]))^2 for k in q)) for q in quad]
             keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
             return ScanData(c.time, ClosureData(c.u, c.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q]), kernel)
         else
-            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, SVector(σ, σ, σ, σ)), kernel)
+            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, noise === nothing ? σs : σs[1]), kernel)
         end
     end
     return TimeResolved([scan(c) for c in cov])
@@ -540,3 +581,24 @@ function calibrate!(gains::AbstractMatrix{T}, dterms::AbstractMatrix{T}, tr::Tim
 end
 
 export scan_models, scan_model, calibrate!, reference_phases!
+
+# ---- another precision ---------------------------------------------------------------------------
+"""
+    Geodesics.precision(tr::TimeResolved, T2) -> TimeResolved
+
+The scans with their times, baselines, data, noise and kernel in the scalar type `T2` (the index
+tuples of the closures as they are), for a fit at another precision alongside the converted
+cache and parameters.
+"""
+Geodesics.precision(tr::TimeResolved, ::Type{T2}) where {T2} = TimeResolved([Geodesics.precision(s, T2) for s in tr.scans])
+Geodesics.precision(s::ScanData, ::Type{T2}) where {T2} = ScanData(T2(s.time), Geodesics.precision(s.data, T2), Geodesics.precision(s.kernel, T2))
+Geodesics.precision(::Nothing, ::Type) = nothing
+Geodesics.precision(k::ScatteringKernel, ::Type{T2}) where {T2} = ScatteringKernel(T2(k.a), T2(k.b), T2(k.c))
+function Geodesics.precision(d::VisibilityData, ::Type{T2}) where {T2}
+    convσ(x::SVector{4}) = SVector{4,T2}(x)
+    convσ(x::AbstractVector) = map(convσ, x)
+    return VisibilityData(T2.(d.u), T2.(d.v), map(x -> SVector{4,Complex{T2}}(x), d.vis), convσ(d.σ))
+end
+Geodesics.precision(d::ClosureData, ::Type{T2}) where {T2} =
+    ClosureData(T2.(d.u), T2.(d.v), d.triangles, T2.(d.phases), T2.(d.σ_phase), d.quadrangles, T2.(d.logamps), T2.(d.σ_logamp))
+

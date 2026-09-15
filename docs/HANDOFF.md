@@ -43,7 +43,17 @@ with the recovered fields within the run-to-run spread: the FP32 transport is va
 fit level on this card (nine mechanisms in the FP32 note). Then the queued triband ngEHT
 self-fit below.
 
-## Queued: the triband ngEHT self-fit (Daniel, 2026-09-13; not started)
+## The triband ngEHT self-fit (started 2026-09-14; `docs/notes/2026-09-14_ngeht_triband.md`)
+
+Daniel's request of 2026-09-13, running as PR #98: the campaign from `ngehtsim` (`validation/
+ngeht/make_campaign.py`, outputs not tracked), the batched time-resolved likelihood with the
+coverage's own noise and Float32 scans, the driver `validation/ngeht/triband_selffit.jl` and the
+animation `viz/triband_movie.jl`. The Float64 pilot recovers the fields as well as the
+image-domain fits while the χ² stays 150× the floor: at 1 mJy on 0.6 Jy the visibilities demand
+the image to a few tenths of a percent and Adam plateaus. The full Float32 run and the question
+of how to reach the floor in the data domain (longer schedules, a GPU Levenberg–Marquardt polish
+on the time-resolved residuals, closures) are the open items. The original request, for the
+record:
 
 An example self-fit to synthetic ngEHT data at 86, 230 and 345 GHz with the Phase-2 reference
 array of Doeleman et al. (2023, Galaxies 11, 107), each station observing the bands the paper

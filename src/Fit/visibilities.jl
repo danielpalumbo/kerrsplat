@@ -20,17 +20,19 @@ observation of a known image.
 """
 function visibilities(image::AbstractMatrix{<:SVector{4}}, Δα, L, D, u::AbstractVector, v::AbstractVector)
     nx, ny = size(image)
-    psize = Δα * L / D                           # radians; east is −α, so the sky offset l of pixel i is −x
-    Ω = psize^2
-    xs = [-(i - (nx + 1) / 2) * psize for i in 1:nx]
-    ys = [(j - (ny + 1) / 2) * psize for j in 1:ny]
-    T = eltype(first(image))
+    T = eltype(first(image))                     # everything in the image's type: a Float64 factor would promote the
+    psize = T(Δα * L / D)                        # accumulator, and Enzyme's type analysis fails on the union (Float32 fits)
+    Ω = psize^2                                  # radians; east is −α, so the sky offset l of pixel i is −x
+    xs = [-(T(i) - T(nx + 1) / 2) * psize for i in 1:nx]
+    ys = [(T(j) - T(ny + 1) / 2) * psize for j in 1:ny]
+    scale = Ω / T(Transfer.JY)
     out = Vector{SVector{4,Complex{T}}}(undef, length(u))
     for k in eachindex(u)
         acc = zero(SVector{4,Complex{T}})
+        uk = T(u[k]); vk = T(v[k])
         for j in 1:ny, i in 1:nx
-            ph = 2 * T(π) * (u[k] * xs[i] + v[k] * ys[j])
-            acc += image[i, j] .* (Ω / Transfer.JY * cis(ph))
+            ph = 2 * T(π) * (uk * xs[i] + vk * ys[j])
+            acc += image[i, j] .* (scale * cis(ph))
         end
         out[k] = acc
     end
@@ -62,7 +64,64 @@ function chi2_visibilities(image, Δα, L, D, data::VisibilityData; kernel = not
     return total
 end
 
-export visibilities, VisibilityData, chi2_visibilities
+"""
+    visibility_seed!(g, image, Δα, L, D, data::VisibilityData; kernel = nothing) -> χ²
+
+The χ² of `image` against `data` and, added into `g` (a 4 × npixels matrix in the image's
+column order), its gradient with respect to the image: the adjoint transform of the weighted
+residuals, Σ_k 2 Re[(V_k − d_k)/σ_k² · conj(∂V_k/∂I)], threaded over baselines. What the host
+Enzyme pass over `chi2_visibilities` would give, at the cost of the forward transform and
+without a tape: the seed of a frame's dual sweep in `timeresolved_gradient!`.
+"""
+function visibility_seed!(g::AbstractMatrix, image::AbstractMatrix{<:SVector{4}}, Δα, L, D, data::VisibilityData; kernel = nothing)
+    nx, ny = size(image)
+    T = eltype(first(image))
+    psize = T(Δα * L / D)
+    Ω = psize^2
+    xs = [-(T(i) - T(nx + 1) / 2) * psize for i in 1:nx]
+    ys = [(T(j) - T(ny + 1) / 2) * psize for j in 1:ny]
+    scale = Ω / T(Transfer.JY)
+    # the forward transform, threaded over baselines (`visibilities` itself stays serial for Enzyme's host pass)
+    nbl = length(data.u)
+    raw = Vector{SVector{4,Complex{T}}}(undef, nbl)
+    Threads.@threads for k in 1:nbl
+        acc = zero(SVector{4,Complex{T}})
+        uk = T(data.u[k]); vk = T(data.v[k])
+        for j in 1:ny, i in 1:nx
+            acc += image[i, j] .* (scale * cis(2 * T(π) * (uk * xs[i] + vk * ys[j])))
+        end
+        raw[k] = acc
+    end
+    model = taper(kernel, raw, data.u, data.v)
+    tap = kernel === nothing ? ones(T, nbl) : [T(taper(kernel, [one(Complex{T})], [data.u[k]], [data.v[k]])[1]) for k in 1:nbl]
+    w = Vector{SVector{4,Complex{T}}}(undef, length(model))              # 2 (V − d)/σ² per baseline and Stokes parameter
+    total = zero(T)
+    for k in eachindex(model)
+        r = (model[k] .- data.vis[k]) ./ noise(data.σ, k)
+        total += sum(abs2, r)
+        w[k] = 2 .* r ./ noise(data.σ, k)
+    end
+    nt = Threads.nthreads()
+    parts = [zeros(T, 4, nx * ny) for _ in 1:nt]
+    Threads.@threads for k in eachindex(model)
+        acc = parts[Threads.threadid()]
+        uk = T(data.u[k]); vk = T(data.v[k]); wk = w[k] .* (scale * tap[k])
+        for j in 1:ny, i in 1:nx
+            ph = 2 * T(π) * (uk * xs[i] + vk * ys[j])
+            e = conj(cis(ph))                                             # ∂V/∂I = scale·tap·e^{iφ}; Re[w · conj(∂V/∂I)]
+            c = i + (j - 1) * nx
+            @inbounds for q in 1:4
+                acc[q, c] += real(wk[q] * e)
+            end
+        end
+    end
+    for part in parts
+        g .+= part
+    end
+    return total
+end
+
+export visibilities, VisibilityData, chi2_visibilities, visibility_seed!
 
 # ---- closure quantities ---------------------------------------------------------------------------
 """
