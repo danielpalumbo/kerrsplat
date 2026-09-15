@@ -72,7 +72,31 @@ percent, and Adam on the over-complete basis plateaus far above it. The distance
 the optimizer's, not the data's: the same truth lies in the basis, and the image-domain fits reach
 it.
 
-FULL_RESULTS_PENDING
+**The full run** (64² pixels of 0.25 M, 160 samples, 300 shell parcels, 300 iterations, frames per
+four hours, the five days, 241,264 values; Float32 on the 2080 SUPER with the analytic seed, 5.0
+hours; a first attempt with the Enzyme host seed was stopped after 21 hours without finishing):
+
+| | 230 GHz | 86 GHz | 345 GHz | all |
+|---|---|---|---|---|
+| values | 122,368 | 99,440 | 19,456 | 241,264 |
+| χ²/N at the truth | 0.996 | 1.005 | 0.974 | 0.998 |
+| χ²/N at the start | 51,600 | 18,000 | 1,060 | 33,700 |
+| χ²/N at the end | 44.2 | 21.5 | 4.5 | 31.6 |
+
+300 → 74 parcels through nine hygiene events; on the voxel grid the density's PSNR 20.1 →
+22.1 dB and its relative error 0.099 → 0.079, the temperature error 0.136 → 0.112, the field
+error 0.161 → 0.161. The χ² history (`triband_history.csv`, per iteration): 33,700 → 1,455 at
+iteration 50, back up to 2,400 when the second stage frees the fields at 100, 83 at 200, 42 at
+250 and 31.5 at the end, the last fifty iterations still taking a third off as the cosine
+schedule closes. So the full run is five times closer to the floor than the pilot and was not
+yet at a plateau: the distance is the schedule's, and a longer or slower second stage, or a
+Levenberg–Marquardt polish on the time-resolved residuals on the card, is the next step toward
+the floor. The fields, again, are recovered as well as the image-domain fits recover them
+(22.1 dB against 22.4; the temperature better, 0.11 against 0.20; the field alike, 0.16 against
+0.14–0.15), which is the result that matters for the program: the campaign's three bands carry
+the plasma's density and temperature to the same accuracy as a 2%-noise movie of the same
+truth, with the field strength the least determined quantity in the data domain as in the image
+domain. The movie of this run is `viz/output/triband_movie.mp4`.
 
 ## The spacetime free in the data domain
 

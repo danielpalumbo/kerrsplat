@@ -33,6 +33,12 @@ t_M = L / Transfer.CL / 3600
 a = 0.9; θo = deg2rad(60.0); Δα = fov / res
 camera = Geodesics.Camera((-fov / 2, fov / 2), (-fov / 2, fov / 2), res)
 cache = GeodesicCache(backend, camera, Val(N); store_samples = true); regenerate!(cache, a, θo; marcher = Recurrence(64))
+# a fit with the spacetime free is rendered at its own spin and inclination (the summary's "spacetime: ... end a X inc Y" line)
+fitted = let m = match(r"spacetime: .*end a ([-\d.eE+]+) inc ([-\d.eE+]+)", read(joinpath(datadir, "$(tag)_summary.txt"), String))
+    m === nothing ? nothing : (parse(Float64, m[1]), deg2rad(parse(Float64, m[2])))
+end
+cache_fit = fitted === nothing ? cache : (c = GeodesicCache(backend, camera, Val(N); store_samples = true); regenerate!(c, fitted[1], fitted[2]; marcher = Recurrence(64)); c)
+fitted === nothing || @info "the fit is rendered at its own spacetime" a = fitted[1] inc_deg = rad2deg(fitted[2])
 
 # ---- the campaign: every scan's (u, v) points, band and campaign hour
 uvpoints = Dict(f => (u = Float64[], v = Float64[], hour = Float64[]) for f in bands)
@@ -49,11 +55,14 @@ frame_hours_centre = (blocks .+ 0.5) .* frame_hours
 @info "campaign" frames = length(frame_times) span_M = round(frame_times[end] - frame_times[1], digits = 2) uv_points = length(hours_all)
 
 # ---- rendering
+device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
+qdev = device(q); pdev = device(p)                                      # the parameters on the backend (a host matrix is no kernel argument)
 function render(params, t, ν)
-    out = Vector{Splats.accumulator_type(Float64, nmax)}(undef, npixels(cache)); fill!(out, zero(eltype(out)))
+    c = params === q ? cache_fit : cache
+    out = Vector{Splats.accumulator_type(Float64, nmax)}(undef, npixels(c)); fill!(out, zero(eltype(out)))
     dev = KernelAbstractions.allocate(backend, eltype(out), length(out)); fill!(dev, zero(eltype(out)))
-    polarized_image!(dev, cache, params, t, ν, L; nmax, slab)
-    img = Fit.pixel_stokes(to_screen(cache, Array(dev)), ν, nothing)
+    polarized_image!(dev, c, params === q ? qdev : pdev, t, ν, L; nmax, slab)
+    img = Fit.pixel_stokes(to_screen(c, Array(dev)), ν, nothing)
     return img                                                           # res × res of SVector{4} in cgs
 end
 stokesI(img) = [x[1] for x in img]
