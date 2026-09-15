@@ -7,7 +7,10 @@
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
 #         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
-#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0]
+#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--cg 20] [--lambda 0.01]
+# --polish N runs N Levenberg–Marquardt steps of the matrix-free Gauss–Newton polish (Fit.polish_timeresolved!, --cg
+# conjugate-gradient iterations each, --lambda the initial damping) after the Adam stages (with --iterations 0, only the
+# polish, e.g. on a --resume'd state); the spacetime stays where it is.
 # --resume resumes from the parameters a previous run wrote (the same --seed regenerates the same data; Adam's moments
 # start afresh); --single-stage 1 runs one stage with everything free (the way to continue a fit), --eta-end its final
 # step (0: --eta/10).
@@ -29,6 +32,7 @@ backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU(); batch =
 free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); inc0 = getopt("--inc0", 50.0); lm_every = getopt("--lm-every", 3); inner = getopt("--inner", 3)
 pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
 start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
+npolish = getopt("--polish", 0); ncg = getopt("--cg", 20); λ0 = getopt("--lambda", 0.01)
 free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
@@ -135,13 +139,24 @@ q, history, events = try
                         callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
         global x_end = xj[2]; global accepted = xj[4]
         (xj[1], [h[1] for h in xj[3]], xj[5])
-    else
+    elseif iterations > 0
         Fit.fit!(copy(q0), x -> valgrad(x)[1], stages; hygiene = hyg, gradient = valgrad, callback = cb)
+    else
+        (copy(q0), Float64[], Tuple{Int,Int,Int,Int}[])
     end
 catch err
     writedlm(joinpath(outdir, "$(tag)_failed_params.csv"), last_state[], ',')
     @error "the fit threw; the parameters of its last iteration are in output/$(tag)_failed_params.csv" exception = (err, catch_backtrace())
     rethrow()
+end
+polish_history = Float64[]
+if npolish > 0                                               # the Gauss–Newton polish on the backend, in T, at the held spacetime
+    bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
+    qdev = device(T.(q))
+    qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, cg_iterations = ncg, λ = λ0, nmax, slab, batch_frames = batch,
+                                    callback = (it, x, v, dmp) -> (push!(trace, @sprintf("polish step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  %.1f min", it, v, v / ntot, dmp, (time() - t_start) / 60)); @info trace[end]))
+    global q = Float64.(Array(qdev)); global polish_history = Float64.(ph)
+    global history = vcat(history, polish_history)
 end
 minutes = (time() - t_start) / 60
 χ1 = band_chi2(q)
@@ -155,6 +170,7 @@ writedlm(joinpath(outdir, "$(tag)_history.csv"), history, ',')       # the total
 writedlm(joinpath(outdir, "$(tag)_truth.csv"), p, ',')
 open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
     isempty(start_file) || println(io, "resumed from $start_file ($(single_stage ? "one stage" : "two stages"), eta $η → $η_end)")
+    npolish > 0 && println(io, "Gauss–Newton polish: $npolish steps of $ncg conjugate-gradient iterations from damping $λ0: chi2 $(round.(polish_history, digits = 1))")
     println(io, "triband ngEHT self-fit ($T on $(backend isa CPU ? "CPU" : "CUDA")): M87 (M $(M_solar) M☉, D 16.8 Mpc), $days days from $start, bands $(bands) GHz, $(res)² pixels of $(round(Δα, digits = 3)) M, $N samples, nmax $nmax slab $slab, frames per $frame_hours h ($(round(frame_span, digits = 1)) M of campaign), $(closures ? "closures" : "visibilities"), values per band $ndat; shell of $n parcels of $scale M, $iterations iterations, eta $η, hygiene every $every (prune $prune, max $maxsplats), seed $seed, truth flux $flux_target Jy at 230 GHz")
     free_spacetime && println(io, "spacetime: start a $a0 inc $inc0; end a $(x_end[1]) inc $(rad2deg(x_end[2])) (truth a $a inc $(rad2deg(θo))); accepted spacetime steps $accepted; lm_every $lm_every inner $inner pattern $pattern_σ keplerian $keplerian_σ")
     println(io, "chi2/N per band: truth $(Dict(f => round(χt[f] / ndat[f], digits = 4) for f in bands)), start $(Dict(f => round(χ0[f] / ndat[f], digits = 3) for f in bands)), end $(Dict(f => round(χ1[f] / ndat[f], digits = 4) for f in bands)); total end $(round(sum(values(χ1)) / ntot, digits = 4)) (truth $(round(sum(values(χt)) / ntot, digits = 4))); parcels $n → $(size(q, 2)) through $(length(events)) hygiene events $events; $(round(minutes, digits = 1)) minutes")

@@ -833,5 +833,6 @@ include("instrument.jl")
 include("feedrotation.jl")
 include("device_visibilities.jl")
 include("timeresolved.jl")
+include("gauss_newton.jl")
 
 end

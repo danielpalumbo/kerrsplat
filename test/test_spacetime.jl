@@ -210,3 +210,56 @@ function test_joint_scans(backend; res = 6, N = 16, tol = 2e-5, label = "CPU bac
     end
 end
 
+"""
+The matrix-free Gauss–Newton polish on visibility scans: the residuals' χ² against the same
+stored rendering, J·v against central differences, the adjoint identity ⟨Jv, w⟩ = ⟨v, Jᵀw⟩, and
+two Levenberg–Marquardt steps from a perturbed start that lower the χ².
+"""
+function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU backend")
+    rng = Random.MersenneTwister(29)
+    a_true = 0.9; θ_true = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar)
+    p = polarized_test_params()
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a_true, θ_true; marcher = Fused(64))
+    function scancov(t)
+        sts = sort(randperm(rng, 5)[1:4]); s1 = Int[]; s2 = Int[]
+        for i in 1:4, j in i+1:4
+            push!(s1, sts[i]); push!(s2, sts[j])
+        end
+        return ScanCoverage(t, 3e9 .* randn(rng, length(s1)), 3e9 .* randn(rng, length(s1)), s1, s2)
+    end
+    cov = [scancov(0.0), scancov(0.0), scancov(20.0)]
+    bands = [BandScans(ν, synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng), Δα, D) for ν in (230e9, 345e9)]
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a_true, θ_true; marcher = Recurrence(64))
+    q = p .+ 0.05 .* randn(rng, size(p)); q[12, :] .= p[12, :]
+    qd = adapt_to(backend, q)
+    @testset "$label Gauss–Newton polish on scans" begin
+        sb = Fit.ScanBands(bands, cache)
+        m = Fit.residual_length(sb)
+        r = adapt_to(backend, zeros(m))
+        χ = Fit.residuals!(r, sb, cache, qd, L)
+        @test m == sum(8 * length(s.data.u) for b in bands for s in b.tr.scans)
+        @test abs(χ - Fit._joint_chi2(cache, qd, bands, L)) <= 1e-9 * χ
+        # J·v against central differences of the residual vector
+        v = randn(rng, size(p)); v[12, :] .= 0
+        Jv = adapt_to(backend, zeros(m)); Fit.jvp!(Jv, sb, cache, qd, adapt_to(backend, v), L)
+        rp = adapt_to(backend, zeros(m)); rm = adapt_to(backend, zeros(m)); h = 1e-6
+        Fit.residuals!(rp, sb, cache, adapt_to(backend, q .+ h .* v), L); Fit.residuals!(rm, sb, cache, adapt_to(backend, q .- h .* v), L)
+        fd = (Array(rp) .- Array(rm)) ./ (2h)
+        @test maximum(abs.(Array(Jv) .- fd)) <= tol * maximum(abs.(fd))
+        # the adjoint identity
+        w = randn(rng, m)
+        Jtw = adapt_to(backend, zeros(size(p))); Fit.jtvp!(Jtw, sb, cache, qd, adapt_to(backend, w), L)
+        lhs = dot(Array(Jv), w); rhs = dot(v, Array(Jtw))
+        @test abs(lhs - rhs) <= 1e-8 * max(abs(lhs), abs(rhs))
+        # two Levenberg–Marquardt steps lower the χ²
+        q2, history = Fit.polish_timeresolved!(copy(qd), bands, cache, L; iterations = 2, cg_iterations = 8)
+        @test history[end] < history[1] && all(isfinite, Array(q2))
+        @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps; J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
+    end
+end
+
