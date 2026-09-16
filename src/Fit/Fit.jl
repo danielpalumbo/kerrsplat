@@ -455,13 +455,15 @@ function sweep_passes(dparams, cache::GeodesicCache{T,N}, params, L; method::Sym
         # vectors or an npix × nframes matrix), builds the frames' per-ray lists, and keeps the tails for the reverse pass
         tails = Ref{Any}(nothing)
         lists = Ref{Any}(nothing)
-        forward = (t, ν) -> begin
+        forward = (t, ν; device = false) -> begin              # device = true: the npix × nframes images stay on the backend
             ts = t isa AbstractVector ? collect(T, t) : T[t]
             nf = length(ts)
             lists[] = cull ? Splats.ray_lists(cache, params, ts; nmax, slab) : nothing
             (tails[] === nothing || size(tails[], 3) != nf) && (tails[] = KernelAbstractions.allocate(cache.backend, SVector{4,T}, npix, N + 1, nf))
             Splats.polarized_tails!(tails[], cache, params, ts, ν, L; nmax, slab, lists = lists[])
-            img = Array(Splats.tail_image(tails[], T(ν)))
+            dimg = Splats.tail_image(tails[], T(ν))
+            device && return dimg
+            img = Array(dimg)
             return t isa AbstractVector ? img : vec(img)
         end
         reverse! = (dstokes, t, ν) -> begin
@@ -829,6 +831,7 @@ include("scattering.jl")
 include("uvfits.jl")
 include("instrument.jl")
 include("feedrotation.jl")
+include("device_visibilities.jl")
 include("timeresolved.jl")
 
 end
