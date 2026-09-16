@@ -134,7 +134,7 @@ end
     pix = build_pixel(pc, r, met, θo)
     Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
     c = RadiativeTransport(Transfer.ray_model(PolarizedSplats(params, view(tvec, f:f), frame_lists(lists, f)), r), ν, L)
-    R = zero(SVector{4,typeof(ν)})
+    R = zero(eltype(tails))                     # typed by the tails, so dual parameters (a directional derivative) flow through
     @inbounds stop = kstop[r]
     @inbounds tails[r, N + 1, f] = R
     for k in N:-1:1
