@@ -128,7 +128,18 @@ and the χ² rising instead), then two accepted at 0.1 and 0.03 with gain ratios
 χ²/N 2.93 → 2.81 → 2.61, four and seven percent per step against a third of a percent for the
 plain iterations, twenty minutes per step. The iterations now stop on a non-positive curvature
 estimate or a stalled residual, their recurrences run in Float64 around the Float32 products,
-and the diagonal is refreshed every fourth step; a longer run from this state follows.
+and the diagonal is refreshed every fourth step.
+
+**Twelve guarded steps from that state** (104 minutes, nine per step): every step accepted with
+gain ratios 0.15–0.90, χ²/N 2.61 → 2.05 (2.45 / 1.63 / 1.68 per band), two to three percent
+per step, no faster per hour than before, and the linear solves poor (the residual at the stall
+guard 0.3–1.2 of its start). The conjugate gradients on the matrix-free normal equations
+resolve a few dozen directions of 1,470 per step. The problem is small enough for the
+explicit Jacobian: `jacobian!` forms it by tails passes on duals with eight partials (eight
+columns per pass, the parcel lists once per frame chunk), a few gigabytes of host memory for
+the campaign's residuals, and `polish_dense!` takes the exact damped step from JᵀJ and Jᵀr
+accumulated in Float64, trying several dampings on the same Jacobian; the last normal matrix's
+inverse is the Laplace covariance. Its run on the 2.05 state follows.
 
 ## The spacetime free in the data domain
 
