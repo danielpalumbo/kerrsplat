@@ -164,7 +164,7 @@ if ndense > 0                                                # Levenberg–Marqu
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
     qdev, dh, _ = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), nmax, slab, batch_frames = batch,
-                                callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
+                                callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  max step %.2e  diag %.1e..%.1e  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.max_step, info.diag_range[1], info.diag_range[2], info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global dense_history = Float64.(dh)
     global history = vcat(history, dense_history)
 end
