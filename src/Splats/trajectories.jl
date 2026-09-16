@@ -88,6 +88,7 @@ KnotSplats(params::AbstractMatrix{T}, t_obs::Real, knots, times) where {T} =
     KnotSplats(params, fill!(similar(params, 1), T(t_obs)), knots, times)
 
 Transfer.nelements(m::KnotSplats) = size(m.params, 2)
+Transfer.coefficient_type(m::KnotSplats, ν_obs) = promote_type(eltype(m.params), typeof(ν_obs))
 
 @inline function knot_centre(m::KnotSplats, i, t)
     ts = m.times

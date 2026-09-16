@@ -81,6 +81,7 @@ struct RaySubset{M,I}
     n::Int32
 end
 Transfer.nelements(m::RaySubset) = Int(m.n)
+Transfer.coefficient_type(m::RaySubset, ν_obs) = Transfer.coefficient_type(m.model, ν_obs)
 @inline Transfer.element(m::RaySubset, i, pix, s, ν_obs) = Transfer.element(m.model, @inbounds(m.ids[i]), pix, s, ν_obs)
 @inline Transfer.ray_model(m::PolarizedSplats{<:Any,<:Any,Nothing}, j) = m
 @inline function Transfer.ray_model(m::PolarizedSplats, j)
@@ -96,6 +97,7 @@ const WEIGHT_CUTOFF = 1e-6
 const SUPPORT_RADIUS2 = -2 * log(WEIGHT_CUTOFF)    # (5.26 σ)²: beyond it the weight is below the cutoff for any orientation
 
 Transfer.nelements(m::PolarizedSplats) = size(m.params, 2)
+Transfer.coefficient_type(m::PolarizedSplats, ν_obs) = promote_type(eltype(m.params), typeof(ν_obs))
 
 """
     outside_support(p, i, t, x, y, z) -> Bool

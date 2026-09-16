@@ -70,7 +70,13 @@ before any performance work.
   `Transfer.safe_sqrt`), never with `==` against a literal. `acos(clamp(x, -1, 1))` on a dual
   is NaN when the clamp engages (zero partials times the rule's −∞): `Transfer.safe_acos`.
   Such measure-zero events do occur over the 1e8 sample evaluations of a GPU fit (the first
-  joint self-fit died of one after eighty iterations). Krang's `p_bl_d` takes `√max(0, R)`,
+  joint self-fit died of one after eighty iterations). Dual-typed parameters through a kernel
+  (the directional derivative of `Fit.jvp!`): every running sum and every fallback in the
+  transport is typed by `Transfer.coefficient_type(model, ν)` (the parameters' element type
+  promoted with ν), never by `typeof(ν)`: an accumulator that starts as a float and becomes a
+  dual at the first element is a dynamic dispatch the device compiler rejects, and the loop
+  path (parcel lists, more than sixteen parcels) is what the fits run, not the unrolled path
+  of the small gates. Krang's `p_bl_d` takes `√max(0, R)`,
   NaN partials at a turning-point sample: the frame uses `Transfer.momentum_bl_d` instead. A
   ray on the boundary between radial root cases has NaN spacetime partials in every sample
   (a genuine singularity of the march): `Fit.spacetime_jacobian` zeroes such rows.
