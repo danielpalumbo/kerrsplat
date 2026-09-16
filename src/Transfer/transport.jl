@@ -164,6 +164,7 @@ the identity, zero and `active = false`.
 """
 @inline function sample_step(c::RadiativeTransport, s::GeodesicSample, Δτ, pix)
     T = typeof(c.ν_obs)
+    C = coefficient_type(c.model, c.ν_obs)      # the skipped sample's identity in the coefficients' type (duals included): one return type
     met = Krang.metric(pix)
     if s.ok && s.r > Krang.horizon(met) * (1 + T(1e-3))
         j4, α4, ρ3, active = accumulate_elements(c, s, pix, static_elements(c.model))
@@ -174,7 +175,7 @@ the identity, zero and `active = false`.
             return O, E, true
         end
     end
-    return identity4(T), zero(SVector{4,T}), false
+    return identity4(C), zero(SVector{4,C}), false
 end
 
 "Tag of the forward-mode duals through the step operator."
@@ -236,8 +237,22 @@ slower than the stack, so the adjoint kernels wrap their model in [`StaticCount`
 """
 static_elements(model) = nothing
 
+"""
+    coefficient_type(model, ν_obs) -> Type
+
+The scalar type of `model`'s screen coefficients: the element type of its parameters promoted
+with the observer's frequency (the default is the frequency's type). The running sums of the
+loop over elements and the identity of a skipped sample are typed by it, so that dual-typed
+parameters (a directional derivative, `Fit.jvp!`) flow through the per-ray list path with one
+concrete type: an accumulator that starts in the frequency's type and turns into a dual at the
+first element is a type-changing loop, a dynamic dispatch the device compiler rejects (found
+by the Gauss–Newton polish of the triband fit, seventy parcels in Float32, 2026-09-16; the
+gates had fewer than sixteen parcels, the unrolled path, whose sums are typed by their terms).
+"""
+coefficient_type(model, ν_obs) = typeof(ν_obs)
+
 @inline function accumulate_elements(c::RadiativeTransport, s::GeodesicSample, pix, ::Nothing)
-    T = typeof(c.ν_obs)
+    T = coefficient_type(c.model, c.ν_obs)
     j4 = zero(SVector{4,T}); α4 = zero(SVector{4,T}); ρ3 = zero(SVector{3,T})
     active = false
     for i in 1:nelements(c.model)
@@ -273,6 +288,7 @@ end
 Adapt.adapt_structure(to, m::StaticCount{NS}) where {NS} = StaticCount(Adapt.adapt(to, m.model), Val(NS))
 nelements(::StaticCount{NS}) where {NS} = NS
 static_elements(::StaticCount{NS}) where {NS} = Val(NS)
+coefficient_type(m::StaticCount, ν_obs) = coefficient_type(m.model, ν_obs)
 @inline element(m::StaticCount, i, pix, s, ν_obs) = element(m.model, i, pix, s, ν_obs)
 
 "Observed Stokes vector (I, Q, U, V) [erg s⁻¹ cm⁻² Hz⁻¹ sr⁻¹] from an accumulator at ν_obs."
@@ -293,6 +309,7 @@ struct CompositeModel{A,B}
 end
 Adapt.@adapt_structure CompositeModel
 nelements(m::CompositeModel) = nelements(m.a) + nelements(m.b)
+coefficient_type(m::CompositeModel, ν_obs) = promote_type(coefficient_type(m.a, ν_obs), coefficient_type(m.b, ν_obs))
 @inline function element(m::CompositeModel, i, pix, s, ν_obs)
     na = nelements(m.a)
     return i <= na ? element(m.a, i, pix, s, ν_obs) : element(m.b, i - na, pix, s, ν_obs)
