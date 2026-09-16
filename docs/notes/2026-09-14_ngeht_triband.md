@@ -103,6 +103,12 @@ the card, matrix-free (J·v by a directional pass, Jᵀr by the adjoint sweep in
 gradients between them). The recovered-field numbers are withheld until a fit reaches the
 floor. The movie of the resumed run is `viz/output/triband_resumed_movie.mp4`.
 
+The continuation with hygiene off (600 more iterations at η 0.003 → 3e-4, 9.5 hours): χ²/N
+7.44 → 3.09 (3.83 / 2.37 / 2.05 per band), monotone, no spikes, still falling by 3% per hundred
+iterations at the end. So the hygiene schedule was most of the stall, and Adam alone keeps
+descending but slowly: three times the floor after 1,500 iterations in all. The Gauss–Newton
+polish (`polish_timeresolved!`) runs on this state next.
+
 ## The spacetime free in the data domain
 
 `fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
