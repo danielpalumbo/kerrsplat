@@ -274,6 +274,13 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
             @test exact / 4 <= dgh[i, j] <= 4 * exact                # a 64-probe estimate carries the couplings as noise (2.4× on one column of two overlapping parcels)
         end
         @info "Hutchinson diagonal ($label): estimate / exact on three columns $(round.(ratios, digits = 2))"
+        # the explicit Jacobian (chunked duals) against J·v, and the dense Levenberg–Marquardt iterations
+        J = zeros(m, length(p)); Fit.jacobian!(J, sb, cache, qd, L; chunk = Val(5))
+        Jv2 = J * vec(v)
+        @test maximum(abs.(Jv2 .- Array(Jv))) <= 1e-10 * maximum(abs.(Array(Jv)))
+        q3, h3, A = Fit.polish_dense!(copy(qd), bands, cache, L; iterations = 2, λ = 1e-2, chunk = Val(5))
+        @test h3[end] < h3[1] && all(isfinite, Array(q3)) && size(A) == (length(p), length(p))
+        @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations (conjugate gradients: → $(round(history[end], digits = 1)))"
         @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps (gain ratios $(round.([i.gain for i in infos], digits = 2))); J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
     end
 end

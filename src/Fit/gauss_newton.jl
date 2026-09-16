@@ -262,4 +262,122 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
     return params, history
 end
 
-export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, polish_timeresolved!
+"""
+    jacobian!(J, sb, cache, params, L; columns = eachindex(params), chunk = Val(8), ...) -> J
+
+The Jacobian of the residual vector with respect to the parameters at the linear indices
+`columns`, into the host matrix `J` (residuals × columns): `chunk` columns per tails pass, the
+parameters as duals with that many partials, the parcel lists built once per frame chunk. A
+problem of a thousand-odd unknowns is small enough for the explicit matrix (the residual count
+times the columns in Float32: a few gigabytes of host memory for a campaign), and the exact
+damped step it allows resolves every direction where conjugate gradients on the matrix-free
+normal equations resolve a few dozen.
+"""
+function jacobian!(J::AbstractMatrix, sb::ScanBands, cache::GeodesicCache{T,N}, params, L; columns = eachindex(params), chunk::Val{C} = Val(8),
+                   nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16, batch_frames::Integer = 4) where {T,N,C}
+    backend = cache.backend
+    size(J) == (residual_length(sb), length(columns)) || throw(ArgumentError("J must be $(residual_length(sb)) × $(length(columns))"))
+    D = ForwardDiff.Dual{GNTag,T,C}
+    ph = Array(params)
+    npix = npixels(cache)
+    groups = collect(Iterators.partition(eachindex(columns), C))
+    duals = map(groups) do grp                                  # the dual parameter matrix of each column group, on the backend
+        pdh = D.(ph)
+        for (c, ci) in enumerate(grp)
+            k = columns[ci]
+            pdh[k] = D(ph[k], ForwardDiff.Partials(ntuple(i -> i == c ? one(T) : zero(T), Val(C))))
+        end
+        pd = KernelAbstractions.allocate(backend, D, size(params)); copyto!(pd, pdh)
+        pd
+    end
+    off = 0
+    for (bi, b) in enumerate(sb.bands)
+        times = sb.frames[bi]
+        for fchunk in Iterators.partition(times, max(Int(batch_frames), 1))
+            ts = collect(T, fchunk)
+            lists = cull ? Splats.ray_lists(cache, params, ts; nmax, slab) : nothing
+            tails = KernelAbstractions.allocate(backend, SVector{4,D}, npix, N + 1, length(ts))
+            frames = [(sb.fsd[bi][Float64(t)], _nres(sb.fsd[bi][Float64(t)])) for t in ts]
+            ntot = sum(last, frames)
+            rd = KernelAbstractions.allocate(backend, D, ntot)
+            for (gi, grp) in enumerate(groups)
+                Splats.polarized_tails!(tails, cache, duals[gi], ts, T(b.ν), T(L); nmax, slab, lists)
+                images = Splats.tail_image(tails, T(b.ν))
+                o = 0
+                for (c, (fs, n)) in enumerate(frames)
+                    _frame_residuals!(view(rd, o + 1:o + n), c, images, fs, cache, b.Δα, L, b.D)
+                    o += n
+                end
+                rdh = Array(rd)
+                for (c, ci) in enumerate(grp)
+                    @inbounds for k in 1:ntot
+                        J[off + k, ci] = ForwardDiff.partials(rdh[k], c)
+                    end
+                end
+            end
+            off += ntot
+        end
+    end
+    return J
+end
+
+"""
+    polish_dense!(params, bands, cache, L; iterations = 5, λ = 1e-2, free = trues(size(params)), chunk = Val(8), tries = 6, nmax, slab, callback) -> (params, history, normal)
+
+Levenberg–Marquardt on the explicit Jacobian (`jacobian!`): each iteration forms JᵀJ and Jᵀr
+in Float64 on the host and solves (JᵀJ + λ diag(JᵀJ)) p = −Jᵀr by Cholesky, trying up to
+`tries` dampings (×10 each rejection) on the same Jacobian before giving up on the step; λ
+follows the gain ratio as in `polish_timeresolved!`. Returns the parameters, the χ² after every
+iteration and the last normal matrix (its inverse is the Laplace covariance of the free
+parameters). The callback receives `(it, params, χ, λ, info)` with the gain ratio, the model's
+predicted decrease, the number of dampings tried and the seconds the Jacobian took.
+"""
+function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, λ::Real = 1e-2, free = trues(size(params)), chunk::Val{C} = Val(8),
+                       tries::Integer = 6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
+    backend = cache.backend
+    sb = ScanBands(bands, cache)
+    cull = size(params, 2) > 16
+    columns = findall(vec(collect(free)))
+    m = residual_length(sb); n = length(columns)
+    J = Matrix{T}(undef, m, n)
+    r = KernelAbstractions.allocate(backend, T, m)
+    χ = residuals!(r, sb, cache, params, L; nmax, slab, cull, batch_frames)
+    history = T[χ]
+    damping = Float64(λ)
+    A = zeros(n, n)
+    for it in 1:iterations
+        tj = @elapsed jacobian!(J, sb, cache, params, L; columns, chunk, nmax, slab, cull, batch_frames)
+        rh = Float64.(Array(r))
+        fill!(A, 0.0); g = zeros(n)
+        for rows in Iterators.partition(1:m, 65536)                  # JᵀJ and Jᵀr accumulated in Float64 over row blocks
+            Jb = Float64.(view(J, rows, :))
+            mul!(A, Jb', Jb, 1.0, 1.0)
+            mul!(g, Jb', rh[rows], 1.0, 1.0)
+        end
+        dg = max.(diag(A), eps())
+        ph = Array(params)
+        gain = NaN; predicted = NaN; tried = 0; accepted = false
+        for _ in 1:tries
+            tried += 1
+            p = -(cholesky(Symmetric(A + damping * Diagonal(dg))) \ g)
+            predicted = -(2 * dot(g, p) + dot(p, A * p))            # ‖r‖² − ‖r + Jp‖²
+            th = copy(ph); th[columns] .+= T.(p)
+            trial = KernelAbstractions.allocate(backend, T, size(params)); copyto!(trial, th)
+            rt = similar(r)
+            χt = residuals!(rt, sb, cache, trial, L; nmax, slab, cull, batch_frames)
+            gain = (Float64(χ) - Float64(χt)) / max(predicted, eps())
+            if χt < χ
+                copyto!(params, trial); copyto!(r, rt); χ = χt; accepted = true
+                damping = gain > 0.75 ? max(damping / 3, 1e-8) : gain < 0.25 ? damping * 2 : damping
+                break
+            else
+                damping *= 10
+            end
+        end
+        push!(history, χ)
+        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, tries = tried, accepted = accepted, jacobian_seconds = tj))
+    end
+    return params, history, A
+end
+
+export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, polish_timeresolved!, jacobian!, polish_dense!
