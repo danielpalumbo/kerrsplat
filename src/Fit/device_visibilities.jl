@@ -46,7 +46,8 @@ end
 @kernel function vis_kernel!(V, @Const(image), c, @Const(perm), nα, nβ, psize, scale, @Const(u), @Const(v), @Const(tap))
     k = @index(Global, Linear)
     T = typeof(psize)
-    acc = zero(SVector{4,Complex{T}})
+    E = eltype(eltype(image))                    # the image's scalar type: T, or a dual carrying a directional derivative
+    acc = zero(SVector{4,Complex{E}})
     @inbounds uk = u[k]; @inbounds vk = v[k]
     for j in 1:size(image, 1)
         l, m = _pixel_offsets(perm, j, nα, nβ, psize)

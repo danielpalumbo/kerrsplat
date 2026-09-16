@@ -63,6 +63,8 @@ adapt_like(ref::AbstractArray, x) = (y = similar(ref, eltype(x), length(x)); cop
 
 Transfer.nelements(m::PowerLawSplats) = size(m.params, 2)
 Transfer.nelements(m::KappaSplats) = size(m.params, 2)
+Transfer.coefficient_type(m::PowerLawSplats, ν_obs) = promote_type(eltype(m.params), typeof(ν_obs))
+Transfer.coefficient_type(m::KappaSplats, ν_obs) = promote_type(eltype(m.params), typeof(ν_obs))
 
 # shared geometry: weight, field, velocity and frame of splat i at a sample (or nothing when culled)
 @inline function _splat_geometry(p, t_obs, i, pix, s::GeodesicSample{T}) where {T}

@@ -572,5 +572,54 @@ function test_directional_image(backend; res = 6, N = 16, tol = 1e-5, label = "C
         @test e <= tol
         @info "directional derivative of the image ($label): relative difference from central differences $e"
     end
+    # the per-ray list path (more than sixteen parcels, the loop over a ray's parcels rather than the unrolled sum) with dual
+    # parameters in Float64 and in Float32: one concrete type through the sample step (a type-changing accumulator is a
+    # dynamic dispatch the device compiler rejects), the Float64 derivative against central differences and the Float32
+    # derivative against the Float64 one (Float32 central differences resolve nothing: a 1e-2 step is already in the
+    # nonlinear regime at 10%, a 1e-6 step in the rounding at 2%)
+    @testset "$label directional derivative through the parcel lists" begin
+        ps = shell_parcels(20; rin = 3.0, rout = 7.0, spin = a, rng = MersenneTwister(7)); ps[12, :] .= log(1e6)
+        vs = randn(rng, size(ps)); vs[12, :] .= 0
+        ch64 = GeodesicCache(CPU(), camera, Val(N); store_samples = true); regenerate!(ch64, a, θo; marcher = Recurrence(64))
+        deriv64 = nothing
+        for T in (Float64, Float32)
+            cT = T === Float64 ? cache : Geodesics.precision(cache, T)
+            νT = T(ν); LT = T(L); t = T(5.0)
+            listsT = ray_lists(cT, adapt_to(backend, T.(ps)), t)
+            pdT = [ForwardDiff.Dual{DirTag}(T(ps[i, j]), T(vs[i, j])) for i in axes(ps, 1), j in axes(ps, 2)]
+            # the sample step of one ray of the host copy (the geodesics marched in Float64, converted), its type inferred
+            ch = T === Float64 ? ch64 : Geodesics.precision(ch64, T)
+            lh = ray_lists(ch, T.(ps), t)
+            r = argmax(Array(lh.count))
+            c = RadiativeTransport(Transfer.ray_model(PolarizedSplats(pdT, [t], lh), r), νT, LT)
+            met = Krang.Kerr(ch.spin); pix = build_pixel(ch.consts, r, met, ch.θo); Δτ = mino_step(Krang.total_mino_time(pix), Val(N))
+            D = ForwardDiff.Dual{DirTag,T,1}
+            for k in (1, N ÷ 2, N)
+                s = Splats._stored_sample(ch.samples, r, k)
+                O, E, on = @inferred Transfer.sample_step(c, s, Δτ, pix)
+                @test O isa SMatrix{4,4,D} && E isa SVector{4,D}
+            end
+            @test Transfer.coefficient_type(c.model, νT) === D
+            # the tails through the lists on the backend
+            tailsT = KernelAbstractions.allocate(backend, SVector{4,D}, npixels(cT), N + 1)
+            polarized_tails!(tailsT, cT, adapt_to(backend, pdT), t, νT, LT; lists = listsT)
+            imgT = Array(tail_image(tailsT, νT))
+            deriv = [SVector{4}(Float64.(ForwardDiff.partials.(x, 1))) for x in imgT]
+            if T === Float64
+                tT = KernelAbstractions.allocate(backend, SVector{4,T}, npixels(cT), N + 1)
+                imageT(q) = (polarized_tails!(tT, cT, adapt_to(backend, q), t, νT, LT; lists = listsT); Array(tail_image(tT, νT)))
+                h = 1e-6
+                fd = (imageT(ps .+ h .* vs) .- imageT(ps .- h .* vs)) ./ (2h)
+                e = maximum(maximum.(abs, deriv .- fd)) / maximum(x -> maximum(abs, x), fd)
+                @test e <= tol
+                @info "directional derivative through the parcel lists ($label, Float64): relative difference from central differences $e"
+                deriv64 = deriv
+            else
+                e = maximum(maximum.(abs, deriv .- deriv64)) / maximum(x -> maximum(abs, x), deriv64)
+                @test e <= 1e-4
+                @info "directional derivative through the parcel lists ($label, $T): relative difference from the Float64 duals $e"
+            end
+        end
+    end
 end
 
