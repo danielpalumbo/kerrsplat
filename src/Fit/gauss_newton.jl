@@ -175,7 +175,7 @@ function normal_diagonal!(dg, sb::ScanBands, cache::GeodesicCache{T,N}, params, 
 end
 
 """
-    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, probe_every = 4, free = trues(size(params)), nmax, slab, callback) -> (params, history)
+    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, probe_every = 4, stall = 20, free = trues(size(params)), nmax, slab, callback) -> (params, history)
 
 Levenberg–Marquardt steps on the splat parameters against the bands' visibility scans, each step
 from preconditioned conjugate gradients on the matrix-free normal equations
@@ -187,7 +187,7 @@ and unpreconditioned iterations resolve only the stiffest directions; the estima
 every `probe_every` steps. The iterations stop on a non-positive curvature estimate (a null
 direction of the over-complete basis in single precision, whose step would be unbounded: the
 first preconditioned run of the triband state took such a step, the residual five times its
-start, the χ² up) or when the residual has not improved for ten iterations. λ follows the gain ratio
+start, the χ² up) or when the residual has not improved for `stall` iterations (that residual is not monotone: a guard of ten cut the triband solves at residuals of 0.3–1.2 of their start where sixty free iterations reached 0.03–0.14). λ follows the gain ratio
 ρ = (actual decrease)/(decrease of the quadratic model): ÷3 when ρ > 0.75, ×2 when ρ < 0.25,
 ×10 and the step rejected when χ² rises. `params` lives on the backend (its shape is kept: no
 hygiene here). Returns the parameters and the χ² after every step; the callback receives
@@ -195,7 +195,7 @@ hygiene here). Returns the parameters and the χ² after every step; the callbac
 conjugate gradients' final relative residual.
 """
 function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, cg_iterations::Integer = 20, λ::Real = 1e-2, probes::Integer = 8, probe_every::Integer = 4,
-                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
+                              stall::Integer = 20, free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -216,7 +216,7 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
         end
         # preconditioned conjugate gradients on (JᵀJ + damping·D) p = −g, matrix-free, M = (D (1 + damping))⁻¹; stopped on a
         # non-positive curvature estimate (a null direction of the over-complete basis in single precision, whose step would be
-        # unbounded) or when the residual has not improved on its best for ten iterations
+        # unbounded) or when the residual has not improved on its best for `stall` iterations
         D64 = F.(dscale); Minv = 1 ./ (D64 .* (1 + damping)); mask64 = F.(mask)
         p = KernelAbstractions.allocate(backend, F, size(params)); fill!(p, zero(F))
         res = -F.(g); z = Minv .* res; d = copy(z); rz = sum(res .* z)
@@ -236,7 +236,7 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
             if rel < best
                 best = rel; since = 0
             else
-                since += 1; since >= 10 && break
+                since += 1; since >= stall && break
             end
             z .= Minv .* res
             rz_new = sum(res .* z)
