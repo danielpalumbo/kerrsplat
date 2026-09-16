@@ -149,8 +149,16 @@ parameter the residuals barely see (a parcel of no flux, the rate of a parcel at
 Jacobian column of single-precision noise, a diagonal entry of 1e-14 of the largest, and the
 damped solve sends it anywhere the model considers free, into a state the transport cannot
 render. The Marquardt diagonal is now floored at 1e-6 of its largest entry (the Hutchinson
-version had this floor from the start) and the iterations end once the damping passes 1e6;
-the run of that version follows.
+version had this floor from the start) and the iterations end once the damping passes 1e6.
+
+**The dense run with the floor** (three iterations, 2.6 hours): every step accepted at a
+damping of 0.1 and 0.03 with gain ratios 0.73, 0.77 and 0.58, χ²/N 2.05 → 1.95 → 1.87 → 1.77
+(2.08 / 1.45 / 1.54 per band), the largest step 0.08–0.14 in the parameters' units, the
+diagonal of JᵀJ spanning forty decades. So the exact solve gains five percent per iteration
+where the preconditioned partial solves gained two to three, at six times the cost: at this
+damping the step is set by the model's nonlinearity, not by the solver, and the cheaper solver
+wins per hour. The long run is preconditioned conjugate gradients from the 1.77 state (forty
+steps of forty iterations, the stall guard at twenty).
 
 ## The spacetime free in the data domain
 
