@@ -139,7 +139,18 @@ explicit Jacobian: `jacobian!` forms it by tails passes on duals with eight part
 columns per pass, the parcel lists once per frame chunk), a few gigabytes of host memory for
 the campaign's residuals, and `polish_dense!` takes the exact damped step from JᵀJ and Jᵀr
 accumulated in Float64, trying several dampings on the same Jacobian; the last normal matrix's
-inverse is the Laplace covariance. Its run on the 2.05 state follows.
+inverse is the Laplace covariance.
+
+**The first dense run** (six iterations, 53 minutes per Jacobian of 184 passes, 5.3 hours in all)
+made no step: every damping from 1e-2 to 1e4 was rejected with the trial χ² near 1e10 even where
+the model predicted a decrease of a few hundred, one step at a damping of 3e3 gained 600, and
+the damping then ran to 1e27 over four iterations of nothing. The signature of flat columns: a
+parameter the residuals barely see (a parcel of no flux, the rate of a parcel at rest) has a
+Jacobian column of single-precision noise, a diagonal entry of 1e-14 of the largest, and the
+damped solve sends it anywhere the model considers free, into a state the transport cannot
+render. The Marquardt diagonal is now floored at 1e-6 of its largest entry (the Hutchinson
+version had this floor from the start) and the iterations end once the damping passes 1e6;
+the run of that version follows.
 
 ## The spacetime free in the data domain
 
