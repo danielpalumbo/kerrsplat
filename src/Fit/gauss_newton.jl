@@ -148,16 +148,50 @@ function jtvp!(out, sb::ScanBands, cache::GeodesicCache{T,N}, params, w, L; nmax
 end
 
 """
-    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, free = trues(size(params)), nmax, slab, callback) -> (params, history)
+    normal_diagonal!(dg, sb, cache, params, L; probes = 8, rng, mask, ...) -> dg
+
+A Hutchinson estimate of the diagonal of the normal matrix JᵀJ: the mean over `probes`
+Rademacher vectors z of z ∘ Jᵀ(J z), each probe one tails pass on duals and one adjoint sweep
+(the exact diagonal would take one pass per column). The estimate carries the off-diagonal
+couplings as noise, so it is taken in absolute value and floored at 1e-6 of its largest entry.
+It is the Jacobi preconditioner of the conjugate gradients and the Marquardt diagonal.
+"""
+function normal_diagonal!(dg, sb::ScanBands, cache::GeodesicCache{T,N}, params, L; probes::Integer = 8, rng = Random.default_rng(), mask = nothing,
+                          nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16, batch_frames::Integer = 4) where {T,N}
+    backend = cache.backend
+    fill!(dg, zero(T))
+    z = KernelAbstractions.allocate(backend, T, size(params)); Jz = KernelAbstractions.allocate(backend, T, residual_length(sb)); Az = similar(dg)
+    for _ in 1:probes
+        copyto!(z, T.(rand(rng, (-1, 1), size(params))))
+        mask === nothing || (z .*= mask)
+        jvp!(Jz, sb, cache, params, z, L; nmax, slab, cull, batch_frames)
+        jtvp!(Az, sb, cache, params, Jz, L; nmax, slab, cull, batch_frames)
+        dg .+= z .* Az
+    end
+    dg .= abs.(dg) ./ T(max(probes, 1))
+    floor = T(1e-6) * maximum(dg)
+    dg .= max.(dg, floor)
+    return dg
+end
+
+"""
+    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, free = trues(size(params)), nmax, slab, callback) -> (params, history)
 
 Levenberg–Marquardt steps on the splat parameters against the bands' visibility scans, each step
-from conjugate gradients on the matrix-free normal equations (J·v by the dual tails pass, Jᵀw by
-the adjoint sweep); λ divides by three on an accepted step and multiplies by ten on a rejected
-one. `params` lives on the backend (its shape is kept: no hygiene here). Returns the parameters
-and the χ² after every step.
+from preconditioned conjugate gradients on the matrix-free normal equations
+(JᵀJ + λ D) p = −Jᵀr, with J·v by the dual tails pass and Jᵀw by the adjoint sweep. D is the
+Hutchinson estimate of diag(JᵀJ) from `probes` probes (`normal_diagonal!`; with `probes = 0`
+the gradient's magnitude per row, a cruder scale), and the Jacobi preconditioner is its
+inverse: the rows (positions in M, logarithms, angles, rates in rad/M) span decades of scale,
+and unpreconditioned iterations resolve only the stiffest directions. λ follows the gain ratio
+ρ = (actual decrease)/(decrease of the quadratic model): ÷3 when ρ > 0.75, ×2 when ρ < 0.25,
+×10 and the step rejected when χ² rises. `params` lives on the backend (its shape is kept: no
+hygiene here). Returns the parameters and the χ² after every step; the callback receives
+`(it, params, χ, λ, info)` with the step's gain ratio, the model's predicted decrease and the
+conjugate gradients' final relative residual.
 """
-function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, cg_iterations::Integer = 20, λ::Real = 1e-2,
-                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N}
+function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, cg_iterations::Integer = 20, λ::Real = 1e-2, probes::Integer = 8,
+                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -166,42 +200,51 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
     r = KernelAbstractions.allocate(backend, T, m)
     χ = residuals!(r, sb, cache, params, L; nmax, slab, cull, batch_frames)
     history = T[χ]
-    g = KernelAbstractions.allocate(backend, T, size(params))
+    g = KernelAbstractions.allocate(backend, T, size(params)); dscale = similar(g)
     damping = T(λ)
     for it in 1:iterations
         jtvp!(g, sb, cache, params, r, L; nmax, slab, cull, batch_frames); g .*= mask         # Jᵀr
-        # the diagonal scale of the normal matrix from a probe: diag(JᵀJ) ≈ |Jᵀ(J e)| is not available cheaply; use the
-        # gradient's scale per row as the Marquardt diagonal (a fixed scaling of the parameters)
-        dscale = map(x -> max(abs(x), eps(T)), g)
-        # conjugate gradients on (JᵀJ + damping·diag) p = −g, matrix-free
+        if probes > 0
+            normal_diagonal!(dscale, sb, cache, params, L; probes, rng, mask, nmax, slab, cull, batch_frames)
+        else
+            dscale .= max.(abs.(g), eps(T))
+        end
+        # preconditioned conjugate gradients on (JᵀJ + damping·D) p = −g, matrix-free, M = (D (1 + damping))⁻¹
+        Minv = 1 ./ (dscale .* (1 + damping))
         p = KernelAbstractions.allocate(backend, T, size(params)); fill!(p, zero(T))
-        res = -g; d = copy(res); rr = sum(abs2, res)
+        res = -g; z = Minv .* res; d = copy(z); rz = sum(res .* z)
+        g2 = sum(abs2, g); rel = one(T)
         Jd = KernelAbstractions.allocate(backend, T, m); Ad = similar(g)
         for k in 1:cg_iterations
             jvp!(Jd, sb, cache, params, d .* mask, L; nmax, slab, cull, batch_frames)
             jtvp!(Ad, sb, cache, params, Jd, L; nmax, slab, cull, batch_frames)
             Ad .= (Ad .+ damping .* dscale .* d) .* mask
-            α = rr / max(sum(d .* Ad), eps(T))
+            α = rz / max(sum(d .* Ad), eps(T))
             p .+= α .* d
             res .-= α .* Ad
-            rr_new = sum(abs2, res)
-            rr_new <= T(1e-6)^2 * sum(abs2, g) && break
-            d .= res .+ (rr_new / rr) .* d
-            rr = rr_new
+            rel = sqrt(sum(abs2, res) / g2)
+            rel <= T(1e-6) && break
+            z .= Minv .* res
+            rz_new = sum(res .* z)
+            d .= z .+ (rz_new / rz) .* d
+            rz = rz_new
         end
+        jvp!(Jd, sb, cache, params, p, L; nmax, slab, cull, batch_frames)                 # the quadratic model's decrease: ‖r‖² − ‖r + Jp‖²
+        predicted = χ - sum(abs2, r .+ Jd)
         trial = params .+ p
         rt = similar(r)
         χt = residuals!(rt, sb, cache, trial, L; nmax, slab, cull, batch_frames)
+        gain = (χ - χt) / max(predicted, eps(T))
         if χt < χ
             copyto!(params, trial); copyto!(r, rt); χ = χt
-            damping = max(damping / 3, T(1e-8))
+            damping = gain > T(0.75) ? max(damping / 3, T(1e-8)) : gain < T(0.25) ? damping * 2 : damping
         else
             damping *= 10
         end
         push!(history, χ)
-        callback === nothing || callback(it, params, χ, damping)
+        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, cg_residual = rel))
     end
     return params, history
 end
 
-export ScanBands, residuals!, residual_length, jvp!, jtvp!, polish_timeresolved!
+export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, polish_timeresolved!

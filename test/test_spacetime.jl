@@ -257,9 +257,24 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         lhs = dot(Array(Jv), w); rhs = dot(v, Array(Jtw))
         @test abs(lhs - rhs) <= 1e-8 * max(abs(lhs), abs(rhs))
         # two Levenberg–Marquardt steps lower the χ²
-        q2, history = Fit.polish_timeresolved!(copy(qd), bands, cache, L; iterations = 2, cg_iterations = 8)
+        infos = []
+        q2, history = Fit.polish_timeresolved!(copy(qd), bands, cache, L; iterations = 2, cg_iterations = 8, probes = 4, rng = Random.MersenneTwister(3),
+                                               callback = (it, x, v, dmp, info) -> push!(infos, info))
         @test history[end] < history[1] && all(isfinite, Array(q2))
-        @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps; J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
+        @test length(infos) == 2 && all(i -> isfinite(i.gain) && i.predicted > 0 && 0 <= i.cg_residual <= 1, infos)
+        # the Hutchinson diagonal against the exact one, column by column, on a few columns
+        sb = Fit.ScanBands(bands, cache)
+        dg = adapt_to(backend, zeros(size(p))); Fit.normal_diagonal!(dg, sb, cache, qd, L; probes = 64, rng = Random.MersenneTwister(5))
+        dgh = Array(dg); ratios = Float64[]
+        for (i, j) in ((1, 1), (13, 2), (16, 1))
+            e = zeros(size(p)); e[i, j] = 1
+            Je = adapt_to(backend, zeros(m)); Fit.jvp!(Je, sb, cache, qd, adapt_to(backend, e), L)
+            exact = sum(abs2, Array(Je))
+            push!(ratios, dgh[i, j] / exact)
+            @test exact / 4 <= dgh[i, j] <= 4 * exact                # a 64-probe estimate carries the couplings as noise (2.4× on one column of two overlapping parcels)
+        end
+        @info "Hutchinson diagonal ($label): estimate / exact on three columns $(round.(ratios, digits = 2))"
+        @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps (gain ratios $(round.([i.gain for i in infos], digits = 2))); J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
     end
 end
 
