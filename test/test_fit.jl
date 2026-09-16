@@ -723,6 +723,7 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         end
         tr = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = true, rng)
         @test ndata(tr) > 0 && all(!isempty(s.data.triangles) for s in tr.scans)
+        trv0 = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.02, closures = false, rng)
         q = p .+ 0.05 .* randn(rng, size(p))
         χ_host = chi2_timeresolved(q, tr, cpu, L, Δα, D, ν)
         χ_hand = sum(scan_loss(polarized_image(cpu, q, s.time, ν, L), Δα, L, D, s) for s in tr.scans)
@@ -740,6 +741,10 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         dparams_b = adapt_to(backend, zeros(size(q)))
         χb = timeresolved_gradient!(dparams_b, params, tr, cache, L, Δα, D, ν; batch_frames = 2)
         @test abs(χb - χ) <= 1e-12 * χ && maximum(abs.(Array(dparams_b) .- g)) <= 1e-12 * maximum(abs.(g))
+        # visibility scans through the backend likelihood (the default) against the host transform and seed (device = false)
+        dparams_d = adapt_to(backend, zeros(size(q))); χd = timeresolved_gradient!(dparams_d, params, trv0, cache, L, Δα, D, ν; batch_frames = 2)
+        dparams_h = adapt_to(backend, zeros(size(q))); χh = timeresolved_gradient!(dparams_h, params, trv0, cache, L, Δα, D, ν; batch_frames = 2, device = false)
+        @test abs(χd - χh) <= 1e-9 * χh && maximum(abs.(Array(dparams_d) .- Array(dparams_h))) <= 1e-9 * maximum(abs.(Array(dparams_h)))
         # the observation's own noise per baseline (coverage keeps it): the visibilities' σ are the coverage's, the closures'
         # uncertainties follow from them
         covσ = [ScanCoverage(c.time, c.u, c.v, c.s1, c.s2, [SVector{4}(0.02 .* (1 .+ 0.5 .* rand(rng, 4))) for _ in c.u]) for c in cov]
@@ -751,9 +756,8 @@ function test_timeresolved(backend; res = 6, N = 16, tol = 1e-9, label = "CPU ba
         # another precision: the converted scans give the Float64 χ² to single precision
         tr32 = Geodesics.precision(trσ, Float32)
         @test tr32 isa TimeResolved && tr32.scans[1].time isa Float32 && eltype(tr32.scans[1].data.vis) == SVector{4,ComplexF32} && eltype(tr32.scans[1].data.σ) == SVector{4,Float32}
-        cpu32 = Geodesics.precision(cpu, Float32)
-        χσ = chi2_timeresolved(q, trσ, cpu, L, Δα, D, ν); χσ32 = chi2_timeresolved(Float32.(q), tr32, cpu32, Float32(L), Float32(Δα), Float32(D), Float32(ν))
-        @test abs(χσ32 - χσ) <= 1e-3 * χσ
+        # (the Float32 χ² is compared through stored samples below: a fused march in Float32 recomputes the geodesics in
+        # single precision, where Krang is unstable, and at 12² × 40 on the card it was 9% off)
         # and the Float32 gradient on the backend (the host seed by Enzyme through a Float32 visibility transform) follows Float64's
         cache32 = Geodesics.precision(cache, Float32)
         dσ = adapt_to(backend, zeros(size(q))); χσb = timeresolved_gradient!(dσ, params, trσ, cache, L, Δα, D, ν; batch_frames = 2)
