@@ -118,7 +118,17 @@ fraction of the Gauss–Newton step. Per wall-clock hour this matched Adam's lat
 did no better. The polish now preconditions the iterations with a Hutchinson estimate of
 the diagonal of JᵀJ (sixteen probes, each a dual tails pass and an adjoint sweep), which also
 serves as the Marquardt diagonal, and moves the damping by the gain ratio of the actual to the
-model's decrease; the run of that version follows.
+model's decrease.
+
+**The preconditioned polish** (four steps of sixty iterations, sixteen probes, 93 minutes, from
+the plain polish's state): two steps rejected at a damping of 1e-3 and 1e-2 (the first with the
+conjugate-gradient residual five times its start, a runaway step along a null direction of the
+over-complete basis in single precision, the quadratic model predicting a quarter of the χ²
+and the χ² rising instead), then two accepted at 0.1 and 0.03 with gain ratios 0.96 and 0.86:
+χ²/N 2.93 → 2.81 → 2.61, four and seven percent per step against a third of a percent for the
+plain iterations, twenty minutes per step. The iterations now stop on a non-positive curvature
+estimate or a stalled residual, their recurrences run in Float64 around the Float32 products,
+and the diagonal is refreshed every fourth step; a longer run from this state follows.
 
 ## The spacetime free in the data domain
 
