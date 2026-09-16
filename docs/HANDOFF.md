@@ -43,6 +43,27 @@ with the recovered fields within the run-to-run spread: the FP32 transport is va
 fit level on this card (nine mechanisms in the FP32 note). Then the queued triband ngEHT
 self-fit below.
 
+## State at the close of 2026-09-15 (resume here)
+
+Merged 2026-09-14/15: #96, #97 (the FP32 transport validated at the fit level), #98 (the
+triband ngEHT pipeline: ngehtsim campaign, batched time-resolved likelihood with the coverage's
+noise and Float32 scans, the driver and its movie, the data-domain joint fit on `BandScans`,
+the analytic visibility seed), #99, #100, #102 (the triband results, stated as unconverged),
+#101 (the model-basis movie: one, six and three hundred parcels at three bands with
+eht-imaging-style ticks; `viz/basis_movie.jl`). Open: #103, the visibility likelihood on the
+backend (`src/Fit/device_visibilities.jl`: the frame's transform, χ² and dual-sweep seed as
+kernels over the device image; CPU gates green, the CUDA gate queued behind the fit on the
+card). On the card: the continuation of the triband movie fit with hygiene off at a small step
+(`--resume`, `--every 0`, η 0.003 → 3e-4, 600 iterations), after the resumed run stalled at
+χ²/N 7.44 (Daniel: an unconverged fit is not to be dressed up; a converged one should reach
+unity even with a plasma distribution unlike the truth). The next tool for the last decade is
+a matrix-free Gauss–Newton polish on the time-resolved residuals (J·v by dual-typed parameters
+through the tails kernel, which `R = zero(eltype(tails))` now allows; Jᵀr by the adjoint sweep;
+conjugate gradients between them), unless the fit moves to the cluster and runs Adam longer.
+Animations and stills are copied to `~/Dropbox/kerrsplat/figures_and_animations/` with README
+entries. Lessons in CLAUDE.md: the host seed's cost, the callback cadence, measuring the
+per-frame cost before a long run.
+
 ## The triband ngEHT self-fit (started 2026-09-14; `docs/notes/2026-09-14_ngeht_triband.md`)
 
 Daniel's request of 2026-09-13, running as PR #98: the campaign from `ngehtsim` (`validation/

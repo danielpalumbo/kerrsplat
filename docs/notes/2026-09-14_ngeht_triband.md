@@ -91,8 +91,17 @@ The truth scores 1.0 on the same data, so the floor is reachable; a converged fi
 over-complete basis is expected to reach it with a plasma distribution that need not be the
 truth's (Daniel, 2026-09-15), which is why recovered-field metrics are not quoted for this run.
 It was resumed from its end state (`--resume`, one stage with everything free, 600 iterations
-at η 0.01 → 1e-4); the χ²/N of the resumed run is the result to report. The movie of the
-unconverged run is `viz/output/triband_movie.mp4`.
+at η 0.01 → 1e-4, 9.8 hours): χ²/N 31.6 → 7.44 (9.4 / 5.9 / 2.7 at 230 / 86 / 345 GHz), 74 → 70
+parcels, and not converged either: the last hundred iterations moved it by 3% as the step
+closed, and the two hygiene events of the run (iterations 100 and 300) each threw the χ² up by
+an order of magnitude (776 and 63) with a hundred iterations spent recovering. So Adam with a
+decaying step on the over-complete basis stalls an order of magnitude above the floor, and the
+hygiene schedule, useful early, is harmful late. Two follow-ups: a continuation with hygiene
+off at a small constant-ish step, to separate the schedule from the curvature; and the
+principled tool for the last decade, a Gauss–Newton polish on the time-resolved residuals on
+the card, matrix-free (J·v by a directional pass, Jᵀr by the adjoint sweep in hand, conjugate
+gradients between them). The recovered-field numbers are withheld until a fit reaches the
+floor. The movie of the resumed run is `viz/output/triband_resumed_movie.mp4`.
 
 ## The spacetime free in the data domain
 
