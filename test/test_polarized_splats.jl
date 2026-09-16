@@ -543,3 +543,34 @@ function test_precision(; res = 8, N = 24)
     end
 end
 
+struct DirTag end
+"""
+A directional derivative of the tails image with respect to the splat parameters by dual-typed
+parameters through the tails kernel (the J·v of a Gauss–Newton step), against central
+differences.
+"""
+function test_directional_image(backend; res = 6, N = 16, tol = 1e-5, label = "CPU backend")
+    rng = MersenneTwister(31)
+    a, θo = 0.9, deg2rad(60.0); ν = 230e9; L = gravitational_radius(4e6)
+    camera = Geodesics.Camera((-9.0, 9.0), (-9.0, 9.0), res)
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true); regenerate!(cache, a, θo; marcher = Recurrence(64))
+    p = polarized_test_params()
+    v = randn(rng, size(p)); v[12, :] .= 0                        # the fixed rows are not perturbed
+    @testset "$label directional derivative of the image" begin
+        pd = adapt_to(backend, [ForwardDiff.Dual{DirTag}(p[i, j], v[i, j]) for i in axes(p, 1), j in axes(p, 2)])
+        tails = KernelAbstractions.allocate(backend, SVector{4,ForwardDiff.Dual{DirTag,Float64,1}}, npixels(cache), N + 1)
+        polarized_tails!(tails, cache, pd, 5.0, ν, L)
+        img = Array(tail_image(tails, ν))
+        value = [SVector{4}(ForwardDiff.value.(x)) for x in img]
+        deriv = [SVector{4}(ForwardDiff.partials.(x, 1)) for x in img]
+        t64 = KernelAbstractions.allocate(backend, SVector{4,Float64}, npixels(cache), N + 1)
+        image(q) = (polarized_tails!(t64, cache, adapt_to(backend, q), 5.0, ν, L); Array(tail_image(t64, ν)))
+        @test maximum(maximum.(abs, value .- image(p))) <= 1e-12 * maximum(x -> maximum(abs, x), image(p))
+        h = 1e-6
+        fd = (image(p .+ h .* v) .- image(p .- h .* v)) ./ (2h)
+        e = maximum(maximum.(abs, deriv .- fd)) / maximum(x -> maximum(abs, x), fd)
+        @test e <= tol
+        @info "directional derivative of the image ($label): relative difference from central differences $e"
+    end
+end
+
