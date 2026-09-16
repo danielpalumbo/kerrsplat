@@ -126,6 +126,35 @@ node. For the visibility scans the host seed of each frame's sweep is the adjoin
 the weighted residuals (`visibility_seed!`, threaded over baselines) rather than an Enzyme pass,
 which was the fit's bottleneck: the card sat idle between launches.
 
+## The likelihood on the card and the Gauss–Newton polish
+
+With the analytic seed the host's share of a time-resolved iteration was still the largest: ninety
+frames' direct transforms and adjoints at a second each against twenty seconds of sweeps, the
+card idle between launches. `src/Fit/device_visibilities.jl` moves the visibility likelihood onto
+the backend: the scans of a frame concatenated as `FrameScans` (baselines, observed Stokes
+visibilities, their noise, the scattering taper, in the scalar type of the fit), `vis_kernel!`
+(the direct transform of the frame's image onto the baselines, one thread per baseline over the
+sorted pixel order the tails kernel leaves), `seed_kernel!` (the adjoint transform of the
+weighted residuals into the sweep's seed) and `frame_chi2_seed!` (both, and the χ²). The batched
+sweep takes the forward images from `sweep_passes` on the device and never copies them; the
+gate `test_timeresolved` holds the device path to the host path at 1e-9, and the Float32 χ² is
+compared through stored samples only (a fused Float32 march recomputes the geodesics in single
+precision, 9% off at 12² × 40 on the card).
+
+The polish (`src/Fit/gauss_newton.jl`) is Levenberg–Marquardt on the same residual vector, the
+Jacobian never formed. J·v comes from one tails pass with the parameters as one-partial duals
+seeded along v (the tails kernel's accumulator is typed by the tails array, so a dual parameter
+matrix gives the image's directional derivative; the parcel lists come from the values) followed
+by the frame's device transform of the dual image; Jᵀw comes from the adjoint sweep seeded by the
+adjoint transform of w (`seed_kernel!` with weights w/σ); conjugate gradients on
+(JᵀJ + λ diag) p = −Jᵀr give the step, the diagonal being |Jᵀr| per row as the Marquardt scale,
+and λ moves with the outcome (÷3 on a decrease, ×10 on a rejection). The gate `test_gauss_newton`
+checks J·v against finite differences (2e-9), the adjoint identity ⟨Jv, w⟩ = ⟨v, Jᵀw⟩ (3e-14) and
+that two steps lower a stalled χ² (10,885 → 2,946). Each conjugate-gradient iteration costs a
+tails pass on duals and a full gradient sweep, so a step of twenty iterations costs about forty
+Adam iterations; the driver's `--polish N --cg K --lambda λ` runs it on a `--resume`'d state at
+the held spacetime.
+
 ## The animations
 
 `viz/triband_movie.jl` renders the campaign frame by frame: the truth and the fit at the three
