@@ -106,8 +106,19 @@ floor. The movie of the resumed run is `viz/output/triband_resumed_movie.mp4`.
 The continuation with hygiene off (600 more iterations at η 0.003 → 3e-4, 9.5 hours): χ²/N
 7.44 → 3.09 (3.83 / 2.37 / 2.05 per band), monotone, no spikes, still falling by 3% per hundred
 iterations at the end. So the hygiene schedule was most of the stall, and Adam alone keeps
-descending but slowly: three times the floor after 1,500 iterations in all. The Gauss–Newton
-polish (`polish_timeresolved!`) runs on this state next.
+descending but slowly: three times the floor after 1,500 iterations in all.
+
+**The Gauss–Newton polish on that state** (ten Levenberg–Marquardt steps of twenty
+unpreconditioned conjugate-gradient iterations, Float32, 63 minutes): χ²/N 3.09 → 2.93, every
+step accepted and the damping divided by three each time down to 2e-7, the χ² moving by a
+third of a percent per step. The damping was never the limit; the linear solve was: twenty
+iterations of plain conjugate gradients on rows that span decades of scale (positions in M,
+logarithms, angles, rates in rad/M) resolve only the stiffest directions, and the step is a
+fraction of the Gauss–Newton step. Per wall-clock hour this matched Adam's late descent and
+did no better. The polish now preconditions the iterations with a Hutchinson estimate of
+the diagonal of JᵀJ (sixteen probes, each a dual tails pass and an adjoint sweep), which also
+serves as the Marquardt diagonal, and moves the damping by the gain ratio of the actual to the
+model's decrease; the run of that version follows.
 
 ## The spacetime free in the data domain
 
