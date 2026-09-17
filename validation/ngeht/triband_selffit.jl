@@ -7,7 +7,7 @@
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
 #         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
-#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--cg 20] [--lambda 0.01] [--probes 8] [--probe-every 4] [--dense 0] [--chunk 8]
+#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--cg 20] [--lambda 0.01] [--probes 8] [--probe-every 4] [--stall 20] [--dense 0] [--chunk 8]
 # --dense N runs N Levenberg–Marquardt iterations on the explicit Jacobian (Fit.polish_dense!, --chunk columns per pass).
 # --polish N runs N Levenberg–Marquardt steps of the matrix-free Gauss–Newton polish (Fit.polish_timeresolved!, --cg
 # conjugate-gradient iterations each, --lambda the initial damping) after the Adam stages (with --iterations 0, only the
@@ -33,7 +33,7 @@ backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU(); batch =
 free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); inc0 = getopt("--inc0", 50.0); lm_every = getopt("--lm-every", 3); inner = getopt("--inner", 3)
 pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
 start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
-npolish = getopt("--polish", 0); ncg = getopt("--cg", 20); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8)
+npolish = getopt("--polish", 0); ncg = getopt("--cg", 20); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8); stall = getopt("--stall", 20)
 free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
@@ -154,7 +154,7 @@ polish_history = Float64[]
 if npolish > 0                                               # the Gauss–Newton polish on the backend, in T, at the held spacetime
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
-    qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, cg_iterations = ncg, λ = λ0, probes = nprobes, probe_every, nmax, slab, batch_frames = batch,
+    qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, cg_iterations = ncg, λ = λ0, probes = nprobes, probe_every, stall, nmax, slab, batch_frames = batch,
                                     callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("polish step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  cg residual %.2e  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.cg_residual, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global polish_history = Float64.(ph)
     global history = vcat(history, polish_history)
@@ -164,7 +164,7 @@ if ndense > 0                                                # Levenberg–Marqu
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
     qdev, dh, _ = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), nmax, slab, batch_frames = batch,
-                                callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
+                                callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  max step %.2e  diag %.1e..%.1e  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.max_step, info.diag_range[1], info.diag_range[2], info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global dense_history = Float64.(dh)
     global history = vcat(history, dense_history)
 end
