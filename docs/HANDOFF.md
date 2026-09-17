@@ -58,8 +58,9 @@ hygiene) → 3.09 (hygiene off); the plain polish → 2.93 (the solve the limit)
 preconditioned polish → 2.61 in two accepted steps and → 2.05 in twelve guarded ones; the
 dense polish → 1.77 in three hour-long iterations, five percent each, the step set by the
 model's nonlinearity at a damping of 0.03 rather than by the solver, so the cheaper partial
-solves win per hour. On the card at the close: forty preconditioned steps of forty iterations
-from the 1.77 state (`triband_pcg3`, about five hours), a Monitor on every tenth step. Two
+solves win per hour; then forty preconditioned steps → 1.25 (1.31 / 1.17 / 1.28 per band) in
+eight hours, steady at one to two percent per step and still descending; sixty more run on
+the card from there (`triband_pcg4`, about twelve hours), a Monitor on every tenth step. Two
 readings of the state: the polish is the right tool for the last decade and is validated (J·v
 against differences, the adjoint identity, J against J·v); whether seventy parcels of 0.25 M
 can represent the truth's six of 0.7 M to the campaign's 1 mJy is open, and if the long run

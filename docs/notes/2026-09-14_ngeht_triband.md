@@ -157,8 +157,15 @@ damping of 0.1 and 0.03 with gain ratios 0.73, 0.77 and 0.58, χ²/N 2.05 → 1.
 diagonal of JᵀJ spanning forty decades. So the exact solve gains five percent per iteration
 where the preconditioned partial solves gained two to three, at six times the cost: at this
 damping the step is set by the model's nonlinearity, not by the solver, and the cheaper solver
-wins per hour. The long run is preconditioned conjugate gradients from the 1.77 state (forty
-steps of forty iterations, the stall guard at twenty).
+wins per hour.
+
+**Forty preconditioned steps from the 1.77 state** (forty iterations each, the stall guard at
+twenty, 7.9 hours): every step but one accepted, χ²/N 1.77 → 1.25 (1.31 / 1.17 / 1.28 per band
+against the truth's 1.00 / 1.01 / 0.97), the descent steady at one to two percent per step
+with no sign of a floor (1.62 at step 4, 1.46 at 12, 1.38 at 20, 1.32 at 28, 1.25 at 40), the
+damping wandering between 1e-4 and 7e-2 with the gain ratio. The run continues from there;
+whether the seventy parcels reach unity or level off decides between reporting the fit and
+densifying it first.
 
 ## The spacetime free in the data domain
 
