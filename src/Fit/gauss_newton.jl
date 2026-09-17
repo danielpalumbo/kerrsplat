@@ -175,7 +175,7 @@ function normal_diagonal!(dg, sb::ScanBands, cache::GeodesicCache{T,N}, params, 
 end
 
 """
-    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, probe_every = 4, free = trues(size(params)), nmax, slab, callback) -> (params, history)
+    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, probe_every = 4, stall = 20, free = trues(size(params)), nmax, slab, callback) -> (params, history)
 
 Levenberg–Marquardt steps on the splat parameters against the bands' visibility scans, each step
 from preconditioned conjugate gradients on the matrix-free normal equations
@@ -187,7 +187,7 @@ and unpreconditioned iterations resolve only the stiffest directions; the estima
 every `probe_every` steps. The iterations stop on a non-positive curvature estimate (a null
 direction of the over-complete basis in single precision, whose step would be unbounded: the
 first preconditioned run of the triband state took such a step, the residual five times its
-start, the χ² up) or when the residual has not improved for ten iterations. λ follows the gain ratio
+start, the χ² up) or when the residual has not improved for `stall` iterations (that residual is not monotone: a guard of ten cut the triband solves at residuals of 0.3–1.2 of their start where sixty free iterations reached 0.03–0.14). λ follows the gain ratio
 ρ = (actual decrease)/(decrease of the quadratic model): ÷3 when ρ > 0.75, ×2 when ρ < 0.25,
 ×10 and the step rejected when χ² rises. `params` lives on the backend (its shape is kept: no
 hygiene here). Returns the parameters and the χ² after every step; the callback receives
@@ -195,7 +195,7 @@ hygiene here). Returns the parameters and the χ² after every step; the callbac
 conjugate gradients' final relative residual.
 """
 function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, cg_iterations::Integer = 20, λ::Real = 1e-2, probes::Integer = 8, probe_every::Integer = 4,
-                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
+                              stall::Integer = 20, free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -216,7 +216,7 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
         end
         # preconditioned conjugate gradients on (JᵀJ + damping·D) p = −g, matrix-free, M = (D (1 + damping))⁻¹; stopped on a
         # non-positive curvature estimate (a null direction of the over-complete basis in single precision, whose step would be
-        # unbounded) or when the residual has not improved on its best for ten iterations
+        # unbounded) or when the residual has not improved on its best for `stall` iterations
         D64 = F.(dscale); Minv = 1 ./ (D64 .* (1 + damping)); mask64 = F.(mask)
         p = KernelAbstractions.allocate(backend, F, size(params)); fill!(p, zero(F))
         res = -F.(g); z = Minv .* res; d = copy(z); rz = sum(res .* z)
@@ -236,7 +236,7 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
             if rel < best
                 best = rel; since = 0
             else
-                since += 1; since >= 10 && break
+                since += 1; since >= stall && break
             end
             z .= Minv .* res
             rz_new = sum(res .* z)
@@ -327,13 +327,14 @@ end
 Levenberg–Marquardt on the explicit Jacobian (`jacobian!`): each iteration forms JᵀJ and Jᵀr
 in Float64 on the host and solves (JᵀJ + λ diag(JᵀJ)) p = −Jᵀr by Cholesky, trying up to
 `tries` dampings (×10 each rejection) on the same Jacobian before giving up on the step; λ
-follows the gain ratio as in `polish_timeresolved!`. Returns the parameters, the χ² after every
+follows the gain ratio as in `polish_timeresolved!`, the Marquardt diagonal is floored at
+`diag_floor` of its largest entry, and the iterations end once λ exceeds `λ_max`. Returns the parameters, the χ² after every
 iteration and the last normal matrix (its inverse is the Laplace covariance of the free
 parameters). The callback receives `(it, params, χ, λ, info)` with the gain ratio, the model's
 predicted decrease, the number of dampings tried and the seconds the Jacobian took.
 """
 function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, λ::Real = 1e-2, free = trues(size(params)), chunk::Val{C} = Val(8),
-                       tries::Integer = 6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
+                       tries::Integer = 6, diag_floor::Real = 1e-6, λ_max::Real = 1e6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -354,13 +355,18 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
             mul!(A, Jb', Jb, 1.0, 1.0)
             mul!(g, Jb', rh[rows], 1.0, 1.0)
         end
-        dg = max.(diag(A), eps())
+        # the Marquardt diagonal floored at `diag_floor` of its largest entry: a column the residuals barely see (a parcel
+        # of no flux, a rate of a parcel at rest) has a diagonal of single-precision noise, and the damped solve would
+        # send it anywhere (the first dense run of the triband state: the trial χ² of 1e10 at a damping of 1e4)
+        dA = diag(A)
+        dg = max.(dA, diag_floor * maximum(dA))
         ph = Array(params)
-        gain = NaN; predicted = NaN; tried = 0; accepted = false
+        gain = NaN; predicted = NaN; tried = 0; accepted = false; pmax = NaN
         for _ in 1:tries
             tried += 1
             p = -(cholesky(Symmetric(A + damping * Diagonal(dg))) \ g)
             predicted = -(2 * dot(g, p) + dot(p, A * p))            # ‖r‖² − ‖r + Jp‖²
+            pmax = maximum(abs, p)
             th = copy(ph); th[columns] .+= T.(p)
             trial = KernelAbstractions.allocate(backend, T, size(params)); copyto!(trial, th)
             rt = similar(r)
@@ -372,10 +378,13 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
                 break
             else
                 damping *= 10
+                damping > λ_max && break
             end
         end
         push!(history, χ)
-        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, tries = tried, accepted = accepted, jacobian_seconds = tj))
+        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, tries = tried, accepted = accepted, jacobian_seconds = tj, max_step = pmax,
+                                                                diag_range = (minimum(dA), maximum(dA))))
+        damping > λ_max && break                                   # no damping makes a step: the quadratic model has nothing left
     end
     return params, history, A
 end
