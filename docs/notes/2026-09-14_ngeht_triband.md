@@ -103,6 +103,70 @@ the card, matrix-free (J·v by a directional pass, Jᵀr by the adjoint sweep in
 gradients between them). The recovered-field numbers are withheld until a fit reaches the
 floor. The movie of the resumed run is `viz/output/triband_resumed_movie.mp4`.
 
+The continuation with hygiene off (600 more iterations at η 0.003 → 3e-4, 9.5 hours): χ²/N
+7.44 → 3.09 (3.83 / 2.37 / 2.05 per band), monotone, no spikes, still falling by 3% per hundred
+iterations at the end. So the hygiene schedule was most of the stall, and Adam alone keeps
+descending but slowly: three times the floor after 1,500 iterations in all.
+
+**The Gauss–Newton polish on that state** (ten Levenberg–Marquardt steps of twenty
+unpreconditioned conjugate-gradient iterations, Float32, 63 minutes): χ²/N 3.09 → 2.93, every
+step accepted and the damping divided by three each time down to 2e-7, the χ² moving by a
+third of a percent per step. The damping was never the limit; the linear solve was: twenty
+iterations of plain conjugate gradients on rows that span decades of scale (positions in M,
+logarithms, angles, rates in rad/M) resolve only the stiffest directions, and the step is a
+fraction of the Gauss–Newton step. Per wall-clock hour this matched Adam's late descent and
+did no better. The polish now preconditions the iterations with a Hutchinson estimate of
+the diagonal of JᵀJ (sixteen probes, each a dual tails pass and an adjoint sweep), which also
+serves as the Marquardt diagonal, and moves the damping by the gain ratio of the actual to the
+model's decrease.
+
+**The preconditioned polish** (four steps of sixty iterations, sixteen probes, 93 minutes, from
+the plain polish's state): two steps rejected at a damping of 1e-3 and 1e-2 (the first with the
+conjugate-gradient residual five times its start, a runaway step along a null direction of the
+over-complete basis in single precision, the quadratic model predicting a quarter of the χ²
+and the χ² rising instead), then two accepted at 0.1 and 0.03 with gain ratios 0.96 and 0.86:
+χ²/N 2.93 → 2.81 → 2.61, four and seven percent per step against a third of a percent for the
+plain iterations, twenty minutes per step. The iterations now stop on a non-positive curvature
+estimate or a stalled residual, their recurrences run in Float64 around the Float32 products,
+and the diagonal is refreshed every fourth step.
+
+**Twelve guarded steps from that state** (104 minutes, nine per step): every step accepted with
+gain ratios 0.15–0.90, χ²/N 2.61 → 2.05 (2.45 / 1.63 / 1.68 per band), two to three percent
+per step, no faster per hour than before, and the linear solves poor (the residual at the stall
+guard 0.3–1.2 of its start). The conjugate gradients on the matrix-free normal equations
+resolve a few dozen directions of 1,470 per step. The problem is small enough for the
+explicit Jacobian: `jacobian!` forms it by tails passes on duals with eight partials (eight
+columns per pass, the parcel lists once per frame chunk), a few gigabytes of host memory for
+the campaign's residuals, and `polish_dense!` takes the exact damped step from JᵀJ and Jᵀr
+accumulated in Float64, trying several dampings on the same Jacobian; the last normal matrix's
+inverse is the Laplace covariance.
+
+**The first dense run** (six iterations, 53 minutes per Jacobian of 184 passes, 5.3 hours in all)
+made no step: every damping from 1e-2 to 1e4 was rejected with the trial χ² near 1e10 even where
+the model predicted a decrease of a few hundred, one step at a damping of 3e3 gained 600, and
+the damping then ran to 1e27 over four iterations of nothing. The signature of flat columns: a
+parameter the residuals barely see (a parcel of no flux, the rate of a parcel at rest) has a
+Jacobian column of single-precision noise, a diagonal entry of 1e-14 of the largest, and the
+damped solve sends it anywhere the model considers free, into a state the transport cannot
+render. The Marquardt diagonal is now floored at 1e-6 of its largest entry (the Hutchinson
+version had this floor from the start) and the iterations end once the damping passes 1e6.
+
+**The dense run with the floor** (three iterations, 2.6 hours): every step accepted at a
+damping of 0.1 and 0.03 with gain ratios 0.73, 0.77 and 0.58, χ²/N 2.05 → 1.95 → 1.87 → 1.77
+(2.08 / 1.45 / 1.54 per band), the largest step 0.08–0.14 in the parameters' units, the
+diagonal of JᵀJ spanning forty decades. So the exact solve gains five percent per iteration
+where the preconditioned partial solves gained two to three, at six times the cost: at this
+damping the step is set by the model's nonlinearity, not by the solver, and the cheaper solver
+wins per hour.
+
+**Forty preconditioned steps from the 1.77 state** (forty iterations each, the stall guard at
+twenty, 7.9 hours): every step but one accepted, χ²/N 1.77 → 1.25 (1.31 / 1.17 / 1.28 per band
+against the truth's 1.00 / 1.01 / 0.97), the descent steady at one to two percent per step
+with no sign of a floor (1.62 at step 4, 1.46 at 12, 1.38 at 20, 1.32 at 28, 1.25 at 40), the
+damping wandering between 1e-4 and 7e-2 with the gain ratio. The run continues from there;
+whether the seventy parcels reach unity or level off decides between reporting the fit and
+densifying it first.
+
 ## The spacetime free in the data domain
 
 `fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
@@ -119,6 +183,35 @@ this card's speed the full-size joint run is a ten-hour job; it is the first job
 node. For the visibility scans the host seed of each frame's sweep is the adjoint transform of
 the weighted residuals (`visibility_seed!`, threaded over baselines) rather than an Enzyme pass,
 which was the fit's bottleneck: the card sat idle between launches.
+
+## The likelihood on the card and the Gauss–Newton polish
+
+With the analytic seed the host's share of a time-resolved iteration was still the largest: ninety
+frames' direct transforms and adjoints at a second each against twenty seconds of sweeps, the
+card idle between launches. `src/Fit/device_visibilities.jl` moves the visibility likelihood onto
+the backend: the scans of a frame concatenated as `FrameScans` (baselines, observed Stokes
+visibilities, their noise, the scattering taper, in the scalar type of the fit), `vis_kernel!`
+(the direct transform of the frame's image onto the baselines, one thread per baseline over the
+sorted pixel order the tails kernel leaves), `seed_kernel!` (the adjoint transform of the
+weighted residuals into the sweep's seed) and `frame_chi2_seed!` (both, and the χ²). The batched
+sweep takes the forward images from `sweep_passes` on the device and never copies them; the
+gate `test_timeresolved` holds the device path to the host path at 1e-9, and the Float32 χ² is
+compared through stored samples only (a fused Float32 march recomputes the geodesics in single
+precision, 9% off at 12² × 40 on the card).
+
+The polish (`src/Fit/gauss_newton.jl`) is Levenberg–Marquardt on the same residual vector, the
+Jacobian never formed. J·v comes from one tails pass with the parameters as one-partial duals
+seeded along v (the tails kernel's accumulator is typed by the tails array, so a dual parameter
+matrix gives the image's directional derivative; the parcel lists come from the values) followed
+by the frame's device transform of the dual image; Jᵀw comes from the adjoint sweep seeded by the
+adjoint transform of w (`seed_kernel!` with weights w/σ); conjugate gradients on
+(JᵀJ + λ diag) p = −Jᵀr give the step, the diagonal being |Jᵀr| per row as the Marquardt scale,
+and λ moves with the outcome (÷3 on a decrease, ×10 on a rejection). The gate `test_gauss_newton`
+checks J·v against finite differences (2e-9), the adjoint identity ⟨Jv, w⟩ = ⟨v, Jᵀw⟩ (3e-14) and
+that two steps lower a stalled χ² (10,885 → 2,946). Each conjugate-gradient iteration costs a
+tails pass on duals and a full gradient sweep, so a step of twenty iterations costs about forty
+Adam iterations; the driver's `--polish N --cg K --lambda λ` runs it on a `--resume`'d state at
+the held spacetime.
 
 ## The animations
 

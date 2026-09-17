@@ -43,6 +43,34 @@ with the recovered fields within the run-to-run spread: the FP32 transport is va
 fit level on this card (nine mechanisms in the FP32 note). Then the queued triband ngEHT
 self-fit below.
 
+## State at the close of 2026-09-16 (resume here)
+
+Merged 2026-09-16: #103 (the visibility likelihood on the backend; the CUDA gate 43/44 with
+the fused-Float32 χ² assertion dropped, a fused Float32 march recomputing the geodesics in
+single precision), #104 (the tails kernel's accumulator typed by the tails array), #105 (the
+matrix-free Gauss–Newton polish and everything it took: `Transfer.coefficient_type` so that
+dual-typed parameters compile through the per-ray list path on the device, the Hutchinson
+Jacobi preconditioner and gain-ratio damping, the guarded conjugate gradients, the explicit
+Jacobian by chunked duals and `polish_dense!`). Open: #106 (the dense polish's Marquardt
+diagonal floored and the damping capped; the `stall` guard as a parameter) and the note PR
+from `ngeht-cont`. The triband movie fit, all stages unconverged: Adam 33,700 → 7.44 (with
+hygiene) → 3.09 (hygiene off); the plain polish → 2.93 (the solve the limit); the
+preconditioned polish → 2.61 in two accepted steps and → 2.05 in twelve guarded ones; the
+dense polish → 1.77 in three hour-long iterations, five percent each, the step set by the
+model's nonlinearity at a damping of 0.03 rather than by the solver, so the cheaper partial
+solves win per hour; then forty preconditioned steps → 1.25 (1.31 / 1.17 / 1.28 per band) in
+eight hours, steady at one to two percent per step and still descending; sixty more run on
+the card from there (`triband_pcg4`, about twelve hours), a Monitor on every tenth step. Two
+readings of the state: the polish is the right tool for the last decade and is validated (J·v
+against differences, the adjoint identity, J against J·v); whether seventy parcels of 0.25 M
+can represent the truth's six of 0.7 M to the campaign's 1 mJy is open, and if the long run
+levels off above unity the next move is densification (split the parcels that carry the
+largest residuals) followed by the polish again, since hygiene's prune and merge were what
+threw the χ² late. Lessons in CLAUDE.md: the coefficient type of dual parameters; and in the
+note: Julia's stderr to a file is buffered until exit (long jobs go through `tee`), Float32
+central differences are no reference for a Float32 derivative (compare with Float64 duals),
+and never `git checkout` a branch that a worktree holds (the commit lands on the wrong branch).
+
 ## State at the close of 2026-09-15 (resume here)
 
 Merged 2026-09-14/15: #96, #97 (the FP32 transport validated at the fit level), #98 (the
