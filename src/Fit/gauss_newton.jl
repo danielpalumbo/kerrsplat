@@ -3,8 +3,8 @@
 # residuals of the four Stokes visibilities) is never formed. J·v comes from one tails pass with the parameters as
 # one-partial duals seeded along v (the transport of `polarized_tails!` runs on duals) followed by the frame's
 # device transform on the dual image; Jᵀw comes from the adjoint sweep seeded by the adjoint transform of w
-# (`seed_kernel!` with weights w/σ); conjugate gradients on (JᵀJ + λ diag) p = −Jᵀr give the step, and λ moves with
-# the outcome of each step as in Levenberg–Marquardt. Adam on the over-complete basis stalls a decade above the
+# (`seed_kernel!` with weights w/σ); LSQR on the scaled Jacobian gives the damped step (JᵀJ + λ D) p = −Jᵀr, and λ
+# moves with the outcome of each step as in Levenberg–Marquardt. Adam on the over-complete basis stalls a decade above the
 # floor of a campaign's χ² (docs/notes/2026-09-14_ngeht_triband.md); the quadratic model is the tool for that last
 # decade.
 
@@ -175,27 +175,70 @@ function normal_diagonal!(dg, sb::ScanBands, cache::GeodesicCache{T,N}, params, 
 end
 
 """
-    polish_timeresolved!(params, bands, cache, L; iterations = 5, cg_iterations = 20, λ = 1e-2, probes = 8, probe_every = 4, stall = 20, free = trues(size(params)), nmax, slab, callback) -> (params, history)
+    lsqr_step!(x, sb, cache, params, r, L; scale, damp = 0, iterations = 40, atol = 1e-6, ...) -> (x, k, rel)
+
+The damped least-squares step min ‖J S x + r‖² + damp² ‖x‖² by LSQR (Paige & Saunders 1982) on
+the column-scaled Jacobian J S, matrix-free: J·v by `jvp!` and Jᵀu by `jtvp!`, one of each per
+iteration, the bidiagonalization's vectors and recurrences in Float64 around the Float32
+products. `scale` is S as a parameter-shaped array (a zero fixes a parameter); the parameter
+step is S x, and with S = D^{-1/2} and damp = √λ it solves the Marquardt system
+(JᵀJ + λ D) p = −Jᵀr. Returns x, the iterations taken and the final estimate of the
+normal-equation residual ‖(J S)ᵀ r_k‖ relative to its start, which stops the iterations at
+`atol`. Conjugate gradients on the normal equations square the conditioning and their residual
+is not monotone: on the over-complete basis (exact null directions, Float32 products) the
+triband solves ended with residuals of 0.2–5 of their start; LSQR sees J only through products
+and its residual decreases monotonically.
+"""
+function lsqr_step!(x, sb::ScanBands, cache::GeodesicCache{T,N}, params, r, L; scale, damp::Real = 0.0, iterations::Integer = 40, atol::Real = 1e-6,
+                    nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16, batch_frames::Integer = 4) where {T,N}
+    backend = cache.backend
+    F = Float64
+    Jd = KernelAbstractions.allocate(backend, T, length(r)); Jt = KernelAbstractions.allocate(backend, T, size(params))
+    Av(v) = (jvp!(Jd, sb, cache, params, T.(scale .* v), L; nmax, slab, cull, batch_frames); F.(Jd))
+    Atu(u) = (jtvp!(Jt, sb, cache, params, T.(u), L; nmax, slab, cull, batch_frames); scale .* F.(Jt))
+    fill!(x, zero(F))
+    u = -F.(r); β = sqrt(sum(abs2, u)); β > 0 || return x, 0, 0.0
+    u ./= β
+    v = Atu(u); α = sqrt(sum(abs2, v)); α > 0 || return x, 0, 0.0
+    v ./= α
+    w = copy(v)
+    φ̄ = β; ρ̄ = α
+    norm0 = α * β; rel = 1.0; k = 0
+    for it in 1:iterations
+        k = it
+        u .= Av(v) .- α .* u; β = sqrt(sum(abs2, u)); β > 0 && (u ./= β)
+        v .= Atu(u) .- β .* v; α = sqrt(sum(abs2, v)); α > 0 && (v ./= α)
+        ρ̂ = hypot(ρ̄, damp); ĉ = ρ̄ / ρ̂                             # the damping's rotation
+        φ̄ = ĉ * φ̄
+        ρ = hypot(ρ̂, β); c = ρ̂ / ρ; s = β / ρ                      # the bidiagonal's rotation
+        θ = s * α; ρ̄ = -c * α
+        φ = c * φ̄; φ̄ = s * φ̄
+        x .+= (φ / ρ) .* w
+        w .= v .- (θ / ρ) .* w
+        rel = abs(φ̄ * α * c) / norm0                                # ‖Aᵀ r_k‖ / ‖Aᵀ r_0‖
+        (rel <= atol || β == 0 || α == 0) && break
+    end
+    return x, k, rel
+end
+
+"""
+    polish_timeresolved!(params, bands, cache, L; iterations = 5, solve_iterations = 40, λ = 1e-2, probes = 8, probe_every = 4, free = trues(size(params)), nmax, slab, callback) -> (params, history)
 
 Levenberg–Marquardt steps on the splat parameters against the bands' visibility scans, each step
-from preconditioned conjugate gradients on the matrix-free normal equations
-(JᵀJ + λ D) p = −Jᵀr, with J·v by the dual tails pass and Jᵀw by the adjoint sweep. D is the
-Hutchinson estimate of diag(JᵀJ) from `probes` probes (`normal_diagonal!`; with `probes = 0`
-the gradient's magnitude per row, a cruder scale), and the Jacobi preconditioner is its
-inverse: the rows (positions in M, logarithms, angles, rates in rad/M) span decades of scale,
-and unpreconditioned iterations resolve only the stiffest directions; the estimate is refreshed
-every `probe_every` steps. The iterations stop on a non-positive curvature estimate (a null
-direction of the over-complete basis in single precision, whose step would be unbounded: the
-first preconditioned run of the triband state took such a step, the residual five times its
-start, the χ² up) or when the residual has not improved for `stall` iterations (that residual is not monotone: a guard of ten cut the triband solves at residuals of 0.3–1.2 of their start where sixty free iterations reached 0.03–0.14). λ follows the gain ratio
-ρ = (actual decrease)/(decrease of the quadratic model): ÷3 when ρ > 0.75, ×2 when ρ < 0.25,
-×10 and the step rejected when χ² rises. `params` lives on the backend (its shape is kept: no
-hygiene here). Returns the parameters and the χ² after every step; the callback receives
-`(it, params, χ, λ, info)` with the step's gain ratio, the model's predicted decrease and the
-conjugate gradients' final relative residual.
+the damped least-squares solution of (JᵀJ + λ D) p = −Jᵀr by `lsqr_step!` (at most
+`solve_iterations` of J·v and Jᵀu) on the Jacobian scaled by D^{-1/2}. D is the Hutchinson
+estimate of diag(JᵀJ) from `probes` probes (`normal_diagonal!`, refreshed every `probe_every`
+steps; with `probes = 0` the gradient's magnitude per row, a cruder scale): the rows (positions
+in M, logarithms, angles, rates in rad/M) span decades of scale, and the unscaled iterations
+resolve only the stiffest directions. λ follows the gain ratio ρ = (actual decrease)/(decrease of
+the quadratic model): ÷3 when ρ > 0.75, ×2 when ρ < 0.25, ×10 and the step rejected when χ²
+rises. `params` lives on the backend (its shape is kept: no hygiene here). Returns the
+parameters and the χ² after every step; the callback receives `(it, params, χ, λ, info)` with
+the step's gain ratio, the model's predicted decrease, the solve's iterations and its final
+relative normal-equation residual.
 """
-function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, cg_iterations::Integer = 20, λ::Real = 1e-2, probes::Integer = 8, probe_every::Integer = 4,
-                              stall::Integer = 20, free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
+function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, solve_iterations::Integer = 40, λ::Real = 1e-2, probes::Integer = 8, probe_every::Integer = 4,
+                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -204,8 +247,8 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
     r = KernelAbstractions.allocate(backend, T, m)
     χ = residuals!(r, sb, cache, params, L; nmax, slab, cull, batch_frames)
     history = T[χ]
-    g = KernelAbstractions.allocate(backend, T, size(params)); dscale = similar(g); Ad32 = similar(g); Jd = KernelAbstractions.allocate(backend, T, m)
-    F = Float64                                                  # the conjugate-gradient recurrences in Float64; the products in T
+    g = KernelAbstractions.allocate(backend, T, size(params)); dscale = similar(g); Jd = KernelAbstractions.allocate(backend, T, m)
+    F = Float64                                                  # the solve's recurrences in Float64; the products in T
     damping = F(λ)
     for it in 1:iterations
         jtvp!(g, sb, cache, params, r, L; nmax, slab, cull, batch_frames); g .*= mask         # Jᵀr
@@ -214,35 +257,11 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
         else
             dscale .= max.(abs.(g), eps(T))
         end
-        # preconditioned conjugate gradients on (JᵀJ + damping·D) p = −g, matrix-free, M = (D (1 + damping))⁻¹; stopped on a
-        # non-positive curvature estimate (a null direction of the over-complete basis in single precision, whose step would be
-        # unbounded) or when the residual has not improved on its best for `stall` iterations
-        D64 = F.(dscale); Minv = 1 ./ (D64 .* (1 + damping)); mask64 = F.(mask)
-        p = KernelAbstractions.allocate(backend, F, size(params)); fill!(p, zero(F))
-        res = -F.(g); z = Minv .* res; d = copy(z); rz = sum(res .* z)
-        g2 = sum(abs2, res); rel = one(F); best = rel; since = 0
-        Ad = similar(res)
-        for k in 1:cg_iterations
-            jvp!(Jd, sb, cache, params, T.(d .* mask64), L; nmax, slab, cull, batch_frames)
-            jtvp!(Ad32, sb, cache, params, Jd, L; nmax, slab, cull, batch_frames)
-            Ad .= (F.(Ad32) .+ damping .* D64 .* d) .* mask64
-            dAd = sum(d .* Ad)
-            dAd > 0 || break
-            α = rz / dAd
-            p .+= α .* d
-            res .-= α .* Ad
-            rel = sqrt(sum(abs2, res) / g2)
-            rel <= 1e-6 && break
-            if rel < best
-                best = rel; since = 0
-            else
-                since += 1; since >= stall && break
-            end
-            z .= Minv .* res
-            rz_new = sum(res .* z)
-            d .= z .+ (rz_new / rz) .* d
-            rz = rz_new
-        end
+        # the damped least-squares step on the scaled Jacobian (S = D^{-1/2}, damp = √λ): p = S x
+        S = F.(mask) ./ sqrt.(F.(dscale))
+        x = KernelAbstractions.allocate(backend, F, size(params))
+        x, ksolve, rel = lsqr_step!(x, sb, cache, params, r, L; scale = S, damp = sqrt(damping), iterations = solve_iterations, nmax, slab, cull, batch_frames)
+        p = S .* x
         p32 = T.(p)
         jvp!(Jd, sb, cache, params, p32, L; nmax, slab, cull, batch_frames)               # the quadratic model's decrease: ‖r‖² − ‖r + Jp‖²
         predicted = F(χ) - F(sum(abs2, r .+ Jd))
@@ -257,7 +276,7 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
             damping *= 10
         end
         push!(history, χ)
-        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, cg_residual = rel))
+        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, solve_iterations = ksolve, solve_residual = rel))
     end
     return params, history
 end
@@ -389,4 +408,4 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     return params, history, A
 end
 
-export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, polish_timeresolved!, jacobian!, polish_dense!
+export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, lsqr_step!, polish_timeresolved!, jacobian!, polish_dense!
