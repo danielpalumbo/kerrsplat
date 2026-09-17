@@ -163,9 +163,18 @@ wins per hour.
 twenty, 7.9 hours): every step but one accepted, χ²/N 1.77 → 1.25 (1.31 / 1.17 / 1.28 per band
 against the truth's 1.00 / 1.01 / 0.97), the descent steady at one to two percent per step
 with no sign of a floor (1.62 at step 4, 1.46 at 12, 1.38 at 20, 1.32 at 28, 1.25 at 40), the
-damping wandering between 1e-4 and 7e-2 with the gain ratio. The run continues from there;
-whether the seventy parcels reach unity or level off decides between reporting the fit and
-densifying it first.
+damping wandering between 1e-4 and 7e-2 with the gain ratio.
+
+**Sixty more** (12.7 hours): χ²/N 1.25 → 1.11 (1.14 / 1.07 / 1.14 per band), every step
+accepted with gain ratios of 0.8–0.95, but the quadratic model predicting decreases of a few
+hundred on a χ² of 268,000 and the last six steps moving it by 0.4% in all, the damping at its
+floor of 1e-8 and the solves' residuals ending at 0.2–5 of their start. A gain ratio near one
+with a tiny predicted decrease says the step is the solver's, not the model's: conjugate
+gradients on the normal equations of the over-complete basis (exact null directions, Float32
+products) diverge, and the step returned is whatever the last iterate held. The solve is now
+LSQR on the Jacobian scaled by D^{-1/2} (`lsqr_step!`: the same J·v and Jᵀu per iteration,
+the bidiagonalization in Float64, a monotone residual, gated against the dense damped solve on
+the explicit Jacobian to 1e-11); its run from the 1.11 state follows.
 
 ## The spacetime free in the data domain
 
