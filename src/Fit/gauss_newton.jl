@@ -341,19 +341,22 @@ function jacobian!(J::AbstractMatrix, sb::ScanBands, cache::GeodesicCache{T,N}, 
 end
 
 """
-    polish_dense!(params, bands, cache, L; iterations = 5, λ = 1e-2, free = trues(size(params)), chunk = Val(8), tries = 6, nmax, slab, callback) -> (params, history, normal)
+    polish_dense!(params, bands, cache, L; iterations = 5, λ = 1e-2, free = trues(size(params)), chunk = Val(8), tries = 6, reuse = 1, nmax, slab, callback) -> (params, history, normal)
 
 Levenberg–Marquardt on the explicit Jacobian (`jacobian!`): each iteration forms JᵀJ and Jᵀr
 in Float64 on the host and solves (JᵀJ + λ diag(JᵀJ)) p = −Jᵀr by Cholesky, trying up to
 `tries` dampings (×10 each rejection) on the same Jacobian before giving up on the step; λ
 follows the gain ratio as in `polish_timeresolved!`, the Marquardt diagonal is floored at
-`diag_floor` of its largest entry, and the iterations end once λ exceeds `λ_max`. Returns the parameters, the χ² after every
+`diag_floor` of its largest entry, and the iterations end once λ exceeds `λ_max`. Near the
+minimum the Jacobian changes slowly and costs an hour where the residuals cost minutes, so up to
+`reuse` steps are taken on one Jacobian (chord steps: Jᵀr from the fresh residuals, the same
+JᵀJ; a rejected step brings a fresh Jacobian), and `iterations` counts the steps. Returns the parameters, the χ² after every
 iteration and the last normal matrix (its inverse is the Laplace covariance of the free
 parameters). The callback receives `(it, params, χ, λ, info)` with the gain ratio, the model's
 predicted decrease, the number of dampings tried and the seconds the Jacobian took.
 """
 function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, λ::Real = 1e-2, free = trues(size(params)), chunk::Val{C} = Val(8),
-                       tries::Integer = 6, diag_floor::Real = 1e-6, λ_max::Real = 1e6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
+                       tries::Integer = 6, reuse::Integer = 1, diag_floor::Real = 1e-6, λ_max::Real = 1e6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
     backend = cache.backend
     sb = ScanBands(bands, cache)
     cull = size(params, 2) > 16
@@ -365,44 +368,52 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     history = T[χ]
     damping = Float64(λ)
     A = zeros(n, n)
-    for it in 1:iterations
+    it = 0
+    while it < iterations
         tj = @elapsed jacobian!(J, sb, cache, params, L; columns, chunk, nmax, slab, cull, batch_frames)
-        rh = Float64.(Array(r))
-        fill!(A, 0.0); g = zeros(n)
-        for rows in Iterators.partition(1:m, 65536)                  # JᵀJ and Jᵀr accumulated in Float64 over row blocks
+        fill!(A, 0.0)
+        for rows in Iterators.partition(1:m, 65536)                  # JᵀJ accumulated in Float64 over row blocks
             Jb = Float64.(view(J, rows, :))
             mul!(A, Jb', Jb, 1.0, 1.0)
-            mul!(g, Jb', rh[rows], 1.0, 1.0)
         end
         # the Marquardt diagonal floored at `diag_floor` of its largest entry: a column the residuals barely see (a parcel
         # of no flux, a rate of a parcel at rest) has a diagonal of single-precision noise, and the damped solve would
         # send it anywhere (the first dense run of the triband state: the trial χ² of 1e10 at a damping of 1e4)
         dA = diag(A)
         dg = max.(dA, diag_floor * maximum(dA))
-        ph = Array(params)
-        gain = NaN; predicted = NaN; tried = 0; accepted = false; pmax = NaN
-        for _ in 1:tries
-            tried += 1
-            p = -(cholesky(Symmetric(A + damping * Diagonal(dg))) \ g)
-            predicted = -(2 * dot(g, p) + dot(p, A * p))            # ‖r‖² − ‖r + Jp‖²
-            pmax = maximum(abs, p)
-            th = copy(ph); th[columns] .+= T.(p)
-            trial = KernelAbstractions.allocate(backend, T, size(params)); copyto!(trial, th)
-            rt = similar(r)
-            χt = residuals!(rt, sb, cache, trial, L; nmax, slab, cull, batch_frames)
-            gain = (Float64(χ) - Float64(χt)) / max(predicted, eps())
-            if χt < χ
-                copyto!(params, trial); copyto!(r, rt); χ = χt; accepted = true
-                damping = gain > 0.75 ? max(damping / 3, 1e-8) : gain < 0.25 ? damping * 2 : damping
-                break
-            else
-                damping *= 10
-                damping > λ_max && break
+        for step in 1:reuse                                          # chord steps on the same Jacobian: Jᵀr with the fresh residuals
+            it += 1
+            rh = Float64.(Array(r))
+            g = zeros(n)
+            for rows in Iterators.partition(1:m, 65536)
+                mul!(g, Float64.(view(J, rows, :))', rh[rows], 1.0, 1.0)
             end
+            ph = Array(params)
+            gain = NaN; predicted = NaN; tried = 0; accepted = false; pmax = NaN
+            for _ in 1:tries
+                tried += 1
+                p = -(cholesky(Symmetric(A + damping * Diagonal(dg))) \ g)
+                predicted = -(2 * dot(g, p) + dot(p, A * p))            # ‖r‖² − ‖r + Jp‖²
+                pmax = maximum(abs, p)
+                th = copy(ph); th[columns] .+= T.(p)
+                trial = KernelAbstractions.allocate(backend, T, size(params)); copyto!(trial, th)
+                rt = similar(r)
+                χt = residuals!(rt, sb, cache, trial, L; nmax, slab, cull, batch_frames)
+                gain = (Float64(χ) - Float64(χt)) / max(predicted, eps())
+                if χt < χ
+                    copyto!(params, trial); copyto!(r, rt); χ = χt; accepted = true
+                    damping = gain > 0.75 ? max(damping / 3, 1e-8) : gain < 0.25 ? damping * 2 : damping
+                    break
+                else
+                    damping *= 10
+                    damping > λ_max && break
+                end
+            end
+            push!(history, χ)
+            callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, tries = tried, accepted = accepted, jacobian_seconds = step == 1 ? tj : 0.0, max_step = pmax,
+                                                                    diag_range = (minimum(dA), maximum(dA)), reused = step - 1))
+            (accepted && it < iterations) || break                     # a rejected step, or the end: a fresh Jacobian, or done
         end
-        push!(history, χ)
-        callback === nothing || callback(it, params, χ, damping, (gain = gain, predicted = predicted, tries = tried, accepted = accepted, jacobian_seconds = tj, max_step = pmax,
-                                                                diag_range = (minimum(dA), maximum(dA))))
         damping > λ_max && break                                   # no damping makes a step: the quadratic model has nothing left
     end
     return params, history, A
