@@ -280,6 +280,8 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         @test maximum(abs.(Jv2 .- Array(Jv))) <= 1e-10 * maximum(abs.(Array(Jv)))
         q3, h3, A = Fit.polish_dense!(copy(qd), bands, cache, L; iterations = 2, λ = 1e-2, chunk = Val(5))
         @test h3[end] < h3[1] && all(isfinite, Array(q3)) && size(A) == (length(p), length(p))
+        q4, h4, _ = Fit.polish_dense!(copy(qd), bands, cache, L; iterations = 4, λ = 1e-2, chunk = Val(5), reuse = 4)    # chord steps on one Jacobian
+        @test length(h4) == 5 && issorted(h4; rev = true) && all(isfinite, Array(q4))
         # the LSQR step against the exact damped solve on the explicit Jacobian
         r0 = adapt_to(backend, zeros(m)); Fit.residuals!(r0, sb, cache, qd, L)
         A0 = J' * J; g0 = J' * Float64.(Array(r0)); λ0 = 1e-2
@@ -292,7 +294,7 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         e_lsqr = norm(p_lsqr - p_exact) / norm(p_exact)
         @test e_lsqr <= 1e-6
         @info "LSQR step ($label): $(k0) iterations, relative difference from the dense damped solve $e_lsqr, normal residual $rel0"
-        @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations (the LSQR polish: → $(round(history[end], digits = 1)))"
+        @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations, → $(round(h4[end], digits = 1)) in four chord steps on one Jacobian (the LSQR polish: → $(round(history[end], digits = 1)))"
         @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps (gain ratios $(round.([i.gain for i in infos], digits = 2))); J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
     end
 end

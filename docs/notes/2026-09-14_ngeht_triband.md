@@ -174,7 +174,24 @@ gradients on the normal equations of the over-complete basis (exact null directi
 products) diverge, and the step returned is whatever the last iterate held. The solve is now
 LSQR on the Jacobian scaled by D^{-1/2} (`lsqr_step!`: the same J·v and Jᵀu per iteration,
 the bidiagonalization in Float64, a monotone residual, gated against the dense damped solve on
-the explicit Jacobian to 1e-11); its run from the 1.11 state follows.
+the explicit Jacobian to 1e-11).
+
+**Sixty LSQR steps from the 1.11 state** (sixty iterations each, 20.7 hours): χ²/N 1.11 → 1.045
+(1.054 / 1.031 / 1.054 per band against the truth's 0.996 / 1.005 / 0.974), every step accepted
+with gain ratios of 0.5–0.9, the damping at its floor, the solves' normal residuals still 0.4–0.8
+of their start after sixty iterations: the scaled Jacobian stays ill-conditioned, and the descent
+runs at a tenth of a percent per twenty-minute step and slows (the last twelve steps one
+percent). Five percent above the floor after 128 Gauss–Newton steps. The comparison of the
+fields at the 1.11 state (`docs/notes/figures/` has none yet; the numbers from a voxel grid
+weighted by the truth's 230 GHz emissivity): the field strength to 19% voxel by voxel with no
+bias and its emission-weighted mean exact, the temperature to 11% with a 4% low bias, the
+direction to a median of 10°, and the density poor pointwise (the median voxel 23% low, the lower
+tail a factor of six) though its emission-weighted mean is 0.78 of the truth's: the exact null
+of the emissivities, density against field and temperature, is where the over-complete fit
+differs from the truth. The 3D field movie of that state is `viz/field_movie.jl`'s output
+(`viz/output/triband_pcg4_fields.mp4`; the truth's six parcels above the fit: the 230 GHz image,
+density isosurfaces at absolute levels, temperature and field strength on each model's own
+density surface, the field direction on the midplane).
 
 ## The spacetime free in the data domain
 
