@@ -2,7 +2,7 @@
 
 julia_version = "1.10.11"
 manifest_format = "2.0"
-project_hash = "c961bcac937562ff26fb4baf48fc30e424b36737"
+project_hash = "3c21dc37e09fe9d645cea0abe7b8e9434b2ba66a"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1181,6 +1181,11 @@ version = "0.6.9"
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 version = "2.28.1010+0"
+
+[[deps.Meshing]]
+git-tree-sha1 = "5705d4f32545f7bcecdff75759a20d17812e5caf"
+uuid = "e6723b4c-ebff-59f1-b4b7-d97aa5274f73"
+version = "0.7.0"
 
 [[deps.Missings]]
 deps = ["DataAPI"]
