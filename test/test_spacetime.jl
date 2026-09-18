@@ -258,10 +258,10 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         @test abs(lhs - rhs) <= 1e-8 * max(abs(lhs), abs(rhs))
         # two Levenberg–Marquardt steps lower the χ²
         infos = []
-        q2, history = Fit.polish_timeresolved!(copy(qd), bands, cache, L; iterations = 2, cg_iterations = 8, probes = 4, rng = Random.MersenneTwister(3),
+        q2, history = Fit.polish_timeresolved!(copy(qd), bands, cache, L; iterations = 2, solve_iterations = 8, probes = 4, rng = Random.MersenneTwister(3),
                                                callback = (it, x, v, dmp, info) -> push!(infos, info))
         @test history[end] < history[1] && all(isfinite, Array(q2))
-        @test length(infos) == 2 && all(i -> isfinite(i.gain) && i.predicted > 0 && 0 <= i.cg_residual <= 1, infos)
+        @test length(infos) == 2 && all(i -> isfinite(i.gain) && i.predicted > 0 && 0 <= i.solve_residual <= 1, infos)
         # the Hutchinson diagonal against the exact one, column by column, on a few columns
         sb = Fit.ScanBands(bands, cache)
         dg = adapt_to(backend, zeros(size(p))); Fit.normal_diagonal!(dg, sb, cache, qd, L; probes = 64, rng = Random.MersenneTwister(5))
@@ -280,7 +280,19 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         @test maximum(abs.(Jv2 .- Array(Jv))) <= 1e-10 * maximum(abs.(Array(Jv)))
         q3, h3, A = Fit.polish_dense!(copy(qd), bands, cache, L; iterations = 2, λ = 1e-2, chunk = Val(5))
         @test h3[end] < h3[1] && all(isfinite, Array(q3)) && size(A) == (length(p), length(p))
-        @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations (conjugate gradients: → $(round(history[end], digits = 1)))"
+        # the LSQR step against the exact damped solve on the explicit Jacobian
+        r0 = adapt_to(backend, zeros(m)); Fit.residuals!(r0, sb, cache, qd, L)
+        A0 = J' * J; g0 = J' * Float64.(Array(r0)); λ0 = 1e-2
+        D0 = max.(diag(A0), 1e-6 * maximum(diag(A0)))
+        p_exact = -((A0 + λ0 * Diagonal(D0)) \ g0)
+        S0 = adapt_to(backend, reshape(1 ./ sqrt.(D0), size(p)))
+        x0 = adapt_to(backend, zeros(size(p)))
+        x0, k0, rel0 = Fit.lsqr_step!(x0, sb, cache, qd, r0, L; scale = S0, damp = sqrt(λ0), iterations = 4 * length(p), atol = 1e-12)
+        p_lsqr = vec(Array(S0 .* x0))
+        e_lsqr = norm(p_lsqr - p_exact) / norm(p_exact)
+        @test e_lsqr <= 1e-6
+        @info "LSQR step ($label): $(k0) iterations, relative difference from the dense damped solve $e_lsqr, normal residual $rel0"
+        @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations (the LSQR polish: → $(round(history[end], digits = 1)))"
         @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps (gain ratios $(round.([i.gain for i in infos], digits = 2))); J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
     end
 end
