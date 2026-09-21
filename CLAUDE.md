@@ -136,7 +136,11 @@ before any performance work.
   the first campaign fit a 21-hour stall with the card idle; measure the per-frame host cost
   at full size before launching a long run. The fit loop skips its callback on an iteration
   where hygiene changes the parcel count: trace at a cadence that is not a multiple of
-  `every`, and keep the per-iteration χ² history from `fit!`'s return.
+  `every`, and keep the per-iteration χ² history from `fit!`'s return. Long runs live outside
+  `/tmp` (`~/local_scripts/kerrsplat_runs/` for scripts and logs; worktrees too): the machine
+  rebooted on 2026-09-18 and 21 and took the scratch directory, a worktree and eight hours of
+  the card with it. Drivers write `<tag>_checkpoint_params.csv` as they go (atomically, via a
+  rename), and `--resume` restarts from it.
 
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).

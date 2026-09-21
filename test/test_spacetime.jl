@@ -294,6 +294,15 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
         e_lsqr = norm(p_lsqr - p_exact) / norm(p_exact)
         @test e_lsqr <= 1e-6
         @info "LSQR step ($label): $(k0) iterations, relative difference from the dense damped solve $e_lsqr, normal residual $rel0"
+        # the Laplace errors against LinearAlgebra's pseudo-inverse of the scaled normal matrix at the same cutoff (the toy's
+        # matrix is singular: the temporal envelope's rows are flat, so a plain inverse is not a reference)
+        @test maximum(abs.(Fit.normal_matrix(Float32.(J)) .- A0) ./ max.(abs.(A0), 1e-3 * maximum(abs.(A0)))) <= 1e-5
+        dA0 = diag(A0); sc = 1 ./ sqrt.(max.(dA0, 1e-6 * maximum(dA0))); S0 = Matrix(Symmetric(sc .* A0 .* sc'))
+        σ_ref = sc .* sqrt.(max.(diag(pinv(S0; rtol = 1e-6)), 0.0))
+        σ6, spectrum, kept6 = Fit.laplace_errors(A0; retain = 1e-6)
+        @test kept6 == rank(S0; rtol = 1e-6) && issorted(spectrum; rev = true) && spectrum[1] == 1 && length(spectrum) == length(p)
+        @test maximum(abs.(σ6 .- σ_ref) ./ max.(σ_ref, 1e-9 * maximum(σ_ref))) <= 1e-3      # the two pseudo-inverses (eigen, SVD) agree to 5e-5: modes a million times below the largest are inverted
+        @info "Laplace errors ($label): $(kept6) of $(length(p)) modes above 1e-6 of the largest; σ(ln ne) $(round.(σ6[13:21:end], digits = 3)), σ(ln Θe) $(round.(σ6[14:21:end], digits = 3)), σ(ln B) $(round.(σ6[15:21:end], digits = 3))"
         @info "dense Levenberg–Marquardt on scans ($label): χ² $(round(h3[1], digits = 1)) → $(round(h3[end], digits = 1)) in two iterations, → $(round(h4[end], digits = 1)) in four chord steps on one Jacobian (the LSQR polish: → $(round(history[end], digits = 1)))"
         @info "Gauss–Newton polish on scans ($label): χ² $(round(history[1], digits = 1)) → $(round(history[end], digits = 1)) in two steps (gain ratios $(round.([i.gain for i in infos], digits = 2))); J·v vs FD $(maximum(abs.(Array(Jv) .- fd)) / maximum(abs.(fd))), adjoint identity $(abs(lhs - rhs) / abs(lhs))"
     end

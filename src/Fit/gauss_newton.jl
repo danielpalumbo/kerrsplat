@@ -341,6 +341,48 @@ function jacobian!(J::AbstractMatrix, sb::ScanBands, cache::GeodesicCache{T,N}, 
 end
 
 """
+    normal_matrix(J) -> A
+
+JᵀJ of an explicit Jacobian in Float64, accumulated over row blocks (J is Float32 and a few
+gigabytes for a campaign; the blocks are converted one at a time).
+"""
+function normal_matrix(J::AbstractMatrix)
+    n = size(J, 2); A = zeros(n, n)
+    for rows in Iterators.partition(1:size(J, 1), 65536)
+        Jb = Float64.(view(J, rows, :))
+        mul!(A, Jb', Jb, 1.0, 1.0)
+    end
+    return A
+end
+
+"""
+    laplace_errors(A; retain = 1e-6, diag_floor = 1e-6) -> (σ, spectrum, kept)
+
+The Laplace (Gaussian) errors of the free parameters from the normal matrix A = JᵀJ of the
+weighted residuals (−ln L = χ²/2, so the covariance is A⁻¹): the matrix is scaled by its
+diagonal (floored at `diag_floor` of the largest entry) to S = D^{-1/2} A D^{-1/2}, whose
+eigenvalues are the `spectrum` (descending, relative to the largest), the modes below `retain`
+of the largest are the null directions of an over-complete basis (a density that trades
+against a field, a parcel the data never see) and are dropped, and σ is the square root of the
+diagonal of the pseudo-inverse over the `kept` modes, in the parameters' own units. The dropped
+modes are unconstrained by the data: their parameters' errors are those of the constrained
+subspace only, and the count of dropped modes is part of the answer.
+"""
+function laplace_errors(A::AbstractMatrix; retain::Real = 1e-6, diag_floor::Real = 1e-6)
+    dA = diag(A); d = max.(dA, diag_floor * maximum(dA))
+    s = 1 ./ sqrt.(d)
+    S = Symmetric(s .* A .* s')
+    E = eigen(S)
+    vals = E.values; order = sortperm(vals; rev = true); vals = vals[order]; V = E.vectors[:, order]
+    top = max(vals[1], eps())
+    kept = count(>=(retain * top), vals)
+    Vk = V[:, 1:kept]; λk = vals[1:kept]
+    C = (Vk ./ λk') * Vk'                                        # the pseudo-inverse of S over the kept modes
+    σ = s .* sqrt.(max.(diag(C), 0.0))
+    return σ, vals ./ top, kept
+end
+
+"""
     polish_dense!(params, bands, cache, L; iterations = 5, λ = 1e-2, free = trues(size(params)), chunk = Val(8), tries = 6, reuse = 1, nmax, slab, callback) -> (params, history, normal)
 
 Levenberg–Marquardt on the explicit Jacobian (`jacobian!`): each iteration forms JᵀJ and Jᵀr
@@ -371,11 +413,7 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     it = 0
     while it < iterations
         tj = @elapsed jacobian!(J, sb, cache, params, L; columns, chunk, nmax, slab, cull, batch_frames)
-        fill!(A, 0.0)
-        for rows in Iterators.partition(1:m, 65536)                  # JᵀJ accumulated in Float64 over row blocks
-            Jb = Float64.(view(J, rows, :))
-            mul!(A, Jb', Jb, 1.0, 1.0)
-        end
+        A = normal_matrix(J)
         # the Marquardt diagonal floored at `diag_floor` of its largest entry: a column the residuals barely see (a parcel
         # of no flux, a rate of a parcel at rest) has a diagonal of single-precision noise, and the damped solve would
         # send it anywhere (the first dense run of the triband state: the trial χ² of 1e10 at a damping of 1e4)
@@ -419,4 +457,4 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     return params, history, A
 end
 
-export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, lsqr_step!, polish_timeresolved!, jacobian!, polish_dense!
+export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, lsqr_step!, polish_timeresolved!, jacobian!, normal_matrix, laplace_errors, polish_dense!
