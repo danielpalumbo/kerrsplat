@@ -244,6 +244,26 @@ tails pass on duals and a full gradient sweep, so a step of twenty iterations co
 Adam iterations; the driver's `--polish N --cg K --lambda λ` runs it on a `--resume`'d state at
 the held spacetime.
 
+## Station gains (2026-09-21)
+
+The campaign was thermal-noise only. The joint-gains row corrupts every band's scans with
+per-station, per-scan scalar gains (`synthetic_scans(...; gains)`: log-amplitudes of spread
+`--gain-amp`, phases of spread `--gain-phase`, the columns indexed by `scan_station`) and fits
+them with the sky. The gains enter the backend likelihood as `ScanGains`: `frame_scans` builds
+the factor g₁ conj(g₂) of every baseline, the residuals multiply the model by it, and the sweep's
+seeds and the adjoint carry its conjugate, so a gained fit keeps the device path and the
+Gauss–Newton machinery (`ScanBands(...; gains)`, `set_gains!`). The calibration is classical
+self-calibration with the sky held (`calibrate_scans!`): the frames are rendered once on the
+backend, and every scan gets a Levenberg–Marquardt on the log-amplitudes and phases of the
+stations present, with a Gaussian amplitude prior, the phase of the scan's lowest station held
+as the reference, and phases that are still zero started from the baselines to the reference;
+the driver runs it every `--calibrate-every` Adam iterations and, through the polishes'
+`before_step` hook, before every polish step. The gate `test_gain_scans`: the gained truth
+scores the noise where unit gains score twenty times more; the device gradient and J·v with
+gains match central differences of the host χ² to 1e-5; calibration from unit gains at the true
+sky recovers the log-amplitudes to 0.02 and the phases to 0.01 rad with one scan's phases of
+several radians; a calibrating polish from a perturbed sky descends.
+
 ## The animations
 
 `viz/triband_movie.jl` renders the campaign frame by frame: the truth and the fit at the three

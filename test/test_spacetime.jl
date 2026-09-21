@@ -308,3 +308,92 @@ function test_gauss_newton(backend; res = 6, N = 16, tol = 1e-5, label = "CPU ba
     end
 end
 
+
+"""
+Station gains in the time-resolved likelihood on the backend: synthetic scans corrupted by per-scan scalar gains, the χ²
+with the true gains at the noise, the device gradient and J·v with gains against central differences of the host χ²,
+the per-scan self-calibration recovering the gains from the true sky, and a polish that alternates calibration with
+sky steps.
+"""
+function test_gain_scans(backend; res = 6, N = 16, tol = 1e-5, label = "CPU backend")
+    rng = Random.MersenneTwister(41)
+    a_true = 0.9; θ_true = deg2rad(60.0)
+    fov = 18.0; Δα = fov / res
+    camera = Geodesics.Camera((-fov / 2 + Δα / 2, fov / 2 - Δα / 2), (-fov / 2 + Δα / 2, fov / 2 - Δα / 2), res)
+    M_solar = 6.5e9; D = 16.8e6 * Transfer.PC; L = gravitational_radius(M_solar); ν = 230e9
+    p = polarized_test_params()
+    cpu = GeodesicCache(CPU(), camera, Val(N); store_samples = false)
+    regenerate!(cpu, a_true, θ_true; marcher = Fused(64))
+    nst = 5
+    function scancov(t)
+        sts = sort(randperm(rng, nst)[1:4]); s1 = Int[]; s2 = Int[]
+        for i in 1:4, j in i+1:4
+            push!(s1, sts[i]); push!(s2, sts[j])
+        end
+        return ScanCoverage(t, 3e9 .* randn(rng, length(s1)), 3e9 .* randn(rng, length(s1)), s1, s2)
+    end
+    cov = [scancov(0.0), scancov(0.0), scancov(20.0)]
+    gtrue = zeros(2, nst * length(cov))                            # per-scan log-amplitudes of 10% and phases of a radian, one scan's phases large
+    gtrue[1, :] .= 0.1 .* randn(rng, size(gtrue, 2)); gtrue[2, :] .= 0.8 .* randn(rng, size(gtrue, 2)); gtrue[2, 2nst+1:3nst] .*= 3
+    tr = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.005, closures = false, rng, gains = gtrue)
+    tr0 = synthetic_scans(cpu, p, L, Δα, D, ν, cov; noise = 0.005, closures = false, rng = Random.MersenneTwister(41))
+    cache = GeodesicCache(backend, camera, Val(N); store_samples = true)
+    regenerate!(cache, a_true, θ_true; marcher = Recurrence(64))
+    pd = adapt_to(backend, p)
+    @testset "$label station gains on scans" begin
+        # the gained truth scores the noise; unit gains do not
+        χg = chi2_timeresolved(p, tr, cpu, L, Δα, D, ν; instrument = ScanGains(gtrue))
+        χ0 = chi2_timeresolved(p, tr0, cpu, L, Δα, D, ν)
+        n = ndata(tr)
+        @test abs(χg - n) < 4 * sqrt(2n) && abs(χ0 - n) < 4 * sqrt(2n)
+        @test chi2_timeresolved(p, tr, cpu, L, Δα, D, ν; instrument = ScanGains(zero(gtrue))) > 20 * χg
+        # the device gradient with gains against central differences of the host χ²
+        dp = adapt_to(backend, zeros(size(p)))
+        χd = timeresolved_gradient!(dp, pd, tr, cache, L, Δα, D, ν; instrument = ScanGains(gtrue), device = true)
+        @test abs(χd - χg) <= 1e-8 * χg
+        g = Array(dp); h = 1e-6
+        for i in (1, 13, 15)
+            f(y) = (q = copy(p); q[i, 1] = y; chi2_timeresolved(q, tr, cpu, L, Δα, D, ν; instrument = ScanGains(gtrue)))
+            fd = (f(p[i, 1] + h) - f(p[i, 1] - h)) / (2h)
+            @test abs(g[i, 1] - fd) <= tol * abs(fd)
+        end
+        # the Gauss–Newton residuals with gains: the same χ², J·v against differences
+        bands = [BandScans(ν, tr, Δα, D)]
+        sb = Fit.ScanBands(bands, cache; gains = [gtrue])
+        m = Fit.residual_length(sb); r = adapt_to(backend, zeros(m))
+        @test abs(Fit.residuals!(r, sb, cache, pd, L) - χg) <= 1e-8 * χg
+        v = randn(rng, size(p)); v[12, :] .= 0
+        Jv = adapt_to(backend, zeros(m)); Fit.jvp!(Jv, sb, cache, pd, adapt_to(backend, v), L)
+        rp = adapt_to(backend, zeros(m)); rm = adapt_to(backend, zeros(m))
+        Fit.residuals!(rp, sb, cache, adapt_to(backend, p .+ h .* v), L); Fit.residuals!(rm, sb, cache, adapt_to(backend, p .- h .* v), L)
+        fd = (Array(rp) .- Array(rm)) ./ (2h)
+        @test maximum(abs.(Array(Jv) .- fd)) <= tol * maximum(abs.(fd))
+        w = randn(rng, m); Jtw = adapt_to(backend, zeros(size(p))); Fit.jtvp!(Jtw, sb, cache, pd, adapt_to(backend, w), L)
+        @test abs(dot(Array(Jv), w) - dot(v, Array(Jtw))) <= 1e-8 * abs(dot(Array(Jv), w))
+        # self-calibration from unit gains at the true sky recovers the gains (phases relative to each scan's reference)
+        gfit = zeros(size(gtrue))
+        sb2 = Fit.ScanBands(bands, cache; gains = [gfit])
+        Fit.calibrate_scans!(gfit, sb2, 1, cache, pd, L; iterations = 10, σ_logamp = 0.3)
+        χc = Fit.residuals!(r, sb2, cache, pd, L)
+        @test χc <= 1.1 * χg + 4 * sqrt(2n)
+        present = falses(size(gtrue, 2))
+        for s in tr.scans; present[s.data.s1] .= true; present[s.data.s2] .= true; end
+        Δlg = Float64[]; Δφ = Float64[]
+        for k in 1:length(cov)
+            cols = findall(present[(k-1)*nst+1:k*nst]) .+ (k - 1) * nst
+            ref = cols[1]
+            for c in cols
+                push!(Δlg, gfit[1, c] - gtrue[1, c])
+                push!(Δφ, rem2pi((gfit[2, c] - gfit[2, ref]) - (gtrue[2, c] - gtrue[2, ref]), RoundNearest))
+            end
+        end
+        @test maximum(abs.(Δlg)) < 0.03 && maximum(abs.(Δφ)) < 0.03
+        # a polish from a perturbed sky and unit gains, calibrating before every step, lowers the χ² and keeps the gains
+        q = p .+ 0.03 .* randn(rng, size(p)); q[12, :] .= p[12, :]
+        gfit2 = zeros(size(gtrue))
+        hook = (sbx, x, it) -> (Fit.calibrate_scans!(gfit2, sbx, 1, cache, x, L; iterations = 6, σ_logamp = 0.3); true)
+        q2, hist = Fit.polish_timeresolved!(adapt_to(backend, q), bands, cache, L; iterations = 2, solve_iterations = 8, probes = 4, rng = Random.MersenneTwister(5), gains = [gfit2], before_step = hook)
+        @test hist[end] < hist[1] && all(isfinite, Array(q2))     # two steps do not converge the sky, and the amplitudes absorb the sky's error until it does
+        @info "station gains ($label): χ² at the gained truth $(round(χg, digits = 1)) of $n values; self-calibration from unit gains: log-amplitudes to $(round(maximum(abs.(Δlg)), digits = 4)), phases to $(round(maximum(abs.(Δφ)), digits = 4)) rad, χ² $(round(χc, digits = 1)); the polish with calibration $(round(hist[1], digits = 1)) → $(round(hist[end], digits = 1)), the log-amplitudes within $(round(maximum(abs.(gfit2[1, present] .- gtrue[1, present])), digits = 3))"
+    end
+end

@@ -38,6 +38,22 @@ frame_times(tr::TimeResolved) = unique(sort([s.time for s in tr.scans]))
 scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:ClosureData}) = chi2_closures(image, Δα, L, D, s.data; kernel = s.kernel)
 scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}) = chi2_visibilities(image, Δα, L, D, s.data; kernel = s.kernel)
 
+"""
+    ScanGains(gains)
+
+Scalar station gains for visibility scans, passed as the `instrument` of the time-resolved
+likelihood: a 2 × columns matrix of log-amplitude and phase (`apply_gains`), the columns
+indexed by the scans' `s1`, `s2` (`scan_station` for gains that change from scan to scan). The
+model visibility of baseline k is g_{s1} conj(g_{s2}) V_k. No prior is applied here (the
+calibration, `calibrate_scans!`, carries the amplitude prior). The backend likelihood takes
+these gains (`frame_scans`), so a gained fit keeps the device path and the Gauss–Newton
+machinery.
+"""
+struct ScanGains{M<:AbstractMatrix}
+    gains::M
+end
+scan_loss(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}, g::ScanGains) = chi2_visibilities(image, Δα, L, D, s.data; kernel = s.kernel, gains = g.gains)
+
 "Number of χ² terms: two real values per Stokes parameter and baseline for visibilities, one per closure quantity."
 ndata(s::ScanData{<:Any,<:VisibilityData}) = 8 * length(s.data.u)
 ndata(s::ScanData{<:Any,<:ClosureData}) = length(s.data.phases) + length(s.data.logamps)
@@ -96,12 +112,13 @@ function timeresolved_gradient!(dparams, params, tr::TimeResolved, cache::Geodes
     total = zero(T)
     # visibility scans without binning, instrument or image prior go through the backend likelihood (`device_visibilities.jl`):
     # the images never leave the backend, the frame's transform, χ² and seed are kernels
-    on_device = device && method == :dual && binning === nothing && instrument === nothing && image_prior === nothing && all(s -> s.data isa VisibilityData, tr.scans)
+    on_device = device && method == :dual && binning === nothing && (instrument === nothing || instrument isa ScanGains) && image_prior === nothing && all(s -> s.data isa VisibilityData, tr.scans)
     if on_device
         forward, reverse! = sweep_passes(dparams, cache, params, L; method, kmax, nmax, slab, cull)
         npix = npixels(cache)
         times = frame_times(tr)
-        fsd = Dict(t => frame_scans(cache.backend, T, [s for s in tr.scans if s.time == t]) for t in times)
+        gains = instrument isa ScanGains ? instrument.gains : nothing
+        fsd = Dict(t => frame_scans(cache.backend, T, [s for s in tr.scans if s.time == t]; gains) for t in times)
         for chunk in Iterators.partition(times, max(Int(batch_frames), 1))
             ts = collect(chunk)
             images = forward(ts, ν; device = true)
@@ -193,12 +210,16 @@ function instrument_gradient(image, Δα, L, D, scans, instrument::Tuple)
 end
 
 "The scaled residuals of one scan against one screen image (real and imaginary parts per Stokes parameter and baseline; wrapped closure phases and log closure amplitudes), whose squared norm is `scan_loss`."
-function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData})
-    model = taper(s.kernel, visibilities(image, Δα, L, D, s.data.u, s.data.v), s.data.u, s.data.v)
+function scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}, g::ScanGains)
+    model = apply_gains(taper(s.kernel, visibilities(image, Δα, L, D, s.data.u, s.data.v), s.data.u, s.data.v), g.gains, s.data.s1, s.data.s2)
+    return _visibility_residuals(model, s.data)
+end
+scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:VisibilityData}) = _visibility_residuals(taper(s.kernel, visibilities(image, Δα, L, D, s.data.u, s.data.v), s.data.u, s.data.v), s.data)
+function _visibility_residuals(model, data::VisibilityData)
     S = real(eltype(first(model)))
     res = S[]
     for k in eachindex(model)
-        r = (model[k] .- s.data.vis[k]) ./ noise(s.data.σ, k)
+        r = (model[k] .- data.vis[k]) ./ noise(data.σ, k)
         append!(res, real.(r)); append!(res, imag.(r))
     end
     return res
@@ -350,7 +371,10 @@ propagated from the visibility noise as the real-data path does (closures with a
 dropped).
 """
 function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::AbstractVector{<:ScanCoverage}; noise = 0.01, closures::Bool = true,
-                         rng = Random.default_rng(), nmax = -1, slab = 0, binning = nothing, kernel = nothing) where {T}
+                         rng = Random.default_rng(), nmax = -1, slab = 0, binning = nothing, kernel = nothing, gains = nothing) where {T}
+    nstations = maximum(max(maximum(c.s1; init = 0), maximum(c.s2; init = 0)) for c in cov)
+    gains === nothing || closures && throw(ArgumentError("gains corrupt visibilities, not closures"))
+    gains === nothing || size(gains) == (2, nstations * length(cov)) || throw(DimensionMismatch("gains must be 2 × (stations × scans) = 2 × $(nstations * length(cov))"))
     out = Vector{accumulator_type(T, nmax)}(undef, npixels(cache))
     frames = Dict{T,Matrix{SVector{4,T}}}()
     for t in unique(c.time for c in cov)
@@ -358,9 +382,11 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
         polarized_image!(out, cache, params, t, ν, L; nmax, slab)
         frames[t] = pixel_stokes(to_screen(cache, out), ν, binning)
     end
-    function scan(c)
+    function scan(k, c)
         img = frames[c.time]
         vis = taper(kernel, visibilities(img, Δα, L, D, c.u, c.v), c.u, c.v)
+        t1 = Int32.(scan_station.(c.s1, k, nstations)); t2 = Int32.(scan_station.(c.s2, k, nstations))    # the gain columns of scan k
+        gains === nothing || (vis = apply_gains(vis, gains, t1, t2))
         n = length(c.u)
         if noise === nothing
             isempty(c.σ) && throw(ArgumentError("noise = nothing takes the noise from the coverage, which has none (coverage(obs, times) keeps the observation's)"))
@@ -381,13 +407,13 @@ function synthetic_scans(cache::GeodesicCache{T}, params, L, Δα, D, ν, cov::A
             keep_t = σ_phase .< 1; keep_q = σ_logamp .< 1
             return ScanData(c.time, ClosureData(c.u, c.v, tri[keep_t], phases[keep_t], σ_phase[keep_t], quad[keep_q], logamps[keep_q], σ_logamp[keep_q]), kernel)
         else
-            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, noise === nothing ? σs : σs[1]), kernel)
+            return ScanData(c.time, VisibilityData(c.u, c.v, noisy, noise === nothing ? σs : σs[1], t1, t2), kernel)
         end
     end
-    return TimeResolved([scan(c) for c in cov])
+    return TimeResolved([scan(k, c) for (k, c) in enumerate(cov)])
 end
 
-export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ObservedScan, observed_scans, instrument_gradient, total_flux, scan_times, closure_scans
+export ScanData, TimeResolved, frame_times, scan_loss, scan_residuals, ndata, chi2_timeresolved, timeresolved_gradient!, timeresolved_residuals, ScanCoverage, coverage, synthetic_scans, ScanGains, ObservedScan, observed_scans, instrument_gradient, total_flux, scan_times, closure_scans
 
 # ---- scans compared through the instrument model (self-calibration) --------------------------------
 """
@@ -436,8 +462,10 @@ scan_residuals(image, Δα, L, D, s::ScanData{<:Any,<:ObservedScan}) = throw(Arg
 
 "The instrument's prior penalty, zero without an instrument."
 _instrument_penalty(::Nothing) = 0.0
+_instrument_penalty(::ScanGains) = 0.0
 _instrument_penalty(instrument::Tuple) = penalty_instrument(instrument[1], instrument[2], instrument[3])
 _instrument_prior_residuals(::Nothing, ::Type{S}) where {S} = S[]
+_instrument_prior_residuals(::ScanGains, ::Type{S}) where {S} = S[]
 _instrument_prior_residuals(instrument::Tuple, ::Type{S}) where {S} = S.(instrument_prior_residuals(instrument[1], instrument[2], instrument[3]))
 
 """
@@ -623,7 +651,7 @@ Geodesics.precision(k::ScatteringKernel, ::Type{T2}) where {T2} = ScatteringKern
 function Geodesics.precision(d::VisibilityData, ::Type{T2}) where {T2}
     convσ(x::SVector{4}) = SVector{4,T2}(x)
     convσ(x::AbstractVector) = map(convσ, x)
-    return VisibilityData(T2.(d.u), T2.(d.v), map(x -> SVector{4,Complex{T2}}(x), d.vis), convσ(d.σ))
+    return VisibilityData(T2.(d.u), T2.(d.v), map(x -> SVector{4,Complex{T2}}(x), d.vis), convσ(d.σ), d.s1, d.s2)
 end
 Geodesics.precision(d::ClosureData, ::Type{T2}) where {T2} =
     ClosureData(T2.(d.u), T2.(d.v), d.triangles, T2.(d.phases), T2.(d.σ_phase), d.quadrangles, T2.(d.logamps), T2.(d.σ_logamp))

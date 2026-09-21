@@ -7,8 +7,12 @@
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
 #         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
-#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--solve 40] [--lambda 0.01] [--probes 8] [--probe-every 4] [--dense 0] [--chunk 8] [--reuse 1] [--laplace 0]
+#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--solve 40] [--lambda 0.01] [--probes 8] [--probe-every 4] [--dense 0] [--chunk 8] [--reuse 1] [--laplace 0] [--gain-amp 0] [--gain-phase 0] [--calibrate-every 10]
 # --dense N runs N Levenberg–Marquardt iterations on the explicit Jacobian (Fit.polish_dense!, --chunk columns per pass).
+# --gain-amp σ and --gain-phase σφ corrupt every band's scans with per-station, per-scan scalar gains (log-amplitudes
+# N(0, σ), phases N(0, σφ)); the fit starts from unit gains and self-calibrates every --calibrate-every Adam iterations
+# and before every polish step (Fit.calibrate_scans!, the sky held), the gains entering the backend likelihood as
+# Fit.ScanGains; the summary reports the recovered gains against the truth.
 # --laplace 1 forms the Jacobian at the end state and writes the Laplace errors (Fit.laplace_errors) to <tag>_laplace.txt
 # and the normal matrix to <tag>_normal.bin (--laplace 2 reuses the dense stage's last normal matrix instead of a new
 # Jacobian). Every stage writes <tag>_checkpoint_params.csv as it goes (every twenty Adam iterations, every polish
@@ -38,6 +42,7 @@ free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); i
 pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
 start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
 npolish = getopt("--polish", 0); nsolve = getopt("--solve", 40); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8); reuse = getopt("--reuse", 1); laplace = getopt("--laplace", 0)
+gain_amp = getopt("--gain-amp", 0.0); gain_phase = getopt("--gain-phase", 0.0); calibrate_every = getopt("--calibrate-every", 10); gained = gain_amp > 0 || gain_phase > 0
 free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
@@ -92,7 +97,18 @@ end
 @info "truth" flux_Jy = Dict(f => round(total_flux(p, f * 1e9), digits = 3) for f in bands) hours_per_M = round(t_M, digits = 2) frame_span_M = round(frame_span, digits = 2)
 
 # ---- the synthetic data per band with the campaign's own noise
-trs = Dict(f => synthetic_scans(cpu, p, L, Δα, D, f * 1e9, covs[f]; noise = nothing, closures, rng, nmax, slab) for f in bands)
+gains_true = Dict{Float64,Matrix{Float64}}(); gains_fit = Dict{Float64,Matrix{Float64}}()
+if gained
+    closures && error("gains corrupt visibilities: use --closures 0")
+    for f in bands
+        nst = maximum(max(maximum(c.s1), maximum(c.s2)) for c in covs[f])
+        g = zeros(2, nst * length(covs[f]))
+        g[1, :] .= gain_amp .* randn(rng, size(g, 2)); g[2, :] .= rem2pi.(gain_phase .* randn(rng, size(g, 2)), RoundNearest)
+        gains_true[f] = g; gains_fit[f] = zeros(size(g))
+    end
+end
+fit_instrument(f) = gained ? ScanGains(gains_fit[f]) : nothing
+trs = Dict(f => synthetic_scans(cpu, p, L, Δα, D, f * 1e9, covs[f]; noise = nothing, closures, rng, nmax, slab, gains = gained ? gains_true[f] : nothing) for f in bands)
 ndat = Dict(f => ndata(trs[f]) for f in bands)
 @info "synthetic data" values = ndat total = sum(values(ndat)) closures
 
@@ -113,12 +129,23 @@ function valgrad(q)
     qd = device(T.(q))
     χ = zero(T)
     for f in bands
-        χ += timeresolved_gradient!(dp, qd, trsT[f], gcacheT, T(L), T(Δα), T(D), T(f * 1e9); nmax, slab, batch_frames = batch)
+        χ += timeresolved_gradient!(dp, qd, trsT[f], gcacheT, T(L), T(Δα), T(D), T(f * 1e9); nmax, slab, batch_frames = batch, instrument = fit_instrument(f))
     end
     return Float64(χ), Float64.(Array(dp))
 end
-band_chi2(q) = Dict(f => chi2_timeresolved(q, trs[f], cpu, L, Δα, D, f * 1e9; nmax, slab) for f in bands)
-χt = band_chi2(p); χ0 = band_chi2(q0)
+band_chi2(q; gains = gains_fit) = Dict(f => chi2_timeresolved(q, trs[f], cpu, L, Δα, D, f * 1e9; nmax, slab, instrument = gained ? ScanGains(gains[f]) : nothing) for f in bands)
+χt = band_chi2(p; gains = gains_true); χ0 = band_chi2(q0)
+# self-calibration of every band with the sky held (the scans on the backend with the current gains, built once)
+sbs = gained ? Dict(f => ScanBands([BandScans(T(f * 1e9), trsT[f], T(Δα), T(D))], gcacheT; gains = [gains_fit[f]]) for f in bands) : nothing
+function calibrate!(x)
+    gained || return false
+    xd = x isa Array ? device(T.(x)) : x
+    for f in bands
+        calibrate_scans!(gains_fit[f], sbs[f], 1, gcacheT, xd, T(L); iterations = 8, σ_logamp = max(gain_amp, 0.05), nmax, slab, batch_frames = batch)
+    end
+    return true
+end
+gained && (calibrate!(q0); global χ0 = band_chi2(q0))
 @info "χ² per band" truth = Dict(f => round(χt[f] / ndat[f], digits = 3) for f in bands) start = Dict(f => round(χ0[f] / ndat[f], digits = 3) for f in bands)
 xs = range(-6, 6; length = 25); ys = xs; zs = range(-1.5, 1.5; length = 7)
 m0 = recovery_metrics(q0, p, t0f, xs, ys, zs)
@@ -135,6 +162,7 @@ checkpoint(x) = (tmp = joinpath(outdir, "$(tag)_checkpoint_params.tmp"); writedl
 cb = (si, it, x, v) -> begin
     last_state[] = copy(x)
     it % 20 == 0 && checkpoint(x)
+    gained && it % calibrate_every == 0 && calibrate!(x)
     it % 20 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ntot, size(x, 2), (time() - t_start) / 60)); @info trace[end])   # not every 25: the loop skips the callback on a hygiene iteration
 end
 x_end = [a, θo]; accepted = 0
@@ -157,10 +185,13 @@ catch err
     rethrow()
 end
 polish_history = Float64[]
+# the polishes' scans carry the gains, and a hook calibrates every band before each step (the polishes' own ScanBands)
+polish_gains = gained ? [gains_fit[f] for f in bands] : nothing
+polish_hook = gained ? (sbx, x, it) -> (for (bi, f) in enumerate(bands); calibrate_scans!(gains_fit[f], sbx, bi, gcacheT, x, T(L); iterations = 8, σ_logamp = max(gain_amp, 0.05), nmax, slab, batch_frames = batch); end; true) : nothing
 if npolish > 0                                               # the Gauss–Newton polish on the backend, in T, at the held spacetime
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
-    qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, solve_iterations = nsolve, λ = λ0, probes = nprobes, probe_every, nmax, slab, batch_frames = batch,
+    qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, solve_iterations = nsolve, λ = λ0, probes = nprobes, probe_every, nmax, slab, batch_frames = batch, gains = polish_gains, before_step = polish_hook,
                                     callback = (it, x, v, dmp, info) -> (checkpoint(x); push!(trace, @sprintf("polish step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  solve %d its residual %.2e  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.solve_iterations, info.solve_residual, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global polish_history = Float64.(ph)
     global history = vcat(history, polish_history)
@@ -169,7 +200,7 @@ dense_history = Float64[]
 if ndense > 0                                                # Levenberg–Marquardt on the explicit Jacobian (chunked duals), at the held spacetime
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
-    qdev, dh, Adense = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), reuse, nmax, slab, batch_frames = batch,
+    qdev, dh, Adense = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), reuse, nmax, slab, batch_frames = batch, gains = polish_gains, before_step = polish_hook,
                                 callback = (it, x, v, dmp, info) -> (checkpoint(x); push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  max step %.2e  reused %d  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.max_step, info.reused, info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global dense_history = Float64.(dh)
     global history = vcat(history, dense_history)
@@ -222,5 +253,23 @@ open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
     free_spacetime && println(io, "spacetime: start a $a0 inc $inc0; end a $(x_end[1]) inc $(rad2deg(x_end[2])) (truth a $a inc $(rad2deg(θo))); accepted spacetime steps $accepted; lm_every $lm_every inner $inner pattern $pattern_σ keplerian $keplerian_σ")
     println(io, "chi2/N per band: truth $(Dict(f => round(χt[f] / ndat[f], digits = 4) for f in bands)), start $(Dict(f => round(χ0[f] / ndat[f], digits = 3) for f in bands)), end $(Dict(f => round(χ1[f] / ndat[f], digits = 4) for f in bands)); total end $(round(sum(values(χ1)) / ntot, digits = 4)) (truth $(round(sum(values(χt)) / ntot, digits = 4))); parcels $n → $(size(q, 2)) through $(length(events)) hygiene events $events; $(round(minutes, digits = 1)) minutes")
     println(io, "field recovery (density PSNR dB, relative density error, density-weighted temperature and field errors): start $m0; end $m1")
+    if gained
+        χtrue_gains = band_chi2(q; gains = gains_true)
+        for f in bands
+            gt = gains_true[f]; gf = gains_fit[f]; nst = maximum(max(maximum(c.s1), maximum(c.s2)) for c in covs[f])
+            present = falses(size(gt, 2)); for s in trs[f].scans; present[s.data.s1] .= true; present[s.data.s2] .= true; end
+            Δlg = Float64[]; Δφ = Float64[]
+            for k in 1:length(covs[f])
+                cols = findall(present[(k-1)*nst+1:k*nst]) .+ (k - 1) * nst
+                isempty(cols) && continue
+                ref = cols[1]
+                for c in cols
+                    push!(Δlg, gf[1, c] - gt[1, c]); push!(Δφ, rem2pi((gf[2, c] - gf[2, ref]) - (gt[2, c] - gt[2, ref]), RoundNearest))
+                end
+            end
+            println(io, @sprintf("gains at %.0f GHz: %d station-scans; log-amplitude error rms %.4f (max %.4f, truth spread %.3f); phase error rms %.4f rad (max %.4f, relative to each scan's reference); chi2/N of the fitted sky with the true gains %.4f, with the fitted gains %.4f",
+                                 f, count(present), sqrt(sum(abs2, Δlg) / length(Δlg)), maximum(abs.(Δlg)), gain_amp, sqrt(sum(abs2, Δφ) / length(Δφ)), maximum(abs.(Δφ)), χtrue_gains[f] / ndat[f], χ1[f] / ndat[f]))
+        end
+    end
     foreach(l -> println(io, l), trace)
 end

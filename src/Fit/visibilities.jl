@@ -51,11 +51,18 @@ struct VisibilityData{U,V,W,S}
     v::V
     vis::W
     σ::S
+    s1::Vector{Int32}                    # the gain columns of each baseline's stations (`scan_station`), empty when unknown
+    s2::Vector{Int32}
 end
+VisibilityData(u, v, vis, σ) = VisibilityData(u, v, vis, σ, Int32[], Int32[])
+
+"The complex factor g_{s1} conj(g_{s2}) of every baseline from a gain matrix (2 × columns: log-amplitude and phase, see `apply_gains`) and the baselines' gain columns."
+gain_factors(gains::AbstractMatrix, s1, s2) = [exp(gains[1, s1[k]] + gains[1, s2[k]]) * cis(gains[2, s1[k]] - gains[2, s2[k]]) for k in eachindex(s1)]
 
 "χ² of a model image against visibility data: Σ |V_model − V_data|² / σ² over baselines and Stokes parameters."
-function chi2_visibilities(image, Δα, L, D, data::VisibilityData; kernel = nothing)
+function chi2_visibilities(image, Δα, L, D, data::VisibilityData; kernel = nothing, gains = nothing)
     model = taper(kernel, visibilities(image, Δα, L, D, data.u, data.v), data.u, data.v)
+    gains === nothing || (model = apply_gains(model, gains, data.s1, data.s2))
     total = zero(real(eltype(first(model))))
     for k in eachindex(model)
         r = (model[k] .- data.vis[k]) ./ noise(data.σ, k)
@@ -227,7 +234,7 @@ function chi2_visibilities(image, Δα, L, D, data::VisibilityData, gains::Abstr
     return total
 end
 
-export apply_gains
+export apply_gains, gain_factors
 
 """
     scan_station(s, scan, nstations) -> Int
