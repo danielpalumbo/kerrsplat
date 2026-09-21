@@ -43,6 +43,32 @@ with the recovered fields within the run-to-run spread: the FP32 transport is va
 fit level on this card (nine mechanisms in the FP32 note). Then the queued triband ngEHT
 self-fit below.
 
+## State at the close of 2026-09-21 (resume here)
+
+Merged 2026-09-17/18/21: #106, #107, #108 (the polish's linear solve by LSQR on the scaled
+Jacobian, `lsqr_step!`, gated against the dense damped solve to 1e-11), #109
+(`viz/field_movie.jl`: the self-fit's fields in three dimensions against the truth's, frame by
+frame; Daniel's request of 2026-09-18), #110 (`polish_dense!` reuses its Jacobian for up to
+`reuse` chord steps; the note through the LSQR run). The triband movie fit, still unconverged:
+after Adam (→ 3.09), the plain and preconditioned polishes (→ 2.05), the dense polish (→ 1.77),
+forty and sixty more preconditioned steps (→ 1.25, → 1.11) and sixty LSQR steps (→ 1.045; 1.054
+/ 1.031 / 1.054 per band against the truth's 0.996 / 1.005 / 0.974), the descent runs at a
+tenth of a percent per twenty-minute step and the matrix-free solves never finish (normal
+residuals 0.4–0.8 of their start after sixty iterations: the scaled Jacobian stays
+ill-conditioned on the over-complete basis). The fields at χ²/N 1.11, weighted by the truth's
+230 GHz emissivity: |B| to 19% voxel by voxel with no bias, Θe to 11% with a 4% low bias, the
+direction to a median of 10°, the density poor pointwise (the median voxel 23% low, the tail a
+factor of six) though its emission-weighted mean is 0.78 of the truth's: the emissivities' exact
+null. The 3D field movie of the 1.045 state is in Daniel's Dropbox
+(`figures_and_animations/animations/triband_fields_movie.mp4`). The machine rebooted twice
+between 2026-09-18 and 21 and `/tmp` went with it: the scratch worktree, every run script and
+log, and the first Jacobian-reuse run's output (eight hours of the card). Long runs, their logs
+and worktrees now live in `~/local_scripts/kerrsplat_runs/`; the fit states are in the main
+tree's `validation/ngeht/output/` (gitignored; `triband_lsqr_params.csv` is the latest). On the
+card at the close: the Jacobian-reuse polish relaunched from the 1.045 state (`triband_dense3`,
+48 steps at 8 per Jacobian, about eight hours). If it levels off above unity, the next move is
+densification followed by the polish.
+
 ## State at the close of 2026-09-16 (resume here)
 
 Merged 2026-09-16: #103 (the visibility likelihood on the backend; the CUDA gate 43/44 with
