@@ -21,10 +21,16 @@ struct ScanBands{B,F,P}
     fsd::Vector{Dict{Float64,P}} # per band, the FrameScans of every frame time
 end
 
-function ScanBands(bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T}) where {T}
+function ScanBands(bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T}; gains = nothing) where {T}
     frames = [frame_times(b.tr) for b in bands]
-    fsd = [Dict(Float64(t) => frame_scans(cache.backend, T, [s for s in b.tr.scans if s.time == t]) for t in frame_times(b.tr)) for b in bands]
+    fsd = [Dict(Float64(t) => frame_scans(cache.backend, T, [s for s in b.tr.scans if s.time == t]; gains = gains === nothing ? nothing : gains[bi]) for t in frame_times(b.tr)) for (bi, b) in enumerate(bands)]
     return ScanBands(bands, frames, fsd)
+end
+
+"The gain factors of every frame of band `bi` recomputed from `gains` (after a calibration step)."
+function set_gains!(sb::ScanBands, bi::Integer, gains::AbstractMatrix)
+    foreach(fs -> set_gains!(fs, gains), values(sb.fsd[bi]))
+    return sb
 end
 
 "The number of residual entries of a frame's scans (real and imaginary parts of the four Stokes visibilities)."
@@ -70,7 +76,7 @@ function _frame_residuals!(rv, c, images, fs::FrameScans, cache::GeodesicCache{T
     V = KernelAbstractions.allocate(backend, SVector{4,Complex{E}}, length(fs.u))
     vis_kernel!(backend, 64)(V, images, c, cache.perm, nα, nβ, psize, scale, fs.u, fs.v, fs.tap; ndrange = length(V))
     KernelAbstractions.synchronize(backend)
-    res = map((x, d, σ) -> (x .- d) ./ σ, V, fs.vis, fs.σ)     # SVector{4,Complex{E}} per baseline
+    res = map((x, g, d, σ) -> (g .* x .- d) ./ σ, V, fs.g, fs.vis, fs.σ)     # SVector{4,Complex{E}} per baseline, the model gained
     flat = map(x -> SVector(real(x[1]), imag(x[1]), real(x[2]), imag(x[2]), real(x[3]), imag(x[3]), real(x[4]), imag(x[4])), res)
     copyto!(rv, reinterpret(E, flat))
     return rv
@@ -136,7 +142,7 @@ function jtvp!(out, sb::ScanBands, cache::GeodesicCache{T,N}, params, w, L; nmax
                 fs = sb.fsd[bi][Float64(t)]
                 n = _nres(fs)
                 wf = reinterpret(SVector{8,T}, view(w, off + 1:off + n))                         # per baseline: Re, Im of the four Stokes
-                wc = map((x, σ) -> SVector(Complex(x[1], x[2]), Complex(x[3], x[4]), Complex(x[5], x[6]), Complex(x[7], x[8])) ./ σ, wf, fs.σ)
+                wc = map((x, g, σ) -> conj(g) .* SVector(Complex(x[1], x[2]), Complex(x[3], x[4]), Complex(x[5], x[6]), Complex(x[7], x[8])) ./ σ, wf, fs.g, fs.σ)
                 seed_kernel!(backend, 64)(seeds, c, wc, cache.perm, nα, nβ, psize, scale, fs.u, fs.v, fs.tap; ndrange = npix)
                 KernelAbstractions.synchronize(backend)
                 off += n
@@ -172,6 +178,107 @@ function normal_diagonal!(dg, sb::ScanBands, cache::GeodesicCache{T,N}, params, 
     floor = T(1e-6) * maximum(dg)
     dg .= max.(dg, floor)
     return dg
+end
+
+"""
+    calibrate_scans!(gains, sb, bi, cache, params, L; iterations = 8, λ = 1e-3, σ_logamp = 0.1, phase_init = true, ...) -> gains
+
+Self-calibration of band `bi`'s scans with the sky held: for every scan, Levenberg–Marquardt on
+the log-amplitudes and phases of the stations present (the gain columns of the scan's
+baselines) against the model visibilities of the current parameters, with a Gaussian prior of
+spread `σ_logamp` on the log-amplitudes and the phase of the scan's lowest column held at zero
+(the reference). Phases that are still zero start from the baselines to the reference
+(`phase_init`). The frames are rendered once on the backend; the per-scan solves are tiny and
+run on the host. The scans' gain factors are updated in place (`set_gains!`), so the next
+residuals, gradient or Jacobian see the new gains.
+"""
+function calibrate_scans!(gains::AbstractMatrix, sb::ScanBands, bi::Integer, cache::GeodesicCache{T,N}, params, L; iterations::Integer = 8, λ::Real = 1e-3, σ_logamp::Real = 0.1,
+                          phase_init::Bool = true, nmax = -1, slab = 0, cull::Bool = size(params, 2) > 16, batch_frames::Integer = 4) where {T,N}
+    backend = cache.backend
+    b = sb.bands[bi]; times = sb.frames[bi]
+    dummy = KernelAbstractions.allocate(backend, T, size(params))
+    forward, _ = sweep_passes(dummy, cache, params, L; method = :dual, nmax, slab, cull)
+    nα, nβ = cache.screen_size
+    psize = T(b.Δα * L / b.D); scale = psize^2 / T(Transfer.JY)
+    for chunk in Iterators.partition(times, max(Int(batch_frames), 1))
+        ts = collect(chunk)
+        images = forward(ts, b.ν; device = true)
+        for (c, t) in enumerate(ts)
+            fs = sb.fsd[bi][Float64(t)]
+            V = similar(fs.vis)
+            vis_kernel!(backend, 64)(V, images, c, cache.perm, nα, nβ, psize, scale, fs.u, fs.v, fs.tap; ndrange = length(V))
+            KernelAbstractions.synchronize(backend)
+            Vh = Array(V); dh = Array(fs.vis); σh = Array(fs.σ)
+            Threads.@threads for si in 1:length(fs.offsets)-1
+                _calibrate_scan!(gains, Vh, dh, σh, fs.t1, fs.t2, fs.offsets[si]:fs.offsets[si+1]-1; iterations, λ, σ_logamp, phase_init)
+            end
+            set_gains!(fs, gains)
+        end
+    end
+    return gains
+end
+
+# one scan's gains: the columns present, the reference (the lowest column) with its phase held, the phases started from
+# the baselines to the reference where they are still zero, then Levenberg–Marquardt on (lg, φ) with the analytic
+# Jacobian of m_k = g1 conj(g2) V_k (∂m/∂lg = m for both stations, ∂m/∂φ = ±i m)
+function _calibrate_scan!(gains, V, d, σ, t1, t2, rng; iterations, λ, σ_logamp, phase_init)
+    cols = sort!(unique(vcat(t1[rng], t2[rng]))); m = length(cols)
+    m > 1 || return gains
+    local_index = Dict(c => i for (i, c) in enumerate(cols))
+    ref = cols[1]
+    if phase_init && all(gains[2, c] == 0 for c in cols)
+        for k in rng
+            a, bcol = t1[k], t2[k]
+            if a == ref && bcol != ref
+                gains[2, bcol] = angle(V[k][1] / d[k][1])            # arg m = φ_ref − φ_b + arg V = arg d
+            elseif bcol == ref && a != ref
+                gains[2, a] = angle(d[k][1] / V[k][1])
+            end
+        end
+    end
+    x = vcat([gains[1, c] for c in cols], [gains[2, c] for c in cols])          # (lg..., φ...)
+    free = trues(2m); free[m + 1] = false                                        # the reference phase
+    nres = 8 * length(rng) + m
+    r = zeros(nres); J = zeros(nres, 2m)
+    function evaluate!(x)
+        row = 0
+        for k in rng
+            i1 = local_index[t1[k]]; i2 = local_index[t2[k]]
+            g = exp(x[i1] + x[i2]) * cis(x[m + i1] - x[m + i2])
+            for j in 1:4
+                mk = g * V[k][j]; res = (mk - d[k][j]) / σ[k][j]
+                for (part, val, dm) in ((1, real, mk), (2, imag, mk))
+                    row += 1
+                    r[row] = val(res)
+                    J[row, i1] += val(dm) / σ[k][j]; J[row, i2] += val(dm) / σ[k][j]
+                    J[row, m + i1] += val(im * dm) / σ[k][j]; J[row, m + i2] += val(-im * dm) / σ[k][j]
+                end
+            end
+        end
+        for i in 1:m
+            row += 1; r[row] = x[i] / σ_logamp; J[row, i] = 1 / σ_logamp
+        end
+        return sum(abs2, r)
+    end
+    J .= 0; χ = evaluate!(x); damping = float(λ)
+    for _ in 1:iterations
+        A = J' * J; g = J' * r
+        idx = findall(free)
+        Af = A[idx, idx]; δ = zeros(2m)
+        δ[idx] = -((Af + damping * Diagonal(max.(diag(Af), 1e-12 * maximum(diag(Af))))) \ g[idx])
+        xt = x .+ δ
+        J_saved = copy(J); J .= 0
+        χt = evaluate!(xt)
+        if χt < χ
+            x = xt; χ = χt; damping = max(damping / 3, 1e-9)
+        else
+            J .= J_saved; damping *= 10
+        end
+    end
+    for (i, c) in enumerate(cols)
+        gains[1, c] = x[i]; gains[2, c] = x[m + i]
+    end
+    return gains
 end
 
 """
@@ -238,9 +345,9 @@ the step's gain ratio, the model's predicted decrease, the solve's iterations an
 relative normal-equation residual.
 """
 function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, solve_iterations::Integer = 40, λ::Real = 1e-2, probes::Integer = 8, probe_every::Integer = 4,
-                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng()) where {T,N}
+                              free = trues(size(params)), nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing, rng = Random.default_rng(), gains = nothing, before_step = nothing) where {T,N}
     backend = cache.backend
-    sb = ScanBands(bands, cache)
+    sb = ScanBands(bands, cache; gains)
     cull = size(params, 2) > 16
     m = residual_length(sb)
     mask = KernelAbstractions.allocate(backend, T, size(params)); copyto!(mask, T.(free))
@@ -251,6 +358,9 @@ function polish_timeresolved!(params, bands::AbstractVector{<:BandScans}, cache:
     F = Float64                                                  # the solve's recurrences in Float64; the products in T
     damping = F(λ)
     for it in 1:iterations
+        if before_step !== nothing && before_step(sb, params, it) === true                 # the hook changed the scans (a calibration): fresh residuals
+            χ = residuals!(r, sb, cache, params, L; nmax, slab, cull, batch_frames)
+        end
         jtvp!(g, sb, cache, params, r, L; nmax, slab, cull, batch_frames); g .*= mask         # Jᵀr
         if probes > 0
             (it == 1 || (it - 1) % max(probe_every, 1) == 0) && normal_diagonal!(dscale, sb, cache, params, L; probes, rng, mask, nmax, slab, cull, batch_frames)
@@ -398,9 +508,10 @@ parameters). The callback receives `(it, params, χ, λ, info)` with the gain ra
 predicted decrease, the number of dampings tried and the seconds the Jacobian took.
 """
 function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{T,N}, L; iterations::Integer = 5, λ::Real = 1e-2, free = trues(size(params)), chunk::Val{C} = Val(8),
-                       tries::Integer = 6, reuse::Integer = 1, diag_floor::Real = 1e-6, λ_max::Real = 1e6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing) where {T,N,C}
+                       tries::Integer = 6, reuse::Integer = 1, diag_floor::Real = 1e-6, λ_max::Real = 1e6, nmax = -1, slab = 0, batch_frames::Integer = 4, callback = nothing,
+                       gains = nothing, before_step = nothing) where {T,N,C}
     backend = cache.backend
-    sb = ScanBands(bands, cache)
+    sb = ScanBands(bands, cache; gains)
     cull = size(params, 2) > 16
     columns = findall(vec(collect(free)))
     m = residual_length(sb); n = length(columns)
@@ -412,6 +523,9 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     A = zeros(n, n)
     it = 0
     while it < iterations
+        if before_step !== nothing && before_step(sb, params, it + 1) === true             # the hook changed the scans (a calibration): fresh residuals
+            χ = residuals!(r, sb, cache, params, L; nmax, slab, cull, batch_frames)
+        end
         tj = @elapsed jacobian!(J, sb, cache, params, L; columns, chunk, nmax, slab, cull, batch_frames)
         A = normal_matrix(J)
         # the Marquardt diagonal floored at `diag_floor` of its largest entry: a column the residuals barely see (a parcel
@@ -457,4 +571,4 @@ function polish_dense!(params, bands::AbstractVector{<:BandScans}, cache::Geodes
     return params, history, A
 end
 
-export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, lsqr_step!, polish_timeresolved!, jacobian!, normal_matrix, laplace_errors, polish_dense!
+export ScanBands, residuals!, residual_length, jvp!, jtvp!, normal_diagonal!, lsqr_step!, calibrate_scans!, polish_timeresolved!, jacobian!, normal_matrix, laplace_errors, polish_dense!

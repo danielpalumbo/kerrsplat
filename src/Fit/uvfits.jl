@@ -51,7 +51,7 @@ end
 Base.length(o::Observation) = length(o.u)
 
 "The [`VisibilityData`](@ref) of an observation (the likelihood input)."
-VisibilityData(o::Observation) = VisibilityData(o.u, o.v, o.vis, o.σ)
+VisibilityData(o::Observation) = VisibilityData(o.u, o.v, o.vis, o.σ, Int32.(o.s1), Int32.(o.s2))
 
 const _libcfitsio = FITSIO.CFITSIO.libcfitsio
 

@@ -11,17 +11,21 @@ The visibility scans of one frame concatenated on the backend: baselines [wavele
 Stokes visibilities [Jy], their noise per Stokes parameter, and the scattering taper of each
 baseline (one without a kernel), all in the scalar type of the fit.
 """
-struct FrameScans{U,W,S}
+struct FrameScans{U,W,S,G,I}
     u::U
     v::U
     vis::W
     σ::S
     tap::U
+    g::G                       # the gain factor g_{s1} conj(g_{s2}) of every baseline (ones without gains)
+    t1::I                      # the gain columns of the baselines' stations (host vectors; empty without gains)
+    t2::I
+    offsets::Vector{Int}       # the first baseline of every scan of the frame, and one past the last
 end
 
-"The scans of one frame (all `VisibilityData`) as `FrameScans` on `backend` in the type `T`."
-function frame_scans(backend, ::Type{T}, scans) where {T}
-    u = T[]; v = T[]; vis = SVector{4,Complex{T}}[]; σ = SVector{4,T}[]; tap = T[]
+"The scans of one frame (all `VisibilityData`) as `FrameScans` on `backend` in the type `T`, with the gains' factors when `gains` (a `ScanGains` matrix) is given."
+function frame_scans(backend, ::Type{T}, scans; gains = nothing) where {T}
+    u = T[]; v = T[]; vis = SVector{4,Complex{T}}[]; σ = SVector{4,T}[]; tap = T[]; t1 = Int32[]; t2 = Int32[]; offsets = [1]
     for s in scans
         d = s.data
         d isa VisibilityData || throw(ArgumentError("the backend likelihood takes visibility scans"))
@@ -29,9 +33,20 @@ function frame_scans(backend, ::Type{T}, scans) where {T}
         append!(σ, [SVector{4,T}(noise(d.σ, k)) for k in eachindex(d.u)])
         one4 = SVector{4,Complex{T}}(1, 1, 1, 1)
         append!(tap, [s.kernel === nothing ? one(T) : T(real(taper(s.kernel, [one4], [d.u[k]], [d.v[k]])[1][1])) for k in eachindex(d.u)])
+        gains === nothing || (isempty(d.s1) && throw(ArgumentError("gains need the scans' station columns (synthetic_scans with gains, or VisibilityData with s1, s2)")))
+        append!(t1, d.s1); append!(t2, d.s2)
+        push!(offsets, length(u) + 1)
     end
     dev(x) = (y = KernelAbstractions.allocate(backend, eltype(x), length(x)); copyto!(y, x); y)
-    return FrameScans(dev(u), dev(v), dev(vis), dev(σ), dev(tap))
+    g = dev(gains === nothing ? ones(Complex{T}, length(u)) : Complex{T}.(gain_factors(gains, t1, t2)))
+    return FrameScans(dev(u), dev(v), dev(vis), dev(σ), dev(tap), g, t1, t2, offsets)
+end
+
+"The gain factors of `fs` recomputed from a gain matrix (after a calibration step)."
+function set_gains!(fs::FrameScans, gains::AbstractMatrix)
+    isempty(fs.t1) && throw(ArgumentError("these scans carry no station columns"))
+    copyto!(fs.g, Complex{eltype(fs.u)}.(gain_factors(gains, fs.t1, fs.t2)))
+    return fs
 end
 
 "The sky offsets (l toward the east, m toward the north) of sorted pixel `j` from the screen index `perm[j]`."
@@ -87,12 +102,12 @@ function frame_chi2_seed!(seed, c, images, fs::FrameScans, cache::GeodesicCache{
     V = similar(fs.vis)
     vis_kernel!(backend, 64)(V, images, c, cache.perm, nα, nβ, psize, scale, fs.u, fs.v, fs.tap; ndrange = length(V))
     KernelAbstractions.synchronize(backend)
-    r = map((x, d, σ) -> (x .- d) ./ σ, V, fs.vis, fs.σ)          # elementwise per Stokes parameter (a broadcast `./` of two SVectors is a solve)
+    r = map((x, g, d, σ) -> (g .* x .- d) ./ σ, V, fs.g, fs.vis, fs.σ)   # elementwise per Stokes parameter (a broadcast `./` of two SVectors is a solve)
     χ = sum(x -> sum(abs2, x), r)
-    w = map((x, σ) -> 2 .* x ./ σ, r, fs.σ)
+    w = map((x, g, σ) -> 2 .* conj(g) .* x ./ σ, r, fs.g, fs.σ)         # the adjoint of the gained model: conj(g) on the weights
     seed_kernel!(backend, 64)(seed, c, w, cache.perm, nα, nβ, psize, scale, fs.u, fs.v, fs.tap; ndrange = size(images, 1))
     KernelAbstractions.synchronize(backend)
     return T(χ)
 end
 
-export FrameScans, frame_scans, frame_chi2_seed!
+export FrameScans, frame_scans, set_gains!, frame_chi2_seed!
