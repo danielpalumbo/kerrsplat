@@ -7,8 +7,12 @@
 #         [--samples 160] [--nmax 2] [--slab 0.5] [--frame-hours 4] [--shell 300] [--scale 0.25] [--iterations 300] [--eta 0.02]
 #         [--every 25] [--prune 0.02] [--max 600] [--flux 0.6] [--closures 0] [--precision Float32] [--backend cuda] [--batch 8]
 #         [--seed 1] [--tag triband] [--free-spacetime 0] [--a0 0.7] [--inc0 50] [--lm-every 3] [--inner 3] [--pattern 0.005] [--keplerian 0.05]
-#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--solve 40] [--lambda 0.01] [--probes 8] [--probe-every 4] [--dense 0] [--chunk 8] [--reuse 1]
+#         [--resume output/<tag>_params.csv] [--single-stage 0] [--eta-end 0] [--polish 0] [--solve 40] [--lambda 0.01] [--probes 8] [--probe-every 4] [--dense 0] [--chunk 8] [--reuse 1] [--laplace 0]
 # --dense N runs N Levenberg–Marquardt iterations on the explicit Jacobian (Fit.polish_dense!, --chunk columns per pass).
+# --laplace 1 forms the Jacobian at the end state and writes the Laplace errors (Fit.laplace_errors) to <tag>_laplace.txt
+# and the normal matrix to <tag>_normal.bin (--laplace 2 reuses the dense stage's last normal matrix instead of a new
+# Jacobian). Every stage writes <tag>_checkpoint_params.csv as it goes (every twenty Adam iterations, every polish
+# step), so a run cut short (a reboot) can be resumed from its last state with --resume.
 # --polish N runs N Levenberg–Marquardt steps of the matrix-free Gauss–Newton polish (Fit.polish_timeresolved!, --solve
 # conjugate-gradient iterations each, --lambda the initial damping) after the Adam stages (with --iterations 0, only the
 # polish, e.g. on a --resume'd state); the spacetime stays where it is.
@@ -33,7 +37,7 @@ backend = getstr("--backend", "cuda") == "cuda" ? CUDABackend() : CPU(); batch =
 free_spacetime = getopt("--free-spacetime", 0) == 1; a0 = getopt("--a0", 0.7); inc0 = getopt("--inc0", 50.0); lm_every = getopt("--lm-every", 3); inner = getopt("--inner", 3)
 pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.05)
 start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
-npolish = getopt("--polish", 0); nsolve = getopt("--solve", 40); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8); reuse = getopt("--reuse", 1)
+npolish = getopt("--polish", 0); nsolve = getopt("--solve", 40); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8); reuse = getopt("--reuse", 1); laplace = getopt("--laplace", 0)
 free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
@@ -127,8 +131,10 @@ stages = single_stage ? [Fit.Stage(; iterations, η, η_end, label = "everything
 hyg = Fit.Hygiene(every = every, prune_fraction = prune, merge_position = 0.15, max_splats = maxsplats)
 ntot = sum(values(ndat))
 last_state = Ref(copy(q0))
+checkpoint(x) = (tmp = joinpath(outdir, "$(tag)_checkpoint_params.tmp"); writedlm(tmp, Float64.(Array(x)), ','); mv(tmp, joinpath(outdir, "$(tag)_checkpoint_params.csv"); force = true))
 cb = (si, it, x, v) -> begin
     last_state[] = copy(x)
+    it % 20 == 0 && checkpoint(x)
     it % 20 == 0 && (push!(trace, @sprintf("stage %d iteration %3d  chi2 %10.1f  reduced %.3f  parcels %4d  %.1f min", si, it, v, v / ntot, size(x, 2), (time() - t_start) / 60)); @info trace[end])   # not every 25: the loop skips the callback on a hygiene iteration
 end
 x_end = [a, θo]; accepted = 0
@@ -137,7 +143,7 @@ q, history, events = try
         bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
         xj = fit_joint!(copy(q0), [a0, deg2rad(inc0)], bandsT, gcacheT, camera; L = T(L), iterations, η, η_end = η / 10, inner, nmax, slab,
                         pattern = pattern_σ, keplerian = keplerian_σ, hygiene = hyg, lm_every,
-                        callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
+                        callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && checkpoint(xq); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
         global x_end = xj[2]; global accepted = xj[4]
         (xj[1], [h[1] for h in xj[3]], xj[5])
     elseif iterations > 0
@@ -155,7 +161,7 @@ if npolish > 0                                               # the Gauss–Newto
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
     qdev, ph = polish_timeresolved!(qdev, bandsT, gcacheT, T(L); iterations = npolish, solve_iterations = nsolve, λ = λ0, probes = nprobes, probe_every, nmax, slab, batch_frames = batch,
-                                    callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("polish step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  solve %d its residual %.2e  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.solve_iterations, info.solve_residual, (time() - t_start) / 60)); @info trace[end]))
+                                    callback = (it, x, v, dmp, info) -> (checkpoint(x); push!(trace, @sprintf("polish step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  solve %d its residual %.2e  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.solve_iterations, info.solve_residual, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global polish_history = Float64.(ph)
     global history = vcat(history, polish_history)
 end
@@ -163,10 +169,40 @@ dense_history = Float64[]
 if ndense > 0                                                # Levenberg–Marquardt on the explicit Jacobian (chunked duals), at the held spacetime
     bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
     qdev = device(T.(q))
-    qdev, dh, _ = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), reuse, nmax, slab, batch_frames = batch,
-                                callback = (it, x, v, dmp, info) -> (push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  max step %.2e  reused %d  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.max_step, info.reused, info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
+    qdev, dh, Adense = polish_dense!(qdev, bandsT, gcacheT, T(L); iterations = ndense, λ = λ0, chunk = Val(chunk), reuse, nmax, slab, batch_frames = batch,
+                                callback = (it, x, v, dmp, info) -> (checkpoint(x); push!(trace, @sprintf("dense step %2d  chi2 %10.1f  reduced %.4f  damping %.1e  gain %.2f  predicted %.1f  tries %d  max step %.2e  reused %d  jacobian %.1f min  %.1f min", it, v, v / ntot, dmp, info.gain, info.predicted, info.tries, info.max_step, info.reused, info.jacobian_seconds / 60, (time() - t_start) / 60)); @info trace[end]))
     global q = Float64.(Array(qdev)); global dense_history = Float64.(dh)
     global history = vcat(history, dense_history)
+    global A_last = Adense
+end
+if laplace > 0                                                # the Laplace errors of the end state from the normal matrix of the explicit Jacobian
+    bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
+    A = if laplace == 2 && @isdefined(A_last)
+        A_last
+    else
+        sbT = ScanBands(bandsT, gcacheT); qdev = device(T.(q))
+        J = Matrix{T}(undef, residual_length(sbT), length(q))
+        tj = @elapsed jacobian!(J, sbT, gcacheT, qdev, T(L); chunk = Val(chunk), nmax, slab, batch_frames = batch)
+        push!(trace, @sprintf("laplace: the Jacobian of the end state in %.1f min", tj / 60)); @info trace[end]
+        normal_matrix(J)
+    end
+    open(joinpath(outdir, "$(tag)_normal.bin"), "w") do io; write(io, Int64(size(A, 1))); write(io, A); end
+    σ, spectrum, kept = laplace_errors(A; retain = 1e-6)
+    σm = reshape(σ, size(q)); w = exp.(q[13, :]) ./ sum(exp.(q[13, :]))
+    open(joinpath(outdir, "$(tag)_laplace.txt"), "w") do io
+        println(io, "Laplace errors of the end state ($(size(q, 2)) parcels, $(length(q)) parameters): $kept modes of the scaled normal matrix above 1e-6 of the largest; ",
+                "modes above 1e-3 / 1e-8 / 1e-10: $(count(>=(1e-3), spectrum)) / $(count(>=(1e-8), spectrum)) / $(count(>=(1e-10), spectrum))")
+        println(io, "per row (the parameter's own units): median, 16% and 84% over the parcels, and the density-weighted mean")
+        for (i, name) in enumerate(Splats.POLARIZED_SPLAT_PARAMS)
+            v = sort(σm[i, :]); n = length(v)
+            println(io, @sprintf("  %-6s median %.4g  16%% %.4g  84%% %.4g  density-weighted %.4g", name, v[cld(n, 2)], v[max(1, round(Int, 0.16n))], v[min(n, round(Int, 0.84n))], sum(w .* σm[i, :])))
+        end
+        println(io, "per parcel: ln ne, σ(ln ne), σ(ln Θe), σ(ln B), σ(z), σ(omega)")
+        for j in 1:size(q, 2)
+            println(io, @sprintf("  %3d  %.2f  %.3f  %.3f  %.3f  %.3f  %.5f", j, q[13, j], σm[13, j], σm[14, j], σm[15, j], σm[3, j], σm[21, j]))
+        end
+    end
+    @info "laplace" kept parameters = length(q) sigma_lnne_median = round(sort(σm[13, :])[cld(end, 2)], digits = 3) sigma_lnTe_median = round(sort(σm[14, :])[cld(end, 2)], digits = 3) sigma_lnB_median = round(sort(σm[15, :])[cld(end, 2)], digits = 3)
 end
 minutes = (time() - t_start) / 60
 χ1 = band_chi2(q)
