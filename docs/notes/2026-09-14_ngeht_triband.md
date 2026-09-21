@@ -182,8 +182,8 @@ with gain ratios of 0.5–0.9, the damping at its floor, the solves' normal resi
 of their start after sixty iterations: the scaled Jacobian stays ill-conditioned, and the descent
 runs at a tenth of a percent per twenty-minute step and slows (the last twelve steps one
 percent). Five percent above the floor after 128 Gauss–Newton steps. The comparison of the
-fields at the 1.11 state (`docs/notes/figures/` has none yet; the numbers from a voxel grid
-weighted by the truth's 230 GHz emissivity): the field strength to 19% voxel by voxel with no
+fields at the 1.11 state (`validation/ngeht/field_compare.jl`: a voxel grid of 0.25 M over the
+emitting region, every voxel weighted by the truth's 230 GHz emissivity): the field strength to 19% voxel by voxel with no
 bias and its emission-weighted mean exact, the temperature to 11% with a 4% low bias, the
 direction to a median of 10°, and the density poor pointwise (the median voxel 23% low, the lower
 tail a factor of six) though its emission-weighted mean is 0.78 of the truth's: the exact null
@@ -191,7 +191,12 @@ of the emissivities, density against field and temperature, is where the over-co
 differs from the truth. The 3D field movie of that state is `viz/field_movie.jl`'s output
 (`viz/output/triband_pcg4_fields.mp4`; the truth's six parcels above the fit: the 230 GHz image,
 density isosurfaces at absolute levels, temperature and field strength on each model's own
-density surface, the field direction on the midplane).
+density surface, the field direction on the midplane). At the 1.045 state the same comparison
+reads |B| to 18% (bias +0.02, the emission-weighted mean 21.8 against 21.7 G), Θe to 13% (bias
+−0.05, 33.3 against 34.7), the direction to a median of 9° (13% of the emission weight with the
+sign flipped), and the density's emission-weighted mean 0.76 of the truth's with the same
+pointwise spread: sixty LSQR steps changed the fields by less than the run-to-run scatter,
+which is what a descent along the emissivities' null looks like.
 
 ## The spacetime free in the data domain
 
