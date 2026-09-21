@@ -69,6 +69,31 @@ card at the close: the Jacobian-reuse polish relaunched from the 1.045 state (`t
 48 steps at 8 per Jacobian, about eight hours). If it levels off above unity, the next move is
 densification followed by the polish.
 
+## Wishlist and queue (kept current; newest first)
+
+- **The triband fit with the spacetime free** (Daniel, 2026-09-21: "broadly curious how the
+  performance would change if the spacetime is not fixed"; not to be run now). The driver has
+  it: `--free-spacetime 1 --a0 0.7 --inc0 50` runs `fit_joint!` on the three bands' scans
+  (Levenberg–Marquardt on spin and inclination from every third frame's dual render, the
+  pattern and Keplerian priors tied to the current spin), Float64 since the geodesics are
+  regenerated every iteration; a pilot ran at 48² before it was stopped for the Float32 work.
+  At this card's speed the full-size run is ten hours or more for the Adam stage alone, and the
+  polishes hold the spacetime, so the honest version is: joint Adam from the shell start, then
+  the polish at the fitted spacetime, then the spacetime's Laplace error from the dense normal
+  matrix. A cluster node is the natural place (`docs/HANDOFF.md`, the cluster section of the
+  2026-09-12 note: no new kernels, user-level juliaup, Float64 on an H200).
+- **Densification of the triband fit** if the polish levels off above unity: `Fit.densify`
+  with the polish's Jᵀr as the gradient (split the parcels carrying the largest residual
+  share), then the polish again; prune and merge stay off late (they threw the χ² by an order
+  of magnitude each in the resumed run).
+- **Laplace errors of the triband parcels** from `polish_dense!`'s normal matrix (returned, not
+  yet used): the marginal errors of each parcel's fields, and the null directions' spectrum.
+- **Joint gains in the triband data**: the campaign is thermal-noise only; the
+  self-calibration path (`selfcal!`, the joint LM polish with gains) exists and is a later row.
+- **A GRMHD truth** (Daniel's dump, when it comes) in place of the six parcels.
+- **The cluster / H200 path** for the long runs (the Float32 work made this card viable for
+  the polishes, not for a joint run).
+
 ## State at the close of 2026-09-16 (resume here)
 
 Merged 2026-09-16: #103 (the visibility likelihood on the backend; the CUDA gate 43/44 with
