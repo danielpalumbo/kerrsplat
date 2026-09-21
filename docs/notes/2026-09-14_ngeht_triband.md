@@ -219,6 +219,19 @@ solves and the exact solves gain the same per step near the minimum, so the chea
 hour until the solves stall on the basis's null directions, where the explicit Jacobian with
 many chord steps finishes.
 
+**The Laplace errors of the final state** (`--laplace 1`: one Jacobian, 56 minutes;
+`triband_final_laplace.txt`). Of the 1,470 parameters' directions, 528 modes of the scaled
+normal matrix lie above 1e-6 of the largest, 122 above 1e-3: the over-complete basis has
+nearly two thirds of its directions unconstrained by the campaign, which is the exact null of
+the emissivities (density against field and temperature) and the freedom of seventy parcels to
+share the emission among themselves. Over the constrained modes the marginal errors are small:
+per parcel, density-weighted, σ(ln nₑ) 0.009, σ(ln Θe) 0.018, σ(ln B) 0.009, σ(z) 0.018 M, the
+pattern rates to 0.001 rad/M, the positions to 0.02 M. These are the errors of the constrained
+subspace only: the fit's density is 24% below the truth's at the median voxel with a
+formal error of one percent, and the difference lives in the modes the report drops. The
+numbers say what the data determine (the combinations the emissivities see, the geometry, the
+kinematics) and what they do not (the density on its own).
+
 ## The spacetime free in the data domain
 
 `fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
