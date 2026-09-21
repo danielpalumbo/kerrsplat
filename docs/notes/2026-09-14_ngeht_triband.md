@@ -198,6 +198,27 @@ sign flipped), and the density's emission-weighted mean 0.76 of the truth's with
 pointwise spread: sixty LSQR steps changed the fields by less than the run-to-run scatter,
 which is what a descent along the emissivities' null looks like.
 
+**The final state** (2026-09-21). Daniel judged the fit sufficiently converged for its
+pedagogical purpose and asked that refinements stop once the machinery was shown to work at
+full size; the last such run was the dense polish reusing its Jacobian (`polish_dense!` with
+`reuse = 8`): five Jacobians of 55 minutes, chord steps on each at three seconds apiece, forty
+steps in 4.7 hours, ending when the damping ran away after the chord steps stalled. χ²/N
+1.045 → 1.0135 (1.015 / 1.014 / 1.003 per band against the truth's 0.996 / 1.005 / 0.974): one
+and a half percent above the floor, seventy parcels, 900 Adam iterations and 228 Gauss–Newton
+steps in all. The fields at that state, weighted by the truth's 230 GHz emissivity
+(`validation/ngeht/field_compare.jl`): the field strength to 17% voxel by voxel with a 4% high
+bias (the emission-weighted mean 22.2 against 21.7 G), the temperature to 13% with a 6% low bias
+(33.3 against 34.7), the field direction to a median of 8° (11% of the emission weight with the
+sign flipped), and the density's emission-weighted mean 0.78 of the truth's with the pointwise
+spread of the earlier states: the exact null of the emissivities, density against field and
+temperature, is what the data leave open. The animations of this state are the fit movie
+(`viz/triband_movie.jl`) and the 3D field movie (`viz/field_movie.jl`) in Daniel's Dropbox
+folder. The lessons of the optimizer, for the next data-domain fit: Adam with hygiene to a few
+times the floor, hygiene off for the last decade, then the polish; the preconditioned partial
+solves and the exact solves gain the same per step near the minimum, so the cheap one wins per
+hour until the solves stall on the basis's null directions, where the explicit Jacobian with
+many chord steps finishes.
+
 ## The spacetime free in the data domain
 
 `fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
