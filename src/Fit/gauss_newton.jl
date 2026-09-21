@@ -187,8 +187,8 @@ Self-calibration of band `bi`'s scans with the sky held: for every scan, Levenbe
 the log-amplitudes and phases of the stations present (the gain columns of the scan's
 baselines) against the model visibilities of the current parameters, with a Gaussian prior of
 spread `σ_logamp` on the log-amplitudes and the phase of the scan's lowest column held at zero
-(the reference). Phases that are still zero start from the baselines to the reference
-(`phase_init`). The frames are rendered once on the backend; the per-scan solves are tiny and
+(the reference). Phases that are still zero start along a spanning tree of the scan's baselines
+in order of signal to noise, from the reference outward (`phase_init`). The frames are rendered once on the backend; the per-scan solves are tiny and
 run on the host. The scans' gain factors are updated in place (`set_gains!`), so the next
 residuals, gradient or Jacobian see the new gains.
 """
@@ -227,12 +227,24 @@ function _calibrate_scan!(gains, V, d, σ, t1, t2, rng; iterations, λ, σ_logam
     local_index = Dict(c => i for (i, c) in enumerate(cols))
     ref = cols[1]
     if phase_init && all(gains[2, c] == 0 for c in cols)
-        for k in rng
-            a, bcol = t1[k], t2[k]
-            if a == ref && bcol != ref
-                gains[2, bcol] = angle(V[k][1] / d[k][1])            # arg m = φ_ref − φ_b + arg V = arg d
-            elseif bcol == ref && a != ref
-                gains[2, a] = angle(d[k][1] / V[k][1])
+        # the phases along a spanning tree of the scan's baselines taken in order of their model's Stokes I signal to noise,
+        # from the reference outward: every station connected to the reference gets a start, through the strongest baselines
+        # (the reference's own baselines can be long and faint at the high bands; a station started at zero with a true
+        # phase of a radian or more leaves Levenberg–Marquardt in the wrong well of a periodic χ²)
+        order = sort(collect(rng); by = k -> -abs(V[k][1]) / σ[k][1])
+        set = Set([ref])
+        changed = true
+        while changed
+            changed = false
+            for k in order
+                a, bcol = t1[k], t2[k]
+                if a in set && !(bcol in set)
+                    gains[2, bcol] = gains[2, a] + angle(V[k][1] / d[k][1])      # arg m = φ_a − φ_b + arg V = arg d
+                    push!(set, bcol); changed = true
+                elseif bcol in set && !(a in set)
+                    gains[2, a] = gains[2, bcol] + angle(d[k][1] / V[k][1])
+                    push!(set, a); changed = true
+                end
             end
         end
     end
