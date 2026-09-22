@@ -298,6 +298,29 @@ gains match central differences of the host χ² to 1e-5; calibration from unit 
 sky recovers the log-amplitudes to 0.02 and the phases to 0.01 rad with one scan's phases of
 several radians; a calibrating polish from a perturbed sky descends.
 
+**The full-size exercise** (the final sky, its five days of data corrupted with log-amplitudes
+of 10% and phases of two radians per station and scan, calibration from unit gains, six LSQR
+polish steps with calibration before each; 94 minutes): the first run calibrated 86 GHz to the
+noise and failed at 230 and 345 GHz with the sky right. Reproduced on the CPU with the true
+sky held and traced scan by scan, the failing scans were those whose baseline graph is
+disconnected, two baselines among four stations at the high bands: every connected component
+has its own free reference phase, and with one reference held per scan the other components'
+common phase was undetermined and the damped solve walked along it (χ²/N of 1e4 on such
+scans). `calibrate_scans!` now holds one reference phase per component and starts the phases
+along a spanning tree of each component's strongest baselines. With that, the exercise gives
+
+| band | station-scans | baselines | gain product: log-amplitude rms (max) | phase rms (max) | χ²/N with the fitted gains | with the true gains |
+|---|---|---|---|---|---|---|
+| 86 GHz | 2,842 | 12,430 | 0.0009 (0.006) | 0.0009 (0.008) rad | 0.957 | 1.016 |
+| 230 GHz | 3,143 | 15,296 | 0.0012 (0.031) | 0.0013 (0.054) rad | 0.967 | 1.018 |
+| 345 GHz | 1,423 | 2,432 | 0.018 (0.25) | 0.021 (0.39) rad | 0.919 | 1.042 |
+
+against the truth's 1.002 / 0.992 / 1.011. The gain products are recovered to a tenth of a
+percent at the two lower bands and to two percent at 345 GHz, where the signal to noise is
+lower and the scans sparser; the χ² with the fitted gains sits a few percent below the noise
+because six polish steps let the sky absorb a little of it, the usual self-calibration
+freedom. The row is closed at that: the campaign's own gains are recovered by the fit.
+
 ## The animations
 
 `viz/triband_movie.jl` renders the campaign frame by frame: the truth and the fit at the three
