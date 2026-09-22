@@ -25,6 +25,9 @@
 # step (0: --eta/10).
 # --flux is the truth's total flux density at 230 GHz in Jy (the densities are scaled to it, so ngehtsim's thermal noise
 # applies as it is); --closures 1 fits closure phases and log closure amplitudes instead of the visibilities. With
+# --resume-spacetime <tag>_checkpoint_spacetime.csv restarts a joint fit's spacetime from a checkpoint (with --resume for the
+# parcels); with --precision Float32 the joint fit's splat sweep runs in Float32 while its geodesics and spacetime block
+# stay Float64.
 # --free-spacetime 1 the spin and inclination are fitted jointly (Fit.fit_joint! on the bands, Levenberg–Marquardt on
 # the spacetime block from every --lm-every-th frame, in Float64 whatever --precision says) from --a0 and --inc0, with
 # the pattern and Keplerian priors tied to the current spin.
@@ -43,7 +46,9 @@ pattern_σ = getopt("--pattern", 0.005); keplerian_σ = getopt("--keplerian", 0.
 start_file = getstr("--resume", ""); single_stage = getopt("--single-stage", 0) == 1; η_end = getopt("--eta-end", 0.0); η_end = η_end > 0 ? η_end : η / 10
 npolish = getopt("--polish", 0); nsolve = getopt("--solve", 40); λ0 = getopt("--lambda", 0.01); nprobes = getopt("--probes", 8); probe_every = getopt("--probe-every", 4); ndense = getopt("--dense", 0); chunk = getopt("--chunk", 8); reuse = getopt("--reuse", 1); laplace = getopt("--laplace", 0)
 gain_amp = getopt("--gain-amp", 0.0); gain_phase = getopt("--gain-phase", 0.0); calibrate_every = getopt("--calibrate-every", 10); gained = gain_amp > 0 || gain_phase > 0
-free_spacetime && T !== Float64 && (@warn "the joint fit runs in Float64 (the geodesics are regenerated at every iteration)"; global T = Float64)
+sweep_precision = T                                          # the joint fit's geodesics and spacetime block run in Float64; its splat sweep in the requested precision
+free_spacetime && T !== Float64 && (@info "the joint fit's geodesics and spacetime block run in Float64; the splats' sweep in $T"; global T = Float64)
+resume_spacetime = getstr("--resume-spacetime", "")
 outdir = joinpath(@__DIR__, "output"); mkpath(outdir)
 device(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)...); copyto!(y, x); y)
 _mean(x) = sum(x) / length(x); _median(x) = (s = sort(x); s[(length(s) + 1) ÷ 2])
@@ -169,9 +174,14 @@ x_end = [a, θo]; accepted = 0
 q, history, events = try
     if free_spacetime
         bandsT = [BandScans(T(f * 1e9), trsT[f], T(Δα), T(D)) for f in bands]
+        if !isempty(resume_spacetime)                        # the spacetime of a checkpoint (a, inclination in degrees)
+            xr = vec(readdlm(resume_spacetime, ',')); global a0 = xr[1]; global inc0 = xr[2]
+            @info "resuming the spacetime" a0 inc0
+        end
+        checkpoint_spacetime(xs) = (tmp = joinpath(outdir, "$(tag)_checkpoint_spacetime.tmp"); writedlm(tmp, [xs[1] rad2deg(xs[2])], ','); mv(tmp, joinpath(outdir, "$(tag)_checkpoint_spacetime.csv"); force = true))
         xj = fit_joint!(copy(q0), [a0, deg2rad(inc0)], bandsT, gcacheT, camera; L = T(L), iterations, η, η_end = η / 10, inner, nmax, slab,
-                        pattern = pattern_σ, keplerian = keplerian_σ, hygiene = hyg, lm_every,
-                        callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && checkpoint(xq); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
+                        pattern = pattern_σ, keplerian = keplerian_σ, hygiene = hyg, lm_every, sweep_precision = sweep_precision === Float64 ? nothing : sweep_precision,
+                        callback = (it, xq, xs, v) -> (last_state[] = copy(xq); it % 20 == 0 && (checkpoint(xq); checkpoint_spacetime(xs)); it % 20 == 0 && (push!(trace, @sprintf("iteration %3d  chi2 %10.1f  reduced %.3f  a %.4f  inc %.2f°  parcels %4d  %.1f min", it, v, v / ntot, xs[1], rad2deg(xs[2]), size(xq, 2), (time() - t_start) / 60)); @info trace[end])))
         global x_end = xj[2]; global accepted = xj[4]
         (xj[1], [h[1] for h in xj[3]], xj[5])
     elseif iterations > 0

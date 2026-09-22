@@ -206,6 +206,12 @@ function test_joint_scans(backend; res = 6, N = 16, tol = 2e-5, label = "CPU bac
         q1, x1, history, accepted, events = fit_joint!(copy(q), x, bands, cache, camera; L, iterations = 24, η = 0.01, lm_every = 1)
         @test history[end][1] < history[1][1] && accepted > 0
         @test abs(x1[1] - a_true) <= 0.2 && abs(x1[2] - θ_true) <= deg2rad(8.0)
+        # the same with the splats' sweep in Float32 (the geodesics and the spacetime block in Float64): the first iteration's
+        # χ² and gradient agree with the Float64 sweep's, and the iterations end near the same place
+        q2, x2, history2, accepted2, _ = fit_joint!(copy(q), x, bands, cache, camera; L, iterations = 24, η = 0.01, lm_every = 1, sweep_precision = Float32)
+        @test abs(history2[1][1] - history[1][1]) <= 1e-4 * history[1][1] && accepted2 > 0
+        @test abs(x2[1] - a_true) <= 0.2 && abs(x2[2] - θ_true) <= deg2rad(8.0) && abs(history2[end][1] - history[end][1]) <= 0.05 * history[end][1]
+        @info "joint fit on scans ($label): χ² $(round(history[1][1], digits = 1)) → $(round(history[end][1], digits = 1)) (Float32 sweep → $(round(history2[end][1], digits = 1))); a $(round(x1[1], digits = 3)) / $(round(x2[1], digits = 3)), inclination $(round(rad2deg(x1[2]), digits = 2))° / $(round(rad2deg(x2[2]), digits = 2))° (truth $a_true, $(rad2deg(θ_true))°)"
         @info "joint fit on scans ($label): χ² $(round(history[1][1], digits = 1)) → $(round(history[end][1], digits = 1)), spin $(x[1]) → $(round(x1[1], digits = 4)) (truth $a_true), inclination $(round(rad2deg(x1[2]), digits = 2))°, $accepted accepted steps"
     end
 end
