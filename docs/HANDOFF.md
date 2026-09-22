@@ -96,8 +96,10 @@ next items are the wishlist's.
 - **Joint gains in the triband data**: the campaign is thermal-noise only; the
   self-calibration path (`selfcal!`, the joint LM polish with gains) exists and is a later row.
 - **A GRMHD truth** (Daniel's dump, when it comes) in place of the six parcels.
-- **The cluster / H200 path** for the long runs (the Float32 work made this card viable for
-  the polishes, not for a joint run).
+- **The cluster / H200 path** for the long runs: the recipe is in `cluster/` (a user-level
+  `setup.sh`, `check.jl` for the installation, `triband.sbatch` with checkpoint resume); what
+  remains is to run it on the cluster once Daniel has access (the Float32 work made this card
+  viable for the polishes, not for a joint run).
 
 ## State at the close of 2026-09-16 (resume here)
 
