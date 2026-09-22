@@ -258,17 +258,16 @@ open(joinpath(outdir, "$(tag)_summary.txt"), "w") do io
         for f in bands
             gt = gains_true[f]; gf = gains_fit[f]; nst = maximum(max(maximum(c.s1), maximum(c.s2)) for c in covs[f])
             present = falses(size(gt, 2)); for s in trs[f].scans; present[s.data.s1] .= true; present[s.data.s2] .= true; end
-            Δlg = Float64[]; Δφ = Float64[]
-            for k in 1:length(covs[f])
-                cols = findall(present[(k-1)*nst+1:k*nst]) .+ (k - 1) * nst
-                isempty(cols) && continue
-                ref = cols[1]
-                for c in cols
-                    push!(Δlg, gf[1, c] - gt[1, c]); push!(Δφ, rem2pi((gf[2, c] - gf[2, ref]) - (gt[2, c] - gt[2, ref]), RoundNearest))
+            Δlg = Float64[]; Δφ = Float64[]                       # per baseline, the error of the gain product g₁ conj(g₂): free of every scan's reference phases
+            for s in trs[f].scans
+                d = s.data
+                for k in eachindex(d.s1)
+                    push!(Δlg, (gf[1, d.s1[k]] + gf[1, d.s2[k]]) - (gt[1, d.s1[k]] + gt[1, d.s2[k]]))
+                    push!(Δφ, rem2pi((gf[2, d.s1[k]] - gf[2, d.s2[k]]) - (gt[2, d.s1[k]] - gt[2, d.s2[k]]), RoundNearest))
                 end
             end
-            println(io, @sprintf("gains at %.0f GHz: %d station-scans; log-amplitude error rms %.4f (max %.4f, truth spread %.3f); phase error rms %.4f rad (max %.4f, relative to each scan's reference); chi2/N of the fitted sky with the true gains %.4f, with the fitted gains %.4f",
-                                 f, count(present), sqrt(sum(abs2, Δlg) / length(Δlg)), maximum(abs.(Δlg)), gain_amp, sqrt(sum(abs2, Δφ) / length(Δφ)), maximum(abs.(Δφ)), χtrue_gains[f] / ndat[f], χ1[f] / ndat[f]))
+            println(io, @sprintf("gains at %.0f GHz: %d station-scans, %d baselines; the gain product's log-amplitude error rms %.4f (max %.4f; the truth's spread per station %.3f) and phase error rms %.4f rad (max %.4f); chi2/N of the fitted sky with the true gains %.4f, with the fitted gains %.4f",
+                                 f, count(present), length(Δlg), sqrt(sum(abs2, Δlg) / length(Δlg)), maximum(abs.(Δlg)), gain_amp, sqrt(sum(abs2, Δφ) / length(Δφ)), maximum(abs.(Δφ)), χtrue_gains[f] / ndat[f], χ1[f] / ndat[f]))
         end
     end
     foreach(l -> println(io, l), trace)
