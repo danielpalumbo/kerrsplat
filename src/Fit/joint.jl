@@ -166,19 +166,20 @@ struct BandScans{T,TR}
     Δα::T
     D::T
 end
+Geodesics.precision(b::BandScans, ::Type{T2}) where {T2} = BandScans(T2(b.ν), Geodesics.precision(b.tr, T2), T2(b.Δα), T2(b.D))
 
 # the three places the joint loop touches its data: the splats' value and gradient, the residuals on a (dual)
 # cache for the spacetime block, and the χ² at a trial spacetime; a movie or a vector of bands
 _joint_valgrad(q, movie::StokesMovie, cache, L, frames, freqs, priors, nmax, slab, binning, backend) =
     _dual_valgrad(q, movie, cache, L, frames, freqs, priors, nmax, slab, binning, backend)
-function _joint_valgrad(q::AbstractMatrix{T}, bands::AbstractVector{<:BandScans}, cache, L, frames, freqs, priors, nmax, slab, binning, backend) where {T}
-    pdev = KernelAbstractions.allocate(backend, T, size(q)); copyto!(pdev, q)
-    gdev = KernelAbstractions.allocate(backend, T, size(q)); fill!(gdev, zero(T))
+function _joint_valgrad(q::AbstractMatrix{T}, bands::AbstractVector{<:BandScans}, cache::GeodesicCache{S}, L, frames, freqs, priors, nmax, slab, binning, backend) where {T,S}
+    pdev = KernelAbstractions.allocate(backend, S, size(q)); copyto!(pdev, S.(q))       # the sweep in the cache's precision (Float32 for the sweep of a Float64 joint fit)
+    gdev = KernelAbstractions.allocate(backend, S, size(q)); fill!(gdev, zero(S))
     χ = zero(T)
     for b in bands
-        χ += timeresolved_gradient!(gdev, pdev, b.tr, cache, L, b.Δα, b.D, b.ν; nmax, slab, binning)
+        χ += T(timeresolved_gradient!(gdev, pdev, b.tr, cache, S(L), b.Δα, b.D, b.ν; nmax, slab, binning))
     end
-    g = Array(gdev)
+    g = T.(Array(gdev))
     if priors !== nothing
         value, gp = _enzyme_valgrad(x -> penalty(x, priors), q)
         χ += value; g .+= gp
@@ -226,7 +227,7 @@ function spacetime_scan_residuals(cache::GeodesicCache{S}, params, bands::Abstra
 end
 
 """
-    fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2,
+    fit_joint!(params, x, movie, cache, camera; L = NaN, iterations = 100, η = 0.02, η_end = η / 10, warmup = 0, every = 1, inner = 3, λ = 1e-2, sweep_precision = nothing,
                free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                hygiene = Hygiene(),
                bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
@@ -240,7 +241,10 @@ iteration regenerates the Float64 samples of `cache` (a stored-sample cache on t
 fit runs on; `camera` is its camera) at the current spin and inclination and takes one Adam step
 on the free splat entries from the dual sweep (`chi2_gradient!`; `priors` added on the host;
 `steps` the per-row multipliers of `step_scale`; the step cosine-decayed from `η` to `η_end`).
-After the first `warmup` iterations, every `every`-th iteration also takes `inner`
+With `sweep_precision = Float32` and scan data, the splats' gradient runs on a Float32 copy of
+each iteration's cache and Float32 scans (the geodesics and the spacetime block stay Float64;
+the sweep is six times faster on a consumer card and its gradient agrees with Float64 to 1e-6,
+`docs/notes/2026-09-12_fp32_transport.md`). After the first `warmup` iterations, every `every`-th iteration also takes `inner`
 Levenberg–Marquardt steps on the spacetime with the splats held: the residual Jacobian with
 respect to `x` by forward duals through a fused march (`spacetime_jacobian`, a few marches'
 worth of work independent of the pixel count), the damped Gauss–Newton step clipped to
@@ -279,8 +283,10 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, data, cach
                     L::Real = NaN, iterations::Integer = 100, η = 0.02, η_end = η / 10, warmup::Integer = 0, every::Integer = 1, inner::Integer = 3, λ::Real = 1e-2,
                     free = trues(size(params)), steps = nothing, priors = nothing, spacetime_priors = nothing, pattern = nothing, keplerian = nothing,
                     hygiene::Hygiene = Hygiene(), bounds = ((-0.998, 0.998), (0.01, π - 0.01), (-Inf, Inf)), nmax = -1, slab = 0, binning = nothing,
-                    frames = nothing, freqs = nothing, lm_every::Integer = 1, callback = nothing) where {T,N}
+                    frames = nothing, freqs = nothing, lm_every::Integer = 1, callback = nothing, sweep_precision = nothing) where {T,N}
     data isa StokesMovie || data isa AbstractVector{<:BandScans} || throw(ArgumentError("the data are a StokesMovie or a vector of BandScans"))
+    sweep_precision === nothing || data isa AbstractVector{<:BandScans} || throw(ArgumentError("sweep_precision applies to the scans' sweep (BandScans)"))
+    sweep_data = sweep_precision === nothing ? data : [Geodesics.precision(b, sweep_precision) for b in data]   # the scans once, the cache every iteration
     frames = frames === nothing ? (data isa StokesMovie ? eachindex(data.times) : Int[]) : frames
     freqs = freqs === nothing ? (data isa StokesMovie ? eachindex(data.νs) : Int[]) : freqs
     backend = cache.backend
@@ -316,7 +322,8 @@ function fit_joint!(params::AbstractMatrix{T}, x0::AbstractVector{T}, data, cach
         Optimisers.adjust!(opt, ηt)
         regenerate!(cache, x[1], x[2]; marcher = Recurrence(64))
         Lit = n == 3 ? exp(x[3]) : Lfix
-        χ, g = _joint_valgrad(params, data, cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
+        sweep_cache = sweep_precision === nothing ? cache : Geodesics.precision(cache, sweep_precision)   # the geodesics stay Float64; the sweep need not
+        χ, g = _joint_valgrad(params, sweep_data, sweep_cache, Lit, frames, freqs, priors_at(x[1]), nmax, slab, binning, backend)
         χ += sum(abs2, spacetime_prior_residuals(x); init = zero(T))
         push!(history, vcat(χ, x))
         if hygiene.every > 0 && it % hygiene.every == 0
