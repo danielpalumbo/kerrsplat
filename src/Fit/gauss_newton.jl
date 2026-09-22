@@ -186,9 +186,11 @@ end
 Self-calibration of band `bi`'s scans with the sky held: for every scan, Levenberg–Marquardt on
 the log-amplitudes and phases of the stations present (the gain columns of the scan's
 baselines) against the model visibilities of the current parameters, with a Gaussian prior of
-spread `σ_logamp` on the log-amplitudes and the phase of the scan's lowest column held at zero
-(the reference). Phases that are still zero start along a spanning tree of the scan's baselines
-in order of signal to noise, from the reference outward (`phase_init`). The frames are rendered once on the backend; the per-scan solves are tiny and
+spread `σ_logamp` on the log-amplitudes and, in every connected component of the scan's
+baseline graph, the phase of the lowest column held at zero (the reference: a scan can hold
+baselines that share no station, and each such component has its own free phase). Phases that
+are still zero start along a spanning tree of each component's baselines in order of signal to
+noise, from its reference outward (`phase_init`). The frames are rendered once on the backend; the per-scan solves are tiny and
 run on the host. The scans' gain factors are updated in place (`set_gains!`), so the next
 residuals, gradient or Jacobian see the new gains.
 """
@@ -225,14 +227,24 @@ function _calibrate_scan!(gains, V, d, σ, t1, t2, rng; iterations, λ, σ_logam
     cols = sort!(unique(vcat(t1[rng], t2[rng]))); m = length(cols)
     m > 1 || return gains
     local_index = Dict(c => i for (i, c) in enumerate(cols))
-    ref = cols[1]
+    # the connected components of the scan's baseline graph: a scan of an array can hold baselines that share no station
+    # (two of them among four stations at the high bands), and every component has its own free reference phase; one
+    # reference held for the scan leaves the other components' common phase undetermined, and the damped solve walks
+    # along it (χ²/N of 1e4 on such scans of the first full-size exercise)
+    comp = Dict(c => c for c in cols)
+    find(c) = (while comp[c] != c; comp[c] = comp[comp[c]]; c = comp[c]; end; c)
+    for k in rng
+        a, b = find(t1[k]), find(t2[k])
+        a == b || (comp[max(a, b)] = min(a, b))
+    end
+    refs = Set(find(c) for c in cols)                                            # the lowest column of every component
     if phase_init && all(gains[2, c] == 0 for c in cols)
-        # the phases along a spanning tree of the scan's baselines taken in order of their model's Stokes I signal to noise,
-        # from the reference outward: every station connected to the reference gets a start, through the strongest baselines
-        # (the reference's own baselines can be long and faint at the high bands; a station started at zero with a true
-        # phase of a radian or more leaves Levenberg–Marquardt in the wrong well of a periodic χ²)
+        # the phases along a spanning tree of each component's baselines taken in order of their model's Stokes I signal to
+        # noise, from its reference outward: every station gets a start through the strongest baselines (the reference's
+        # own baselines can be long and faint at the high bands; a station started at zero with a true phase of a radian or
+        # more leaves Levenberg–Marquardt in the wrong well of a periodic χ²)
         order = sort(collect(rng); by = k -> -abs(V[k][1]) / σ[k][1])
-        set = Set([ref])
+        set = Set(refs)
         changed = true
         while changed
             changed = false
@@ -249,7 +261,10 @@ function _calibrate_scan!(gains, V, d, σ, t1, t2, rng; iterations, λ, σ_logam
         end
     end
     x = vcat([gains[1, c] for c in cols], [gains[2, c] for c in cols])          # (lg..., φ...)
-    free = trues(2m); free[m + 1] = false                                        # the reference phase
+    free = trues(2m)
+    for c in refs
+        free[m + local_index[c]] = false                                         # one reference phase per component
+    end
     nres = 8 * length(rng) + m
     r = zeros(nres); J = zeros(nres, 2m)
     function evaluate!(x)

@@ -400,8 +400,9 @@ end
 
 """
 One scan's self-calibration on synthetic numbers: random gains with phases uniform over the circle on an array whose
-reference station has baselines to two others only, so that the rest must start along the spanning tree through those; the
-log-amplitudes and the phases (relative to the reference) recovered to the noise.
+reference station has baselines to two others only, so that the rest must start along the spanning tree through those, plus
+a second component of two stations sharing no baseline with the rest (its own reference phase); the gain products of every
+baseline recovered to the noise.
 """
 function test_calibrate_scan()
     rng = Random.MersenneTwister(77)
@@ -411,6 +412,7 @@ function test_calibrate_scan()
             s1 = Int32[]; s2 = Int32[]; V = SVector{4,ComplexF64}[]; σ = SVector{4,Float64}[]
             for i in 1:nst, j in i+1:nst
                 (i == 1 && j > 3) && continue                                  # the reference sees only stations 2 and 3
+                (i <= nst - 2 && j > nst - 2) && continue                       # the last two stations form their own component
                 push!(s1, i); push!(s2, j)
                 push!(V, SVector{4}(randn(rng, 4) .+ im .* randn(rng, 4)))
                 push!(σ, SVector(0.01, 0.01, 0.01, 0.01))
@@ -420,8 +422,9 @@ function test_calibrate_scan()
             d = [V[k] .* (exp(gtrue[1, s1[k]] + gtrue[1, s2[k]]) * cis(gtrue[2, s1[k]] - gtrue[2, s2[k]])) .+ σ[k] .* SVector{4}(complex.(randn(rng, 4), randn(rng, 4))) for k in eachindex(V)]
             g = zeros(2, nst)
             Fit._calibrate_scan!(g, V, d, σ, s1, s2, 1:length(V); iterations = 12, λ = 1e-3, σ_logamp = 0.3, phase_init = true)
-            Δφ = [rem2pi((g[2, c] - g[2, 1]) - (gtrue[2, c] - gtrue[2, 1]), RoundNearest) for c in 1:nst]
-            @test maximum(abs.(g[1, :] .- gtrue[1, :])) < 0.03 && maximum(abs.(Δφ)) < 0.03
+            Δlg = [(g[1, s1[k]] + g[1, s2[k]]) - (gtrue[1, s1[k]] + gtrue[1, s2[k]]) for k in eachindex(s1)]
+            Δφ = [rem2pi((g[2, s1[k]] - g[2, s2[k]]) - (gtrue[2, s1[k]] - gtrue[2, s2[k]]), RoundNearest) for k in eachindex(s1)]
+            @test maximum(abs.(Δlg)) < 0.03 && maximum(abs.(Δφ)) < 0.03
         end
     end
 end
