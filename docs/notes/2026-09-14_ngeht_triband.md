@@ -198,6 +198,40 @@ sign flipped), and the density's emission-weighted mean 0.76 of the truth's with
 pointwise spread: sixty LSQR steps changed the fields by less than the run-to-run scatter,
 which is what a descent along the emissivities' null looks like.
 
+**The final state** (2026-09-21). Daniel judged the fit sufficiently converged for its
+pedagogical purpose and asked that refinements stop once the machinery was shown to work at
+full size; the last such run was the dense polish reusing its Jacobian (`polish_dense!` with
+`reuse = 8`): five Jacobians of 55 minutes, chord steps on each at three seconds apiece, forty
+steps in 4.7 hours, ending when the damping ran away after the chord steps stalled. χ²/N
+1.045 → 1.0135 (1.015 / 1.014 / 1.003 per band against the truth's 0.996 / 1.005 / 0.974): one
+and a half percent above the floor, seventy parcels, 900 Adam iterations and 228 Gauss–Newton
+steps in all. The fields at that state, weighted by the truth's 230 GHz emissivity
+(`validation/ngeht/field_compare.jl`): the field strength to 17% voxel by voxel with a 4% high
+bias (the emission-weighted mean 22.2 against 21.7 G), the temperature to 13% with a 6% low bias
+(33.3 against 34.7), the field direction to a median of 8° (11% of the emission weight with the
+sign flipped), and the density's emission-weighted mean 0.78 of the truth's with the pointwise
+spread of the earlier states: the exact null of the emissivities, density against field and
+temperature, is what the data leave open. The animations of this state are the fit movie
+(`viz/triband_movie.jl`) and the 3D field movie (`viz/field_movie.jl`) in Daniel's Dropbox
+folder. The lessons of the optimizer, for the next data-domain fit: Adam with hygiene to a few
+times the floor, hygiene off for the last decade, then the polish; the preconditioned partial
+solves and the exact solves gain the same per step near the minimum, so the cheap one wins per
+hour until the solves stall on the basis's null directions, where the explicit Jacobian with
+many chord steps finishes.
+
+**The Laplace errors of the final state** (`--laplace 1`: one Jacobian, 56 minutes;
+`triband_final_laplace.txt`). Of the 1,470 parameters' directions, 528 modes of the scaled
+normal matrix lie above 1e-6 of the largest, 122 above 1e-3: the over-complete basis has
+nearly two thirds of its directions unconstrained by the campaign, which is the exact null of
+the emissivities (density against field and temperature) and the freedom of seventy parcels to
+share the emission among themselves. Over the constrained modes the marginal errors are small:
+per parcel, density-weighted, σ(ln nₑ) 0.009, σ(ln Θe) 0.018, σ(ln B) 0.009, σ(z) 0.018 M, the
+pattern rates to 0.001 rad/M, the positions to 0.02 M. These are the errors of the constrained
+subspace only: the fit's density is 24% below the truth's at the median voxel with a
+formal error of one percent, and the difference lives in the modes the report drops. The
+numbers say what the data determine (the combinations the emissivities see, the geometry, the
+kinematics) and what they do not (the density on its own).
+
 ## The spacetime free in the data domain
 
 `fit_joint!` now takes, in place of a movie, a vector of `BandScans` (a band's frequency, its
@@ -263,6 +297,29 @@ scores the noise where unit gains score twenty times more; the device gradient a
 gains match central differences of the host χ² to 1e-5; calibration from unit gains at the true
 sky recovers the log-amplitudes to 0.02 and the phases to 0.01 rad with one scan's phases of
 several radians; a calibrating polish from a perturbed sky descends.
+
+**The full-size exercise** (the final sky, its five days of data corrupted with log-amplitudes
+of 10% and phases of two radians per station and scan, calibration from unit gains, six LSQR
+polish steps with calibration before each; 94 minutes): the first run calibrated 86 GHz to the
+noise and failed at 230 and 345 GHz with the sky right. Reproduced on the CPU with the true
+sky held and traced scan by scan, the failing scans were those whose baseline graph is
+disconnected, two baselines among four stations at the high bands: every connected component
+has its own free reference phase, and with one reference held per scan the other components'
+common phase was undetermined and the damped solve walked along it (χ²/N of 1e4 on such
+scans). `calibrate_scans!` now holds one reference phase per component and starts the phases
+along a spanning tree of each component's strongest baselines. With that, the exercise gives
+
+| band | station-scans | baselines | gain product: log-amplitude rms (max) | phase rms (max) | χ²/N with the fitted gains | with the true gains |
+|---|---|---|---|---|---|---|
+| 86 GHz | 2,842 | 12,430 | 0.0009 (0.006) | 0.0009 (0.008) rad | 0.957 | 1.016 |
+| 230 GHz | 3,143 | 15,296 | 0.0012 (0.031) | 0.0013 (0.054) rad | 0.967 | 1.018 |
+| 345 GHz | 1,423 | 2,432 | 0.018 (0.25) | 0.021 (0.39) rad | 0.919 | 1.042 |
+
+against the truth's 1.002 / 0.992 / 1.011. The gain products are recovered to a tenth of a
+percent at the two lower bands and to two percent at 345 GHz, where the signal to noise is
+lower and the scans sparser; the χ² with the fitted gains sits a few percent below the noise
+because six polish steps let the sky absorb a little of it, the usual self-calibration
+freedom. The row is closed at that: the campaign's own gains are recovered by the fit.
 
 ## The animations
 

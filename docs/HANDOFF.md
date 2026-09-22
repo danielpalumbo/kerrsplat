@@ -64,10 +64,14 @@ null. The 3D field movie of the 1.045 state is in Daniel's Dropbox
 between 2026-09-18 and 21 and `/tmp` went with it: the scratch worktree, every run script and
 log, and the first Jacobian-reuse run's output (eight hours of the card). Long runs, their logs
 and worktrees now live in `~/local_scripts/kerrsplat_runs/`; the fit states are in the main
-tree's `validation/ngeht/output/` (gitignored; `triband_lsqr_params.csv` is the latest). On the
-card at the close: the Jacobian-reuse polish relaunched from the 1.045 state (`triband_dense3`,
-48 steps at 8 per Jacobian, about eight hours). If it levels off above unity, the next move is
-densification followed by the polish.
+tree's `validation/ngeht/output/` (gitignored). The Jacobian-reuse polish took the fit to its
+final state, χ²/N 1.0135 (`triband_dense3_params.csv`), and Daniel closed the convergence work
+there; the closing steps were the Laplace report of that state, the animations re-rendered
+from it into Dropbox, and the station-gains row (#113: `ScanGains` on the device path,
+`calibrate_scans!`, the driver's `--gain-amp`; #114: a reference phase per connected component
+of a scan's baselines, found by the full-size exercise, which then recovered the campaign's gain
+products to 1e-3 at 86 and 230 GHz and 2e-2 at 345 GHz). The triband program is closed; the
+next items are the wishlist's.
 
 ## Wishlist and queue (kept current; newest first)
 
@@ -82,10 +86,11 @@ densification followed by the polish.
   the polish at the fitted spacetime, then the spacetime's Laplace error from the dense normal
   matrix. A cluster node is the natural place (`docs/HANDOFF.md`, the cluster section of the
   2026-09-12 note: no new kernels, user-level juliaup, Float64 on an H200).
-- **Densification of the triband fit** if the polish levels off above unity: `Fit.densify`
-  with the polish's Jᵀr as the gradient (split the parcels carrying the largest residual
-  share), then the polish again; prune and merge stay off late (they threw the χ² by an order
-  of magnitude each in the resumed run).
+- **Densification of a stalled over-complete fit** (not needed for the triband fit, which
+  Daniel closed at χ²/N 1.0135 on 2026-09-21): `Fit.densify` with the polish's Jᵀr as the
+  gradient (split the parcels carrying the largest residual share), then the polish again;
+  prune and merge stay off late (they threw the χ² by an order of magnitude each in the
+  resumed run).
 - **Laplace errors of the triband parcels** from `polish_dense!`'s normal matrix (returned, not
   yet used): the marginal errors of each parcel's fields, and the null directions' spectrum.
 - **Joint gains in the triband data**: the campaign is thermal-noise only; the
