@@ -4,6 +4,6 @@
 # or the timings, then copy the figures to Daniel's Dropbox folder (docs/pedagogy/README.md).
 set -e
 cd "$(dirname "$0")/../.."
-for f in model_structure model_specification fitting_pipeline fitting_convergence dependencies profile; do
+for f in model_structure model_structure_riaf model_specification fitting_pipeline fitting_convergence dependencies profile; do
     echo "== $f"; nice -n 5 julia -t 6 --project=viz viz/pedagogy/$f.jl 2>&1 | grep -v "^\s*@\|└\|┌\|│" | tail -1
 done
