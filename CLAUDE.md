@@ -142,6 +142,14 @@ before any performance work.
   the card with it. Drivers write `<tag>_checkpoint_params.csv` as they go (atomically, via a
   rename), and `--resume` restarts from it.
 
+## Pedagogical figures (Daniel, 2026-09-23)
+- `docs/pedagogy/` holds the high-level summary figures (the model's structure and
+  specification, the fitting pipeline, the convergence of the reference fit, the dependencies,
+  the profile), each made by a script in `viz/pedagogy/` (`make_all.sh` regenerates all). When
+  development changes what a figure shows (a parameter, a stage, a dependency, a timing),
+  regenerate it in the same PR and copy it to Daniel's Dropbox
+  (`~/Dropbox/kerrsplat/figures_and_animations/pedagogy/`, README entry kept current).
+
 ## Code conventions
 - Pure, allocation-free, StaticArrays-style functions in the hot path (Enzyme- and GPU-safe).
 - Kernels via KernelAbstractions so they run on the CPU backend for testing and on CUDA for real.
